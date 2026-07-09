@@ -13,6 +13,3 @@ __pycache__
 
 docs/
 tests/
-
-Dockerfile*
-docker-compose*.yml

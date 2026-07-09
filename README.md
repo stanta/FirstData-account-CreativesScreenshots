@@ -44,7 +44,7 @@ reports-ad-bot
 
 ```bash
 cd /512-2/FD/reports_ad
-docker build -t reports-ad:local .
+docker compose build
 ```
 
 ### Запуск через docker run
@@ -148,13 +148,14 @@ python -m playwright install chromium
 ```bash
 cd /512-2/FD/reports_ad
 docker compose config
-docker build -t reports-ad:local .
-docker run --rm --env-file .env reports-ad:local
+docker compose up --build --no-start
+docker compose up -d
 ```
 
 - `docker compose config` валидирует YAML и interpolation переменных.
-- `docker build` проверяет сборку Python/Playwright runtime.
-- `docker run` проверяет, что контейнер стартует с существующим entrypoint и читает обязательные environment variables.
+- `docker compose up --build --no-start` проверяет сборку образа и container runtime без запуска polling-цикла.
+- `docker compose up -d` проверяет реальный startup через штатный entrypoint.
+- Если сборка прерывается на скачивании Chromium, причина обычно во внешней сети/CDN Playwright; в этом случае команду безопасно повторить.
 
 ## Ограничения MVP
 

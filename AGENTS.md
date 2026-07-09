@@ -219,9 +219,9 @@ python -m playwright install chromium
 
 Для `reports_ad` добавлены минимальные production-practical container assets под Telegram polling bot и headless Playwright Chromium.
 
-- Добавлен `Dockerfile`: сборка на `python:3.11-slim-bookworm`, установка зависимостей через `uv sync --frozen --no-dev`, предустановка `playwright chromium` вместе с Linux system dependencies на этапе build.
+- Добавлен `Dockerfile`: runtime переведен на базовый образ `mcr.microsoft.com/playwright/python:v1.61.0-noble`, чтобы Chromium и Linux browser dependencies уже были предустановлены в image и не требовали отдельного интерактивного setup при старте контейнера.
 - Добавлен `docker-compose.yml`: сервис `reports-ad-bot` с `restart: unless-stopped`, `init: true`, `shm_size: 1gb`, `tmpfs` для временных файлов и startup через стандартный `python -m reports_ad`.
 - Добавлен `.dockerignore` для уменьшения build context без включения `.env`, тестов и docs.
-- Обновлен `README.md`: инструкции по `docker build`, `docker run`, `docker compose up -d --build` и список команд для верификации Docker-конфигурации.
+- Обновлен `README.md`: инструкции по `docker compose build`, `docker run`, `docker compose up -d --build` и список команд для верификации Docker-конфигурации.
 
 Код runtime бота и логика генерации proof-скриншота не менялись; контейнеризация сделана поверх существующего entrypoint и environment-based config.
