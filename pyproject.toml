@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "reports-ad"
+version = "0.1.0"
+description = "Telegram polling bot and Playwright proof screenshot generator for advertising reports."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "Pillow>=10.0.0",
+  "playwright>=1.45.0",
+  "python-telegram-bot>=21.0,<23.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0.0",
+  "pytest-asyncio>=0.23.0",
+]
+
+[project.scripts]
+reports-ad-bot = "reports_ad.bot:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["reports_ad*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+

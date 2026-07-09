@@ -80,14 +80,24 @@
 | ID | Вопрос | Почему важно | Блокирует MVP? | Рекомендуемый владелец |
 |---|---|---|---|---|
 | OQ-001 | Как пользователь задает место вставки рекламы: селектором, координатами, типом слота или система выбирает автоматически? | Без этого невозможно надежно вставлять креатив на произвольные сайты. | Да | Product/Tech |
+- селектор
 | OQ-002 | Нужно ли поддерживать произвольные сайты или только ограниченный список площадок/шаблонов из примеров: Яндекс, Дзен, ВК, MediaSniper, Sape, Hybrid/GetIntent? | Произвольные сайты резко повышают сложность и хрупкость DOM-вставки. | Да | Product |
+- ограниченный список
 | OQ-003 | Нужно ли воспроизводить Chrome UI и системные панели на скриншоте или достаточно browser viewport без интерфейса браузера? | Headless screenshot обычно не содержит вкладки/адресную строку, а примеры часто содержат полный desktop. | Да | Product |
+ - Нужно  воспроизводить Chrome UI  и системные панели на скриншоте 
 | OQ-004 | Что точно означает «открыв окно сайта с UTM-меткой в нижних 20% экрана»: отдельное окно браузера, вкладка, iframe/композиция или постобработка двух скриншотов? | От этого зависит архитектура screenshot composition. | Да | Product/Tech |
+- отдельное окно браузера,
 | OQ-005 | Какие форматы креативов поддерживать в MVP: только статичные изображения или также видео/in-stream? | Видео требует загрузки media, play/pause state, ожиданий и другого захвата кадра. | Да, если видео обязательно в MVP | Product |
+Да,  видео обязательно в MVP
 | OQ-006 | Кто отвечает за корректную рекламную маркировку «Реклама», данные рекламодателя и возрастные ограничения? | Это может быть юридически значимым требованием и не должно генерироваться неявно. | Нет для технического MVP, да для production | Legal/Product |
-| OQ-007 | Нужно ли авторизоваться на площадках, принимать cookie, выставлять гео/язык/профиль браузера? | Многие площадки меняют вид и рекламные места без авторизации/consent. | Возможно | Tech/Product |
+- должны вставляться изображения отдельным слоем. Изображения берутся из библиотеки и размещаются как в примерах.
+
+| OQ-007 | Нужно ли авторизоваться на п-лощадках, принимать cookie, выставлять гео/язык/профиль браузера? | Многие площадки меняют вид и рекламные места без авторизации/consent. | Возможно | Tech/Product |
+авторизоваться - нет,  принимать cookie, выставлять гео/язык/профиль браузера - да
 | OQ-008 | Нужны ли ограничения на размер файлов, типы MIME, время обработки и параллельность запросов? | Важно для устойчивости Telegram-бота и защиты от тяжелых файлов/страниц. | Да | Tech |
+- нужны базовые проверки ограничений, предполагается использование специально обученными пользователями
 | OQ-009 | Требуется ли хранить только временные файлы или также лог ошибок без истории пользовательских задач? | История не требуется, но операционные логи обычно нужны для диагностики. | Нет | Product/Ops |
+- История не требуется, но операционные логи обычно нужны для диагностики
 
 ### 4. Риски и допущения
 
@@ -138,3 +148,67 @@
 3. Только один подтвержденный способ размещения: CSS-селектор или выбранный шаблон.
 4. Только viewport screenshot + нижняя композиционная полоса landing page.
 5. Без хранения истории, без личных кабинетов площадок, без автоматической юридической маркировки и без поддержки всех рекламных сетей из примеров.
+
+---
+
+## Ход проекта — 2026-07-09 — добавление project-local skills
+
+Повторно проверена project-local директория `.kilocode/skills`: до доработки были только `system-analyst`, `ads-placement-anomaly-auditor` и `llm-context-compressor`; отдельных skills именно под runtime Telegram polling-бота и генерацию proof-скриншотов для `reports_ad` не было.
+
+Добавлены короткие практические skills:
+- `.kilocode/skills/reports-ad-telegram-bot-runtime/SKILL.md` — правила для Python Telegram polling bot: токен только из окружения/секретов, deterministic conversation flow, прием файлов/фото, URL/UTM/file validation, per-user lock/queue, no-history поведение, cleanup и безопасные ошибки пользователю.
+- `.kilocode/skills/reports-ad-screenshot-proof/SKILL.md` — правила для Playwright/Chromium proof generation: загрузка страницы, controlled slot/banner insertion, effective click URL с UTM, эмуляция клика, capture landing page, композиция landing в нижние 20% итогового изображения, deterministic validation и cleanup.
+
+Код приложения в рамках этого подзадания не реализовывался.
+
+---
+
+## Ход проекта — 2026-07-09 — реализация production-ready MVP
+
+Реализован первый рабочий MVP Python-приложения в директории `reports_ad`.
+
+### Что добавлено
+
+- `reports_ad/pyproject.toml` — package metadata, зависимости `python-telegram-bot`, `playwright`, `Pillow`, dev-зависимости для `pytest`, CLI entry point `reports-ad-bot`.
+- `reports_ad/.env.example` — список переменных окружения без реальных секретов.
+- `reports_ad/README.md` — инструкция запуска, переменные окружения, синтаксис placement/UTM, ограничения MVP и команда установки Chromium.
+- `reports_ad/reports_ad/config.py` — конфигурация из environment variables, токен Telegram только из `REPORTS_AD_TELEGRAM_TOKEN`.
+- `reports_ad/reports_ad/models.py` — typed request/response contracts для proof generator, модели креатива и placement.
+- `reports_ad/reports_ad/validation.py` — безопасная валидация `http/https` URL, запрет localhost/private-network по умолчанию, UTM parsing/merge без потери существующих query-параметров, проверка CSS selector/template placement, проверка PNG/JPEG MIME/размера/размерности через Pillow.
+- `reports_ad/reports_ad/proof.py` — Playwright/Chromium proof generator: отдельный browser context, загрузка ad page, controlled DOM insertion с маркером `data-reports-ad-proof="creative"`, click URL с UTM, эмуляция клика, fallback-open landing page при блокировке popup, viewport screenshots и итоговая композиция: верхние 80% ad-page, нижние 20% landing page.
+- `reports_ad/reports_ad/bot.py` — Telegram polling runtime на `python-telegram-bot` 21+: deterministic ConversationHandler flow, `/start`, `/help`, `/cancel`, in-memory per-user lock, без сохранения истории задач, временные файлы через `TemporaryDirectory`, cleanup в `finally`, безопасные пользовательские ошибки без tracebacks/секретов.
+- `reports_ad/tests/test_validation.py` и `reports_ad/tests/test_composition.py` — unit-тесты для URL/UTM/placement/creative validation и композиции итогового изображения без реального Telegram token и без внешней сети.
+
+### Зафиксированные MVP-решения
+
+- Поддержаны только статичные PNG/JPEG-креативы. Видео и in-stream остаются post-MVP, несмотря на более раннее уточнение о желательности видео: для production-качества видео требуется отдельная модель ожидания кадра, autoplay/mute policy, duration/state handling и правила захвата.
+- Основной способ размещения — явный CSS-селектор `selector: ...`; дополнительно есть ограниченные template fallback IDs: `top-banner`, `sidebar-rect`, `in-content`.
+- Итоговый screenshot является детерминированной viewport-композицией без реального Chrome UI/системной панели. Воспроизведение настоящего desktop Chrome UI требует отдельного headful/Xvfb/виртуального desktop этапа.
+- История пользовательских задач не сохраняется. Операционные логи содержат request ID, anonymized user hash и status, но не Telegram token, raw uploads и не полный task history.
+
+### Как запустить локально
+
+```bash
+cd /512-2/FD/reports_ad
+python -m venv .venv
+. .venv/bin/activate
+pip install -e ".[dev]"
+python -m playwright install chromium
+export REPORTS_AD_TELEGRAM_TOKEN="<telegram-bot-token>"
+python -m reports_ad
+```
+
+### Проверки
+
+Unit/smoke checks запускаются командой:
+
+```bash
+cd /512-2/FD/reports_ad
+pytest
+```
+
+Если browser binaries отсутствуют, выполнить:
+
+```bash
+python -m playwright install chromium
+```
