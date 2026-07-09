@@ -225,3 +225,40 @@ python -m playwright install chromium
 - Обновлен `README.md`: инструкции по `docker compose build`, `docker run`, `docker compose up -d --build` и список команд для верификации Docker-конфигурации.
 
 Код runtime бота и логика генерации proof-скриншота не менялись; контейнеризация сделана поверх существующего entrypoint и environment-based config.
+
+---
+
+## Ход проекта — 2026-07-09 — новый workflow выбора сети/spec и catalog placements
+
+Изменен активный workflow Telegram-бота `reports_ad` под новый сценарий: рекламная сеть → тип баннера/spec → URL рекламной страницы → PNG/JPEG-креатив → landing URL → UTM → review/edit → явный старт генерации. Предыдущая задача по контейнеризации не продолжалась; созданные Docker-файлы оставлены нетронутыми.
+
+### Что изменено
+
+- Добавлен локальный runtime-каталог `reports_ad/reports_ad/data/creative_catalog.json`, нормализованный из `validator-ai/backend/app/seed/creative_specs.json`: сохранены `slug`, `display_name`, `platform/network slug`, `format_slug`, размеры, source extensions/MIME, runtime PNG/JPEG policy и `max_file_size_bytes`.
+- Добавлен модуль `reports_ad/reports_ad/catalog.py` для загрузки каталога, фильтрации runtime-supported specs, выбора площадочного placement и template selectors.
+- Обновлены модели `reports_ad/reports_ad/models.py`: добавлены `CreativeSpec`, `PlacementTemplate`, `SitePlacement`; `ProofRequest` теперь несет выбранную сеть и spec.
+- Обновлена валидация `reports_ad/reports_ad/validation.py`: выбранный spec ограничивает MIME/расширение, точные размеры и лимит файла; runtime по-прежнему принимает только PNG/JPEG, даже если source specs содержат GIF/video/HTML5/PSD.
+- Обновлен Telegram flow в `reports_ad/reports_ad/bot.py`: пользователь выбирает сеть и spec из каталога, placement выбирается автоматически по host/размеру, перед генерацией показывается review screen; поддержаны команды правки `edit network`, `edit spec`, `edit ad_url`, `edit creative`, `edit landing`, `edit utm`.
+- Обновлен proof generator `reports_ad/reports_ad/proof.py`: получает выбранные spec dimensions и использует catalog template selectors/dimensions при controlled DOM insertion.
+- Обновлены тесты `reports_ad/tests/test_validation.py`: добавлены проверки загрузки каталога, spec validation, selector/template mapping и dimension-based fallback.
+- Обновлен `reports_ad/README.md`: описаны новый workflow, catalog source, PNG/JPEG restriction, placement behavior и ограничения проверки площадок.
+
+### Статус selector/template metadata
+
+Площадки взяты из `reports_ad/docs/examples/FD -- Примеры скриншотов/площадки.txt`. Выполнена попытка прямой HTML-проверки через `reports_ad/.venv/bin/python` и `urllib` с Mozilla-like User-Agent. Результаты:
+
+- `deti-online.com`: доступен, найден слабый sample selector `.ads-wrap`.
+- `ok.ru`: доступен, найдены `.media-layer_banners` и `.media-layer_banners_cnt`.
+- `pogoda.yandex.ru` и `m.pogoda.yandex.ru`: доступны, найден `#footer_ecom_adv`.
+- `game.yandex.ru`: редиректит на `yandex.ru/games/`, найден sample selector `[data-ad-status]`.
+- `dzen.ru`, `m.dzen.ru`, `yandex.ru`: редирект на Yandex Passport/SSO, verified selectors не получены.
+- `kniga-online.com`: HTTP 403.
+- `m.video.yandex.ru`, `m.images.yandex.ru`: TLS hostname mismatch.
+- `drug.vokrug`: DNS не резолвится.
+- `m.knigavuhe.org`, `amd.online`, `ya.ru`, `www.woman.ru`, `images.yandex.ru`: страницы доступны, но надежные ad selectors в sample не подтверждены.
+
+Selectors с `selector_confidence=observed_sample` не являются end-to-end verified production selectors: это только HTML-sample observations без интерактивной Playwright-проверки, логина и обхода anti-bot. Остальные placements являются dimension-based fallback heuristics. В catalog metadata это зафиксировано, чтобы не выдавать эвристики за проверенные селекторы.
+
+### Проверки и ограничения
+
+Плановая проверка: `cd /512-2/FD/reports_ad && .venv/bin/pytest`. Внешняя проверка сайтов ограничена доступностью, SSO/403/TLS/DNS и anti-bot; для production надежности нужны ручные/Playwright-проверки конкретных страниц и согласованные CSS selectors/templates по каждой площадке.

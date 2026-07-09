@@ -7,7 +7,7 @@ from typing import Literal
 
 SUPPORTED_CREATIVE_MIME_TYPES = frozenset({"image/png", "image/jpeg"})
 SUPPORTED_CREATIVE_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg"})
-SUPPORTED_PLACEMENT_TEMPLATES = frozenset({"top-banner", "sidebar-rect", "in-content"})
+SUPPORTED_PLACEMENT_TEMPLATES = frozenset({"top-banner", "sidebar-rect", "in-content", "mobile-banner", "video-landscape"})
 
 PlacementMode = Literal["selector", "template"]
 
@@ -32,9 +32,60 @@ class CreativeInfo:
 
 
 @dataclass(frozen=True, slots=True)
+class CreativeSpec:
+    slug: str
+    display_name: str
+    network_slug: str
+    network_display_name: str
+    platform_slug: str
+    format_slug: str
+    creative_type_slug: str
+    width: int | None
+    height: int | None
+    allowed_extensions_source: tuple[str, ...]
+    allowed_mime_types_source: tuple[str, ...]
+    runtime_allowed_extensions: tuple[str, ...]
+    runtime_allowed_mime_types: tuple[str, ...]
+    max_file_size_bytes: int
+    requires_ad_marking: bool = False
+    runtime_upload_supported: bool = False
+    runtime_restriction_note: str = ""
+
+    @property
+    def dimensions_label(self) -> str:
+        if self.width and self.height:
+            return f"{self.width}×{self.height}"
+        return self.format_slug
+
+    @property
+    def label(self) -> str:
+        return f"{self.display_name} ({self.dimensions_label})"
+
+
+@dataclass(frozen=True, slots=True)
+class PlacementTemplate:
+    template_id: str
+    label: str
+    selectors: tuple[str, ...]
+    preferred_dimensions: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class SitePlacement:
+    host: str
+    category: str
+    selector_confidence: str
+    observed_selectors: tuple[str, ...]
+    fallback_templates: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class ProofRequest:
     request_id: str
     ad_page_url: str
+    network_slug: str
+    network_display_name: str
+    spec: CreativeSpec
     banner_type: str
     creative: CreativeInfo
     landing_url: str
@@ -61,4 +112,3 @@ class ProofResult:
     request_id: str
     landing_fallback_used: bool = False
     timings_ms: dict[str, int] = field(default_factory=dict)
-

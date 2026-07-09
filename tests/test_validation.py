@@ -4,6 +4,7 @@ import pytest
 from PIL import Image
 
 from reports_ad.models import Placement
+from reports_ad.catalog import choose_placement_for_url, get_site_placement, get_spec, list_runtime_specs
 from reports_ad.validation import (
     ValidationError,
     merge_url_with_utm,
@@ -11,6 +12,7 @@ from reports_ad.validation import (
     normalize_public_url,
     parse_utm_params,
     validate_creative_file,
+    validate_creative_against_spec,
 )
 
 
@@ -64,3 +66,40 @@ def test_validate_creative_file_rejects_wrong_declared_mime(tmp_path: Path) -> N
     with pytest.raises(ValidationError):
         validate_creative_file(image_path, declared_mime_type="image/jpeg")
 
+
+def test_catalog_loads_runtime_png_jpeg_specs() -> None:
+    specs = list_runtime_specs("yandex_graphic_banners")
+    assert specs
+    assert all(spec.runtime_upload_supported for spec in specs)
+    assert {"image/png", "image/jpeg"}.issuperset(specs[0].runtime_allowed_mime_types)
+
+
+def test_validate_creative_against_selected_spec_accepts_exact_dimensions(tmp_path: Path) -> None:
+    spec = get_spec("yandex-graphic-banners-300x250-image")
+    assert spec is not None
+    image_path = tmp_path / "creative.png"
+    Image.new("RGB", (300, 250), "red").save(image_path)
+    info = validate_creative_file(image_path, declared_mime_type="image/png", spec=spec)
+    validate_creative_against_spec(info, spec)
+
+
+def test_validate_creative_against_selected_spec_rejects_wrong_dimensions(tmp_path: Path) -> None:
+    spec = get_spec("yandex-graphic-banners-300x250-image")
+    assert spec is not None
+    image_path = tmp_path / "creative.png"
+    Image.new("RGB", (320, 250), "red").save(image_path)
+    with pytest.raises(ValidationError):
+        validate_creative_file(image_path, declared_mime_type="image/png", spec=spec)
+
+
+def test_site_placement_prefers_observed_selector_when_available() -> None:
+    spec = get_spec("yandex-graphic-banners-300x250-image")
+    assert spec is not None
+    assert get_site_placement("https://deti-online.com/story") is not None
+    assert choose_placement_for_url("https://deti-online.com/story", spec) == Placement(mode="selector", value=".ads-wrap")
+
+
+def test_site_placement_falls_back_by_dimension_for_unknown_host() -> None:
+    spec = get_spec("yandex-graphic-banners-728x90-image")
+    assert spec is not None
+    assert choose_placement_for_url("https://example.com", spec) == Placement(mode="template", value="top-banner")

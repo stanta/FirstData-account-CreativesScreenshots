@@ -1,0 +1,3294 @@
+{
+  "version": 1,
+  "generated_from": "validator-ai/backend/app/seed/creative_specs.json",
+  "runtime_upload_policy": {
+    "allowed_extensions": [
+      "jpg",
+      "jpeg",
+      "png"
+    ],
+    "allowed_mime_types": [
+      "image/jpeg",
+      "image/png"
+    ],
+    "note": "Source specs may include GIF, PSD, ZIP, MP4 and other formats. The reports_ad MVP Telegram runtime accepts PNG/JPEG static uploads only."
+  },
+  "networks": [
+    {
+      "slug": "first_data_rtb_banners",
+      "display_name": "First Data RTB"
+    },
+    {
+      "slug": "first_data_rtb_html_banner",
+      "display_name": "First Data RTB"
+    },
+    {
+      "slug": "first_data_rtb_video",
+      "display_name": "First Data RTB"
+    },
+    {
+      "slug": "in_app_banner",
+      "display_name": "In-app"
+    },
+    {
+      "slug": "in_app_fullscreen",
+      "display_name": "In-app"
+    },
+    {
+      "slug": "in_app_video_15",
+      "display_name": "In-app"
+    },
+    {
+      "slug": "telegram_ads",
+      "display_name": "Telegram Ads"
+    },
+    {
+      "slug": "upravel_video",
+      "display_name": "UpRavel"
+    },
+    {
+      "slug": "app_advertising",
+      "display_name": "Video"
+    },
+    {
+      "slug": "native_banner",
+      "display_name": "Нативный баннер"
+    },
+    {
+      "slug": "supervideo",
+      "display_name": "Супервидео"
+    },
+    {
+      "slug": "yandex_graphic_banners",
+      "display_name": "Яндекс"
+    },
+    {
+      "slug": "yandex_media_banners",
+      "display_name": "Яндекс"
+    },
+    {
+      "slug": "yandex_tgo",
+      "display_name": "Яндекс"
+    },
+    {
+      "slug": "yandex_html5_banners",
+      "display_name": "Яндекс"
+    },
+    {
+      "slug": "yandex_video_banner",
+      "display_name": "Яндекс"
+    },
+    {
+      "slug": "yandex_multiformat",
+      "display_name": "Яндекс"
+    },
+    {
+      "slug": "yandex_universal_ads",
+      "display_name": "Яндекс"
+    },
+    {
+      "slug": "yandex_smart_tv_video",
+      "display_name": "Яндекс Smart TV"
+    }
+  ],
+  "specs": [
+    {
+      "slug": "yandex-graphic-banners-300x250-image",
+      "display_name": "Яндекс / графические баннеры / 300x250 / image",
+      "network_slug": "yandex_graphic_banners",
+      "network_display_name": "Яндекс",
+      "platform_slug": "yandex_graphic_banners",
+      "format_slug": "300x250",
+      "creative_type_slug": "image",
+      "width": 300,
+      "height": 250,
+      "allowed_extensions_source": [
+        "gif",
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "allowed_mime_types_source": [
+        "image/gif",
+        "image/jpeg",
+        "image/png"
+      ],
+      "runtime_allowed_extensions": [
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "runtime_allowed_mime_types": [
+        "image/jpeg",
+        "image/png"
+      ],
+      "max_file_size_bytes": 524288,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": true,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "yandex-graphic-banners-240x400-image",
+      "display_name": "Яндекс / графические баннеры / 240x400 / image",
+      "network_slug": "yandex_graphic_banners",
+      "network_display_name": "Яндекс",
+      "platform_slug": "yandex_graphic_banners",
+      "format_slug": "240x400",
+      "creative_type_slug": "image",
+      "width": 240,
+      "height": 400,
+      "allowed_extensions_source": [
+        "gif",
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "allowed_mime_types_source": [
+        "image/gif",
+        "image/jpeg",
+        "image/png"
+      ],
+      "runtime_allowed_extensions": [
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "runtime_allowed_mime_types": [
+        "image/jpeg",
+        "image/png"
+      ],
+      "max_file_size_bytes": 524288,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": true,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "yandex-graphic-banners-300x600-image",
+      "display_name": "Яндекс / графические баннеры / 300x600 / image",
+      "network_slug": "yandex_graphic_banners",
+      "network_display_name": "Яндекс",
+      "platform_slug": "yandex_graphic_banners",
+      "format_slug": "300x600",
+      "creative_type_slug": "image",
+      "width": 300,
+      "height": 600,
+      "allowed_extensions_source": [
+        "gif",
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "allowed_mime_types_source": [
+        "image/gif",
+        "image/jpeg",
+        "image/png"
+      ],
+      "runtime_allowed_extensions": [
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "runtime_allowed_mime_types": [
+        "image/jpeg",
+        "image/png"
+      ],
+      "max_file_size_bytes": 524288,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": true,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "yandex-graphic-banners-300x500-image",
+      "display_name": "Яндекс / графические баннеры / 300x500 / image",
+      "network_slug": "yandex_graphic_banners",
+      "network_display_name": "Яндекс",
+      "platform_slug": "yandex_graphic_banners",
+      "format_slug": "300x500",
+      "creative_type_slug": "image",
+      "width": 300,
+      "height": 500,
+      "allowed_extensions_source": [
+        "gif",
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "allowed_mime_types_source": [
+        "image/gif",
+        "image/jpeg",
+        "image/png"
+      ],
+      "runtime_allowed_extensions": [
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "runtime_allowed_mime_types": [
+        "image/jpeg",
+        "image/png"
+      ],
+      "max_file_size_bytes": 524288,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": true,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "yandex-graphic-banners-320x50-image",
+      "display_name": "Яндекс / графические баннеры / 320x50 / image",
+      "network_slug": "yandex_graphic_banners",
+      "network_display_name": "Яндекс",
+      "platform_slug": "yandex_graphic_banners",
+      "format_slug": "320x50",
+      "creative_type_slug": "image",
+      "width": 320,
+      "height": 50,
+      "allowed_extensions_source": [
+        "gif",
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "allowed_mime_types_source": [
+        "image/gif",
+        "image/jpeg",
+        "image/png"
+      ],
+      "runtime_allowed_extensions": [
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "runtime_allowed_mime_types": [
+        "image/jpeg",
+        "image/png"
+      ],
+      "max_file_size_bytes": 524288,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": true,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "yandex-graphic-banners-320x100-image",
+      "display_name": "Яндекс / графические баннеры / 320x100 / image",
+      "network_slug": "yandex_graphic_banners",
+      "network_display_name": "Яндекс",
+      "platform_slug": "yandex_graphic_banners",
+      "format_slug": "320x100",
+      "creative_type_slug": "image",
+      "width": 320,
+      "height": 100,
+      "allowed_extensions_source": [
+        "gif",
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "allowed_mime_types_source": [
+        "image/gif",
+        "image/jpeg",
+        "image/png"
+      ],
+      "runtime_allowed_extensions": [
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "runtime_allowed_mime_types": [
+        "image/jpeg",
+        "image/png"
+      ],
+      "max_file_size_bytes": 524288,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": true,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "yandex-graphic-banners-320x480-image",
+      "display_name": "Яндекс / графические баннеры / 320x480 / image",
+      "network_slug": "yandex_graphic_banners",
+      "network_display_name": "Яндекс",
+      "platform_slug": "yandex_graphic_banners",
+      "format_slug": "320x480",
+      "creative_type_slug": "image",
+      "width": 320,
+      "height": 480,
+      "allowed_extensions_source": [
+        "gif",
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "allowed_mime_types_source": [
+        "image/gif",
+        "image/jpeg",
+        "image/png"
+      ],
+      "runtime_allowed_extensions": [
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "runtime_allowed_mime_types": [
+        "image/jpeg",
+        "image/png"
+      ],
+      "max_file_size_bytes": 524288,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": true,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "yandex-graphic-banners-480x320-image",
+      "display_name": "Яндекс / графические баннеры / 480x320 / image",
+      "network_slug": "yandex_graphic_banners",
+      "network_display_name": "Яндекс",
+      "platform_slug": "yandex_graphic_banners",
+      "format_slug": "480x320",
+      "creative_type_slug": "image",
+      "width": 480,
+      "height": 320,
+      "allowed_extensions_source": [
+        "gif",
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "allowed_mime_types_source": [
+        "image/gif",
+        "image/jpeg",
+        "image/png"
+      ],
+      "runtime_allowed_extensions": [
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "runtime_allowed_mime_types": [
+        "image/jpeg",
+        "image/png"
+      ],
+      "max_file_size_bytes": 524288,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": true,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "yandex-graphic-banners-336x280-image",
+      "display_name": "Яндекс / графические баннеры / 336x280 / image",
+      "network_slug": "yandex_graphic_banners",
+      "network_display_name": "Яндекс",
+      "platform_slug": "yandex_graphic_banners",
+      "format_slug": "336x280",
+      "creative_type_slug": "image",
+      "width": 336,
+      "height": 280,
+      "allowed_extensions_source": [
+        "gif",
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "allowed_mime_types_source": [
+        "image/gif",
+        "image/jpeg",
+        "image/png"
+      ],
+      "runtime_allowed_extensions": [
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "runtime_allowed_mime_types": [
+        "image/jpeg",
+        "image/png"
+      ],
+      "max_file_size_bytes": 524288,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": true,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "yandex-graphic-banners-728x90-image",
+      "display_name": "Яндекс / графические баннеры / 728x90 / image",
+      "network_slug": "yandex_graphic_banners",
+      "network_display_name": "Яндекс",
+      "platform_slug": "yandex_graphic_banners",
+      "format_slug": "728x90",
+      "creative_type_slug": "image",
+      "width": 728,
+      "height": 90,
+      "allowed_extensions_source": [
+        "gif",
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "allowed_mime_types_source": [
+        "image/gif",
+        "image/jpeg",
+        "image/png"
+      ],
+      "runtime_allowed_extensions": [
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "runtime_allowed_mime_types": [
+        "image/jpeg",
+        "image/png"
+      ],
+      "max_file_size_bytes": 524288,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": true,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "yandex-media-banners-300x250-image",
+      "display_name": "Яндекс / медийные баннеры / 300x250 / image",
+      "network_slug": "yandex_media_banners",
+      "network_display_name": "Яндекс",
+      "platform_slug": "yandex_media_banners",
+      "format_slug": "300x250",
+      "creative_type_slug": "image",
+      "width": 300,
+      "height": 250,
+      "allowed_extensions_source": [
+        "gif",
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "allowed_mime_types_source": [
+        "image/gif",
+        "image/jpeg",
+        "image/png"
+      ],
+      "runtime_allowed_extensions": [
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "runtime_allowed_mime_types": [
+        "image/jpeg",
+        "image/png"
+      ],
+      "max_file_size_bytes": 524288,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": true,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "yandex-media-banners-240x400-image",
+      "display_name": "Яндекс / медийные баннеры / 240x400 / image",
+      "network_slug": "yandex_media_banners",
+      "network_display_name": "Яндекс",
+      "platform_slug": "yandex_media_banners",
+      "format_slug": "240x400",
+      "creative_type_slug": "image",
+      "width": 240,
+      "height": 400,
+      "allowed_extensions_source": [
+        "gif",
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "allowed_mime_types_source": [
+        "image/gif",
+        "image/jpeg",
+        "image/png"
+      ],
+      "runtime_allowed_extensions": [
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "runtime_allowed_mime_types": [
+        "image/jpeg",
+        "image/png"
+      ],
+      "max_file_size_bytes": 524288,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": true,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "yandex-media-banners-300x600-image",
+      "display_name": "Яндекс / медийные баннеры / 300x600 / image",
+      "network_slug": "yandex_media_banners",
+      "network_display_name": "Яндекс",
+      "platform_slug": "yandex_media_banners",
+      "format_slug": "300x600",
+      "creative_type_slug": "image",
+      "width": 300,
+      "height": 600,
+      "allowed_extensions_source": [
+        "gif",
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "allowed_mime_types_source": [
+        "image/gif",
+        "image/jpeg",
+        "image/png"
+      ],
+      "runtime_allowed_extensions": [
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "runtime_allowed_mime_types": [
+        "image/jpeg",
+        "image/png"
+      ],
+      "max_file_size_bytes": 524288,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": true,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "yandex-media-banners-300x500-image",
+      "display_name": "Яндекс / медийные баннеры / 300x500 / image",
+      "network_slug": "yandex_media_banners",
+      "network_display_name": "Яндекс",
+      "platform_slug": "yandex_media_banners",
+      "format_slug": "300x500",
+      "creative_type_slug": "image",
+      "width": 300,
+      "height": 500,
+      "allowed_extensions_source": [
+        "gif",
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "allowed_mime_types_source": [
+        "image/gif",
+        "image/jpeg",
+        "image/png"
+      ],
+      "runtime_allowed_extensions": [
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "runtime_allowed_mime_types": [
+        "image/jpeg",
+        "image/png"
+      ],
+      "max_file_size_bytes": 524288,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": true,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "yandex-media-banners-320x50-image",
+      "display_name": "Яндекс / медийные баннеры / 320x50 / image",
+      "network_slug": "yandex_media_banners",
+      "network_display_name": "Яндекс",
+      "platform_slug": "yandex_media_banners",
+      "format_slug": "320x50",
+      "creative_type_slug": "image",
+      "width": 320,
+      "height": 50,
+      "allowed_extensions_source": [
+        "gif",
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "allowed_mime_types_source": [
+        "image/gif",
+        "image/jpeg",
+        "image/png"
+      ],
+      "runtime_allowed_extensions": [
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "runtime_allowed_mime_types": [
+        "image/jpeg",
+        "image/png"
+      ],
+      "max_file_size_bytes": 524288,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": true,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "yandex-media-banners-320x100-image",
+      "display_name": "Яндекс / медийные баннеры / 320x100 / image",
+      "network_slug": "yandex_media_banners",
+      "network_display_name": "Яндекс",
+      "platform_slug": "yandex_media_banners",
+      "format_slug": "320x100",
+      "creative_type_slug": "image",
+      "width": 320,
+      "height": 100,
+      "allowed_extensions_source": [
+        "gif",
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "allowed_mime_types_source": [
+        "image/gif",
+        "image/jpeg",
+        "image/png"
+      ],
+      "runtime_allowed_extensions": [
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "runtime_allowed_mime_types": [
+        "image/jpeg",
+        "image/png"
+      ],
+      "max_file_size_bytes": 524288,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": true,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "yandex-media-banners-320x480-image",
+      "display_name": "Яндекс / медийные баннеры / 320x480 / image",
+      "network_slug": "yandex_media_banners",
+      "network_display_name": "Яндекс",
+      "platform_slug": "yandex_media_banners",
+      "format_slug": "320x480",
+      "creative_type_slug": "image",
+      "width": 320,
+      "height": 480,
+      "allowed_extensions_source": [
+        "gif",
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "allowed_mime_types_source": [
+        "image/gif",
+        "image/jpeg",
+        "image/png"
+      ],
+      "runtime_allowed_extensions": [
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "runtime_allowed_mime_types": [
+        "image/jpeg",
+        "image/png"
+      ],
+      "max_file_size_bytes": 524288,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": true,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "yandex-media-banners-480x320-image",
+      "display_name": "Яндекс / медийные баннеры / 480x320 / image",
+      "network_slug": "yandex_media_banners",
+      "network_display_name": "Яндекс",
+      "platform_slug": "yandex_media_banners",
+      "format_slug": "480x320",
+      "creative_type_slug": "image",
+      "width": 480,
+      "height": 320,
+      "allowed_extensions_source": [
+        "gif",
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "allowed_mime_types_source": [
+        "image/gif",
+        "image/jpeg",
+        "image/png"
+      ],
+      "runtime_allowed_extensions": [
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "runtime_allowed_mime_types": [
+        "image/jpeg",
+        "image/png"
+      ],
+      "max_file_size_bytes": 524288,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": true,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "yandex-media-banners-336x280-image",
+      "display_name": "Яндекс / медийные баннеры / 336x280 / image",
+      "network_slug": "yandex_media_banners",
+      "network_display_name": "Яндекс",
+      "platform_slug": "yandex_media_banners",
+      "format_slug": "336x280",
+      "creative_type_slug": "image",
+      "width": 336,
+      "height": 280,
+      "allowed_extensions_source": [
+        "gif",
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "allowed_mime_types_source": [
+        "image/gif",
+        "image/jpeg",
+        "image/png"
+      ],
+      "runtime_allowed_extensions": [
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "runtime_allowed_mime_types": [
+        "image/jpeg",
+        "image/png"
+      ],
+      "max_file_size_bytes": 524288,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": true,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "yandex-media-banners-728x90-image",
+      "display_name": "Яндекс / медийные баннеры / 728x90 / image",
+      "network_slug": "yandex_media_banners",
+      "network_display_name": "Яндекс",
+      "platform_slug": "yandex_media_banners",
+      "format_slug": "728x90",
+      "creative_type_slug": "image",
+      "width": 728,
+      "height": 90,
+      "allowed_extensions_source": [
+        "gif",
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "allowed_mime_types_source": [
+        "image/gif",
+        "image/jpeg",
+        "image/png"
+      ],
+      "runtime_allowed_extensions": [
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "runtime_allowed_mime_types": [
+        "image/jpeg",
+        "image/png"
+      ],
+      "max_file_size_bytes": 524288,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": true,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "yandex-tgo-600x600-text-image",
+      "display_name": "Яндекс / ТГО / 600x600 / text_image",
+      "network_slug": "yandex_tgo",
+      "network_display_name": "Яндекс",
+      "platform_slug": "yandex_tgo",
+      "format_slug": "600x600",
+      "creative_type_slug": "text_image",
+      "width": 600,
+      "height": 600,
+      "allowed_extensions_source": [
+        "jpeg",
+        "jpg",
+        "png",
+        "psd"
+      ],
+      "allowed_mime_types_source": [
+        "image/jpeg",
+        "image/png",
+        "image/vnd.adobe.photoshop"
+      ],
+      "runtime_allowed_extensions": [
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "runtime_allowed_mime_types": [
+        "image/jpeg",
+        "image/png"
+      ],
+      "max_file_size_bytes": 5242880,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": true,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "yandex-tgo-1080x607-text-image",
+      "display_name": "Яндекс / ТГО / 1080x607 / text_image",
+      "network_slug": "yandex_tgo",
+      "network_display_name": "Яндекс",
+      "platform_slug": "yandex_tgo",
+      "format_slug": "1080x607",
+      "creative_type_slug": "text_image",
+      "width": 1080,
+      "height": 607,
+      "allowed_extensions_source": [
+        "jpeg",
+        "jpg",
+        "png",
+        "psd"
+      ],
+      "allowed_mime_types_source": [
+        "image/jpeg",
+        "image/png",
+        "image/vnd.adobe.photoshop"
+      ],
+      "runtime_allowed_extensions": [
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "runtime_allowed_mime_types": [
+        "image/jpeg",
+        "image/png"
+      ],
+      "max_file_size_bytes": 5242880,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": true,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "yandex-html5-banners-300x250-html5",
+      "display_name": "Яндекс / HTML5-баннеры / 300x250 / html5",
+      "network_slug": "yandex_html5_banners",
+      "network_display_name": "Яндекс",
+      "platform_slug": "yandex_html5_banners",
+      "format_slug": "300x250",
+      "creative_type_slug": "html5",
+      "width": 300,
+      "height": 250,
+      "allowed_extensions_source": [
+        "zip"
+      ],
+      "allowed_mime_types_source": [
+        "application/zip"
+      ],
+      "runtime_allowed_extensions": [],
+      "runtime_allowed_mime_types": [],
+      "max_file_size_bytes": 524288,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": false,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "yandex-video-banner-1280x720-video",
+      "display_name": "Яндекс / видеобаннер / 1280x720 / video",
+      "network_slug": "yandex_video_banner",
+      "network_display_name": "Яндекс",
+      "platform_slug": "yandex_video_banner",
+      "format_slug": "1280x720",
+      "creative_type_slug": "video",
+      "width": 1280,
+      "height": 720,
+      "allowed_extensions_source": [
+        "avi",
+        "flv",
+        "mov",
+        "mp4",
+        "qt",
+        "webm"
+      ],
+      "allowed_mime_types_source": [
+        "video/mp4",
+        "video/quicktime",
+        "video/webm",
+        "video/x-flv",
+        "video/x-msvideo"
+      ],
+      "runtime_allowed_extensions": [],
+      "runtime_allowed_mime_types": [],
+      "max_file_size_bytes": 104857600,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": false,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "yandex-multiformat-multi-asset-text-image",
+      "display_name": "Яндекс / мультиформат / multi_asset / text_image",
+      "network_slug": "yandex_multiformat",
+      "network_display_name": "Яндекс",
+      "platform_slug": "yandex_multiformat",
+      "format_slug": "multi_asset",
+      "creative_type_slug": "text_image",
+      "width": null,
+      "height": null,
+      "allowed_extensions_source": [
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "allowed_mime_types_source": [
+        "image/jpeg",
+        "image/png"
+      ],
+      "runtime_allowed_extensions": [
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "runtime_allowed_mime_types": [
+        "image/jpeg",
+        "image/png"
+      ],
+      "max_file_size_bytes": 5242880,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": false,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "yandex-universal-ads-600x600-text-image",
+      "display_name": "Яндекс / универсальные объявления / 600x600 / text_image",
+      "network_slug": "yandex_universal_ads",
+      "network_display_name": "Яндекс",
+      "platform_slug": "yandex_universal_ads",
+      "format_slug": "600x600",
+      "creative_type_slug": "text_image",
+      "width": 600,
+      "height": 600,
+      "allowed_extensions_source": [
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "allowed_mime_types_source": [
+        "image/jpeg",
+        "image/png"
+      ],
+      "runtime_allowed_extensions": [
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "runtime_allowed_mime_types": [
+        "image/jpeg",
+        "image/png"
+      ],
+      "max_file_size_bytes": 5242880,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": true,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "yandex-universal-ads-1080x607-text-image",
+      "display_name": "Яндекс / универсальные объявления / 1080x607 / text_image",
+      "network_slug": "yandex_universal_ads",
+      "network_display_name": "Яндекс",
+      "platform_slug": "yandex_universal_ads",
+      "format_slug": "1080x607",
+      "creative_type_slug": "text_image",
+      "width": 1080,
+      "height": 607,
+      "allowed_extensions_source": [
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "allowed_mime_types_source": [
+        "image/jpeg",
+        "image/png"
+      ],
+      "runtime_allowed_extensions": [
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "runtime_allowed_mime_types": [
+        "image/jpeg",
+        "image/png"
+      ],
+      "max_file_size_bytes": 5242880,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": true,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "first-data-rtb-banners-300x250-image",
+      "display_name": "First Data RTB / баннеры / 300x250 / image",
+      "network_slug": "first_data_rtb_banners",
+      "network_display_name": "First Data RTB",
+      "platform_slug": "first_data_rtb_banners",
+      "format_slug": "300x250",
+      "creative_type_slug": "image",
+      "width": 300,
+      "height": 250,
+      "allowed_extensions_source": [
+        "gif",
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "allowed_mime_types_source": [
+        "image/gif",
+        "image/jpeg",
+        "image/png"
+      ],
+      "runtime_allowed_extensions": [
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "runtime_allowed_mime_types": [
+        "image/jpeg",
+        "image/png"
+      ],
+      "max_file_size_bytes": 153600,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": true,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "first-data-rtb-banners-160x600-image",
+      "display_name": "First Data RTB / баннеры / 160x600 / image",
+      "network_slug": "first_data_rtb_banners",
+      "network_display_name": "First Data RTB",
+      "platform_slug": "first_data_rtb_banners",
+      "format_slug": "160x600",
+      "creative_type_slug": "image",
+      "width": 160,
+      "height": 600,
+      "allowed_extensions_source": [
+        "gif",
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "allowed_mime_types_source": [
+        "image/gif",
+        "image/jpeg",
+        "image/png"
+      ],
+      "runtime_allowed_extensions": [
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "runtime_allowed_mime_types": [
+        "image/jpeg",
+        "image/png"
+      ],
+      "max_file_size_bytes": 153600,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": true,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "first-data-rtb-banners-240x400-image",
+      "display_name": "First Data RTB / баннеры / 240x400 / image",
+      "network_slug": "first_data_rtb_banners",
+      "network_display_name": "First Data RTB",
+      "platform_slug": "first_data_rtb_banners",
+      "format_slug": "240x400",
+      "creative_type_slug": "image",
+      "width": 240,
+      "height": 400,
+      "allowed_extensions_source": [
+        "gif",
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "allowed_mime_types_source": [
+        "image/gif",
+        "image/jpeg",
+        "image/png"
+      ],
+      "runtime_allowed_extensions": [
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "runtime_allowed_mime_types": [
+        "image/jpeg",
+        "image/png"
+      ],
+      "max_file_size_bytes": 153600,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": true,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "first-data-rtb-banners-250x250-image",
+      "display_name": "First Data RTB / баннеры / 250x250 / image",
+      "network_slug": "first_data_rtb_banners",
+      "network_display_name": "First Data RTB",
+      "platform_slug": "first_data_rtb_banners",
+      "format_slug": "250x250",
+      "creative_type_slug": "image",
+      "width": 250,
+      "height": 250,
+      "allowed_extensions_source": [
+        "gif",
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "allowed_mime_types_source": [
+        "image/gif",
+        "image/jpeg",
+        "image/png"
+      ],
+      "runtime_allowed_extensions": [
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "runtime_allowed_mime_types": [
+        "image/jpeg",
+        "image/png"
+      ],
+      "max_file_size_bytes": 153600,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": true,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "first-data-rtb-banners-300x50-image",
+      "display_name": "First Data RTB / баннеры / 300x50 / image",
+      "network_slug": "first_data_rtb_banners",
+      "network_display_name": "First Data RTB",
+      "platform_slug": "first_data_rtb_banners",
+      "format_slug": "300x50",
+      "creative_type_slug": "image",
+      "width": 300,
+      "height": 50,
+      "allowed_extensions_source": [
+        "gif",
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "allowed_mime_types_source": [
+        "image/gif",
+        "image/jpeg",
+        "image/png"
+      ],
+      "runtime_allowed_extensions": [
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "runtime_allowed_mime_types": [
+        "image/jpeg",
+        "image/png"
+      ],
+      "max_file_size_bytes": 153600,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": true,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "first-data-rtb-banners-300x300-image",
+      "display_name": "First Data RTB / баннеры / 300x300 / image",
+      "network_slug": "first_data_rtb_banners",
+      "network_display_name": "First Data RTB",
+      "platform_slug": "first_data_rtb_banners",
+      "format_slug": "300x300",
+      "creative_type_slug": "image",
+      "width": 300,
+      "height": 300,
+      "allowed_extensions_source": [
+        "gif",
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "allowed_mime_types_source": [
+        "image/gif",
+        "image/jpeg",
+        "image/png"
+      ],
+      "runtime_allowed_extensions": [
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "runtime_allowed_mime_types": [
+        "image/jpeg",
+        "image/png"
+      ],
+      "max_file_size_bytes": 153600,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": true,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "first-data-rtb-banners-300x500-image",
+      "display_name": "First Data RTB / баннеры / 300x500 / image",
+      "network_slug": "first_data_rtb_banners",
+      "network_display_name": "First Data RTB",
+      "platform_slug": "first_data_rtb_banners",
+      "format_slug": "300x500",
+      "creative_type_slug": "image",
+      "width": 300,
+      "height": 500,
+      "allowed_extensions_source": [
+        "gif",
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "allowed_mime_types_source": [
+        "image/gif",
+        "image/jpeg",
+        "image/png"
+      ],
+      "runtime_allowed_extensions": [
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "runtime_allowed_mime_types": [
+        "image/jpeg",
+        "image/png"
+      ],
+      "max_file_size_bytes": 153600,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": true,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "first-data-rtb-banners-300x600-image",
+      "display_name": "First Data RTB / баннеры / 300x600 / image",
+      "network_slug": "first_data_rtb_banners",
+      "network_display_name": "First Data RTB",
+      "platform_slug": "first_data_rtb_banners",
+      "format_slug": "300x600",
+      "creative_type_slug": "image",
+      "width": 300,
+      "height": 600,
+      "allowed_extensions_source": [
+        "gif",
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "allowed_mime_types_source": [
+        "image/gif",
+        "image/jpeg",
+        "image/png"
+      ],
+      "runtime_allowed_extensions": [
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "runtime_allowed_mime_types": [
+        "image/jpeg",
+        "image/png"
+      ],
+      "max_file_size_bytes": 153600,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": true,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "first-data-rtb-banners-320x50-image",
+      "display_name": "First Data RTB / баннеры / 320x50 / image",
+      "network_slug": "first_data_rtb_banners",
+      "network_display_name": "First Data RTB",
+      "platform_slug": "first_data_rtb_banners",
+      "format_slug": "320x50",
+      "creative_type_slug": "image",
+      "width": 320,
+      "height": 50,
+      "allowed_extensions_source": [
+        "gif",
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "allowed_mime_types_source": [
+        "image/gif",
+        "image/jpeg",
+        "image/png"
+      ],
+      "runtime_allowed_extensions": [
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "runtime_allowed_mime_types": [
+        "image/jpeg",
+        "image/png"
+      ],
+      "max_file_size_bytes": 153600,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": true,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "first-data-rtb-banners-320x100-image",
+      "display_name": "First Data RTB / баннеры / 320x100 / image",
+      "network_slug": "first_data_rtb_banners",
+      "network_display_name": "First Data RTB",
+      "platform_slug": "first_data_rtb_banners",
+      "format_slug": "320x100",
+      "creative_type_slug": "image",
+      "width": 320,
+      "height": 100,
+      "allowed_extensions_source": [
+        "gif",
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "allowed_mime_types_source": [
+        "image/gif",
+        "image/jpeg",
+        "image/png"
+      ],
+      "runtime_allowed_extensions": [
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "runtime_allowed_mime_types": [
+        "image/jpeg",
+        "image/png"
+      ],
+      "max_file_size_bytes": 153600,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": true,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "first-data-rtb-banners-320x480-image",
+      "display_name": "First Data RTB / баннеры / 320x480 / image",
+      "network_slug": "first_data_rtb_banners",
+      "network_display_name": "First Data RTB",
+      "platform_slug": "first_data_rtb_banners",
+      "format_slug": "320x480",
+      "creative_type_slug": "image",
+      "width": 320,
+      "height": 480,
+      "allowed_extensions_source": [
+        "gif",
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "allowed_mime_types_source": [
+        "image/gif",
+        "image/jpeg",
+        "image/png"
+      ],
+      "runtime_allowed_extensions": [
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "runtime_allowed_mime_types": [
+        "image/jpeg",
+        "image/png"
+      ],
+      "max_file_size_bytes": 153600,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": true,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "first-data-rtb-banners-336x280-image",
+      "display_name": "First Data RTB / баннеры / 336x280 / image",
+      "network_slug": "first_data_rtb_banners",
+      "network_display_name": "First Data RTB",
+      "platform_slug": "first_data_rtb_banners",
+      "format_slug": "336x280",
+      "creative_type_slug": "image",
+      "width": 336,
+      "height": 280,
+      "allowed_extensions_source": [
+        "gif",
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "allowed_mime_types_source": [
+        "image/gif",
+        "image/jpeg",
+        "image/png"
+      ],
+      "runtime_allowed_extensions": [
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "runtime_allowed_mime_types": [
+        "image/jpeg",
+        "image/png"
+      ],
+      "max_file_size_bytes": 153600,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": true,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "first-data-rtb-banners-480x320-image",
+      "display_name": "First Data RTB / баннеры / 480x320 / image",
+      "network_slug": "first_data_rtb_banners",
+      "network_display_name": "First Data RTB",
+      "platform_slug": "first_data_rtb_banners",
+      "format_slug": "480x320",
+      "creative_type_slug": "image",
+      "width": 480,
+      "height": 320,
+      "allowed_extensions_source": [
+        "gif",
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "allowed_mime_types_source": [
+        "image/gif",
+        "image/jpeg",
+        "image/png"
+      ],
+      "runtime_allowed_extensions": [
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "runtime_allowed_mime_types": [
+        "image/jpeg",
+        "image/png"
+      ],
+      "max_file_size_bytes": 153600,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": true,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "first-data-rtb-banners-580x400-image",
+      "display_name": "First Data RTB / баннеры / 580x400 / image",
+      "network_slug": "first_data_rtb_banners",
+      "network_display_name": "First Data RTB",
+      "platform_slug": "first_data_rtb_banners",
+      "format_slug": "580x400",
+      "creative_type_slug": "image",
+      "width": 580,
+      "height": 400,
+      "allowed_extensions_source": [
+        "gif",
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "allowed_mime_types_source": [
+        "image/gif",
+        "image/jpeg",
+        "image/png"
+      ],
+      "runtime_allowed_extensions": [
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "runtime_allowed_mime_types": [
+        "image/jpeg",
+        "image/png"
+      ],
+      "max_file_size_bytes": 153600,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": true,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "first-data-rtb-banners-728x90-image",
+      "display_name": "First Data RTB / баннеры / 728x90 / image",
+      "network_slug": "first_data_rtb_banners",
+      "network_display_name": "First Data RTB",
+      "platform_slug": "first_data_rtb_banners",
+      "format_slug": "728x90",
+      "creative_type_slug": "image",
+      "width": 728,
+      "height": 90,
+      "allowed_extensions_source": [
+        "gif",
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "allowed_mime_types_source": [
+        "image/gif",
+        "image/jpeg",
+        "image/png"
+      ],
+      "runtime_allowed_extensions": [
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "runtime_allowed_mime_types": [
+        "image/jpeg",
+        "image/png"
+      ],
+      "max_file_size_bytes": 153600,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": true,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "first-data-rtb-banners-970x90-image",
+      "display_name": "First Data RTB / баннеры / 970x90 / image",
+      "network_slug": "first_data_rtb_banners",
+      "network_display_name": "First Data RTB",
+      "platform_slug": "first_data_rtb_banners",
+      "format_slug": "970x90",
+      "creative_type_slug": "image",
+      "width": 970,
+      "height": 90,
+      "allowed_extensions_source": [
+        "gif",
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "allowed_mime_types_source": [
+        "image/gif",
+        "image/jpeg",
+        "image/png"
+      ],
+      "runtime_allowed_extensions": [
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "runtime_allowed_mime_types": [
+        "image/jpeg",
+        "image/png"
+      ],
+      "max_file_size_bytes": 153600,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": true,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "first-data-rtb-banners-970x250-image",
+      "display_name": "First Data RTB / баннеры / 970x250 / image",
+      "network_slug": "first_data_rtb_banners",
+      "network_display_name": "First Data RTB",
+      "platform_slug": "first_data_rtb_banners",
+      "format_slug": "970x250",
+      "creative_type_slug": "image",
+      "width": 970,
+      "height": 250,
+      "allowed_extensions_source": [
+        "gif",
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "allowed_mime_types_source": [
+        "image/gif",
+        "image/jpeg",
+        "image/png"
+      ],
+      "runtime_allowed_extensions": [
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "runtime_allowed_mime_types": [
+        "image/jpeg",
+        "image/png"
+      ],
+      "max_file_size_bytes": 153600,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": true,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "first-data-rtb-html-banner-300x250-html5",
+      "display_name": "First Data RTB / HTML-баннер / 300x250 / html5",
+      "network_slug": "first_data_rtb_html_banner",
+      "network_display_name": "First Data RTB",
+      "platform_slug": "first_data_rtb_html_banner",
+      "format_slug": "300x250",
+      "creative_type_slug": "html5",
+      "width": 300,
+      "height": 250,
+      "allowed_extensions_source": [
+        "zip"
+      ],
+      "allowed_mime_types_source": [
+        "application/zip"
+      ],
+      "runtime_allowed_extensions": [],
+      "runtime_allowed_mime_types": [],
+      "max_file_size_bytes": 5242880,
+      "requires_ad_marking": true,
+      "runtime_upload_supported": false,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "first-data-rtb-html-banner-320x480-html5",
+      "display_name": "First Data RTB / HTML-баннер / 320x480 / html5",
+      "network_slug": "first_data_rtb_html_banner",
+      "network_display_name": "First Data RTB",
+      "platform_slug": "first_data_rtb_html_banner",
+      "format_slug": "320x480",
+      "creative_type_slug": "html5",
+      "width": 320,
+      "height": 480,
+      "allowed_extensions_source": [
+        "zip"
+      ],
+      "allowed_mime_types_source": [
+        "application/zip"
+      ],
+      "runtime_allowed_extensions": [],
+      "runtime_allowed_mime_types": [],
+      "max_file_size_bytes": 5242880,
+      "requires_ad_marking": true,
+      "runtime_upload_supported": false,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "first-data-rtb-video-300x250-image",
+      "display_name": "First Data RTB / companion banner / 300x250 / image",
+      "network_slug": "first_data_rtb_video",
+      "network_display_name": "First Data RTB",
+      "platform_slug": "first_data_rtb_video",
+      "format_slug": "300x250",
+      "creative_type_slug": "image",
+      "width": 300,
+      "height": 250,
+      "allowed_extensions_source": [
+        "gif",
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "allowed_mime_types_source": [
+        "image/gif",
+        "image/jpeg",
+        "image/png"
+      ],
+      "runtime_allowed_extensions": [
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "runtime_allowed_mime_types": [
+        "image/jpeg",
+        "image/png"
+      ],
+      "max_file_size_bytes": 153600,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": true,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "first-data-rtb-video-1280x720-video",
+      "display_name": "First Data RTB / видео / 1280x720 / video",
+      "network_slug": "first_data_rtb_video",
+      "network_display_name": "First Data RTB",
+      "platform_slug": "first_data_rtb_video",
+      "format_slug": "1280x720",
+      "creative_type_slug": "video",
+      "width": 1280,
+      "height": 720,
+      "allowed_extensions_source": [
+        "flv",
+        "mp4",
+        "webm"
+      ],
+      "allowed_mime_types_source": [
+        "video/mp4",
+        "video/webm",
+        "video/x-flv"
+      ],
+      "runtime_allowed_extensions": [],
+      "runtime_allowed_mime_types": [],
+      "max_file_size_bytes": 104857600,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": false,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "first-data-rtb-video-576x320-video",
+      "display_name": "First Data RTB / видео / 576x320 / video",
+      "network_slug": "first_data_rtb_video",
+      "network_display_name": "First Data RTB",
+      "platform_slug": "first_data_rtb_video",
+      "format_slug": "576x320",
+      "creative_type_slug": "video",
+      "width": 576,
+      "height": 320,
+      "allowed_extensions_source": [
+        "flv",
+        "mp4",
+        "webm"
+      ],
+      "allowed_mime_types_source": [
+        "video/mp4",
+        "video/webm",
+        "video/x-flv"
+      ],
+      "runtime_allowed_extensions": [],
+      "runtime_allowed_mime_types": [],
+      "max_file_size_bytes": 104857600,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": false,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "first-data-rtb-video-640x360-video",
+      "display_name": "First Data RTB / видео / 640x360 / video",
+      "network_slug": "first_data_rtb_video",
+      "network_display_name": "First Data RTB",
+      "platform_slug": "first_data_rtb_video",
+      "format_slug": "640x360",
+      "creative_type_slug": "video",
+      "width": 640,
+      "height": 360,
+      "allowed_extensions_source": [
+        "flv",
+        "mp4",
+        "webm"
+      ],
+      "allowed_mime_types_source": [
+        "video/mp4",
+        "video/webm",
+        "video/x-flv"
+      ],
+      "runtime_allowed_extensions": [],
+      "runtime_allowed_mime_types": [],
+      "max_file_size_bytes": 104857600,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": false,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "first-data-rtb-video-1920x1080-video",
+      "display_name": "First Data RTB / видео / 1920x1080 / video",
+      "network_slug": "first_data_rtb_video",
+      "network_display_name": "First Data RTB",
+      "platform_slug": "first_data_rtb_video",
+      "format_slug": "1920x1080",
+      "creative_type_slug": "video",
+      "width": 1920,
+      "height": 1080,
+      "allowed_extensions_source": [
+        "flv",
+        "mp4",
+        "webm"
+      ],
+      "allowed_mime_types_source": [
+        "video/mp4",
+        "video/webm",
+        "video/x-flv"
+      ],
+      "runtime_allowed_extensions": [],
+      "runtime_allowed_mime_types": [],
+      "max_file_size_bytes": 104857600,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": false,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "yandex-smart-tv-video-1920x1080-video",
+      "display_name": "Яндекс Smart TV / видео / 1920x1080 / video",
+      "network_slug": "yandex_smart_tv_video",
+      "network_display_name": "Яндекс Smart TV",
+      "platform_slug": "yandex_smart_tv_video",
+      "format_slug": "1920x1080",
+      "creative_type_slug": "video",
+      "width": 1920,
+      "height": 1080,
+      "allowed_extensions_source": [
+        "avi",
+        "flv",
+        "mov",
+        "mp4",
+        "qt",
+        "webm"
+      ],
+      "allowed_mime_types_source": [
+        "video/mp4",
+        "video/quicktime",
+        "video/webm",
+        "video/x-flv",
+        "video/x-msvideo"
+      ],
+      "runtime_allowed_extensions": [],
+      "runtime_allowed_mime_types": [],
+      "max_file_size_bytes": 104857600,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": false,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "supervideo-1280x720-video",
+      "display_name": "Супервидео / 1280x720 / video",
+      "network_slug": "supervideo",
+      "network_display_name": "Супервидео",
+      "platform_slug": "supervideo",
+      "format_slug": "1280x720",
+      "creative_type_slug": "video",
+      "width": 1280,
+      "height": 720,
+      "allowed_extensions_source": [
+        "mp4"
+      ],
+      "allowed_mime_types_source": [
+        "video/mp4"
+      ],
+      "runtime_allowed_extensions": [],
+      "runtime_allowed_mime_types": [],
+      "max_file_size_bytes": 10485760,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": false,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "supervideo-640x360-video",
+      "display_name": "Супервидео / 640x360 / video",
+      "network_slug": "supervideo",
+      "network_display_name": "Супервидео",
+      "platform_slug": "supervideo",
+      "format_slug": "640x360",
+      "creative_type_slug": "video",
+      "width": 640,
+      "height": 360,
+      "allowed_extensions_source": [
+        "mp4"
+      ],
+      "allowed_mime_types_source": [
+        "video/mp4"
+      ],
+      "runtime_allowed_extensions": [],
+      "runtime_allowed_mime_types": [],
+      "max_file_size_bytes": 10485760,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": false,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "supervideo-1920x1080-video",
+      "display_name": "Супервидео / 1920x1080 / video",
+      "network_slug": "supervideo",
+      "network_display_name": "Супервидео",
+      "platform_slug": "supervideo",
+      "format_slug": "1920x1080",
+      "creative_type_slug": "video",
+      "width": 1920,
+      "height": 1080,
+      "allowed_extensions_source": [
+        "mp4"
+      ],
+      "allowed_mime_types_source": [
+        "video/mp4"
+      ],
+      "runtime_allowed_extensions": [],
+      "runtime_allowed_mime_types": [],
+      "max_file_size_bytes": 10485760,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": false,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "in-app-banner-300x250-image",
+      "display_name": "In-app / Banner / 300x250 / image",
+      "network_slug": "in_app_banner",
+      "network_display_name": "In-app",
+      "platform_slug": "in_app_banner",
+      "format_slug": "300x250",
+      "creative_type_slug": "image",
+      "width": 300,
+      "height": 250,
+      "allowed_extensions_source": [
+        "gif",
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "allowed_mime_types_source": [
+        "image/gif",
+        "image/jpeg",
+        "image/png"
+      ],
+      "runtime_allowed_extensions": [
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "runtime_allowed_mime_types": [
+        "image/jpeg",
+        "image/png"
+      ],
+      "max_file_size_bytes": 153600,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": true,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "in-app-banner-320x100-image",
+      "display_name": "In-app / Banner / 320x100 / image",
+      "network_slug": "in_app_banner",
+      "network_display_name": "In-app",
+      "platform_slug": "in_app_banner",
+      "format_slug": "320x100",
+      "creative_type_slug": "image",
+      "width": 320,
+      "height": 100,
+      "allowed_extensions_source": [
+        "gif",
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "allowed_mime_types_source": [
+        "image/gif",
+        "image/jpeg",
+        "image/png"
+      ],
+      "runtime_allowed_extensions": [
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "runtime_allowed_mime_types": [
+        "image/jpeg",
+        "image/png"
+      ],
+      "max_file_size_bytes": 153600,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": true,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "in-app-banner-320x50-image",
+      "display_name": "In-app / Banner / 320x50 / image",
+      "network_slug": "in_app_banner",
+      "network_display_name": "In-app",
+      "platform_slug": "in_app_banner",
+      "format_slug": "320x50",
+      "creative_type_slug": "image",
+      "width": 320,
+      "height": 50,
+      "allowed_extensions_source": [
+        "gif",
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "allowed_mime_types_source": [
+        "image/gif",
+        "image/jpeg",
+        "image/png"
+      ],
+      "runtime_allowed_extensions": [
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "runtime_allowed_mime_types": [
+        "image/jpeg",
+        "image/png"
+      ],
+      "max_file_size_bytes": 153600,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": true,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "in-app-banner-300x250-html5",
+      "display_name": "In-app / Banner / 300x250 / html5",
+      "network_slug": "in_app_banner",
+      "network_display_name": "In-app",
+      "platform_slug": "in_app_banner",
+      "format_slug": "300x250",
+      "creative_type_slug": "html5",
+      "width": 300,
+      "height": 250,
+      "allowed_extensions_source": [
+        "zip"
+      ],
+      "allowed_mime_types_source": [
+        "application/zip"
+      ],
+      "runtime_allowed_extensions": [],
+      "runtime_allowed_mime_types": [],
+      "max_file_size_bytes": 153600,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": false,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "in-app-banner-320x100-html5",
+      "display_name": "In-app / Banner / 320x100 / html5",
+      "network_slug": "in_app_banner",
+      "network_display_name": "In-app",
+      "platform_slug": "in_app_banner",
+      "format_slug": "320x100",
+      "creative_type_slug": "html5",
+      "width": 320,
+      "height": 100,
+      "allowed_extensions_source": [
+        "zip"
+      ],
+      "allowed_mime_types_source": [
+        "application/zip"
+      ],
+      "runtime_allowed_extensions": [],
+      "runtime_allowed_mime_types": [],
+      "max_file_size_bytes": 153600,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": false,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "in-app-banner-320x50-html5",
+      "display_name": "In-app / Banner / 320x50 / html5",
+      "network_slug": "in_app_banner",
+      "network_display_name": "In-app",
+      "platform_slug": "in_app_banner",
+      "format_slug": "320x50",
+      "creative_type_slug": "html5",
+      "width": 320,
+      "height": 50,
+      "allowed_extensions_source": [
+        "zip"
+      ],
+      "allowed_mime_types_source": [
+        "application/zip"
+      ],
+      "runtime_allowed_extensions": [],
+      "runtime_allowed_mime_types": [],
+      "max_file_size_bytes": 153600,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": false,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "in-app-fullscreen-320x480-image",
+      "display_name": "In-app / Fullscreen / 320x480 / image",
+      "network_slug": "in_app_fullscreen",
+      "network_display_name": "In-app",
+      "platform_slug": "in_app_fullscreen",
+      "format_slug": "320x480",
+      "creative_type_slug": "image",
+      "width": 320,
+      "height": 480,
+      "allowed_extensions_source": [
+        "gif",
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "allowed_mime_types_source": [
+        "image/gif",
+        "image/jpeg",
+        "image/png"
+      ],
+      "runtime_allowed_extensions": [
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "runtime_allowed_mime_types": [
+        "image/jpeg",
+        "image/png"
+      ],
+      "max_file_size_bytes": 153600,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": true,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "in-app-fullscreen-480x320-image",
+      "display_name": "In-app / Fullscreen / 480x320 / image",
+      "network_slug": "in_app_fullscreen",
+      "network_display_name": "In-app",
+      "platform_slug": "in_app_fullscreen",
+      "format_slug": "480x320",
+      "creative_type_slug": "image",
+      "width": 480,
+      "height": 320,
+      "allowed_extensions_source": [
+        "gif",
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "allowed_mime_types_source": [
+        "image/gif",
+        "image/jpeg",
+        "image/png"
+      ],
+      "runtime_allowed_extensions": [
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "runtime_allowed_mime_types": [
+        "image/jpeg",
+        "image/png"
+      ],
+      "max_file_size_bytes": 153600,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": true,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "in-app-fullscreen-1024x768-image",
+      "display_name": "In-app / Fullscreen / 1024x768 / image",
+      "network_slug": "in_app_fullscreen",
+      "network_display_name": "In-app",
+      "platform_slug": "in_app_fullscreen",
+      "format_slug": "1024x768",
+      "creative_type_slug": "image",
+      "width": 1024,
+      "height": 768,
+      "allowed_extensions_source": [
+        "gif",
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "allowed_mime_types_source": [
+        "image/gif",
+        "image/jpeg",
+        "image/png"
+      ],
+      "runtime_allowed_extensions": [
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "runtime_allowed_mime_types": [
+        "image/jpeg",
+        "image/png"
+      ],
+      "max_file_size_bytes": 153600,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": true,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "in-app-fullscreen-768x1024-image",
+      "display_name": "In-app / Fullscreen / 768x1024 / image",
+      "network_slug": "in_app_fullscreen",
+      "network_display_name": "In-app",
+      "platform_slug": "in_app_fullscreen",
+      "format_slug": "768x1024",
+      "creative_type_slug": "image",
+      "width": 768,
+      "height": 1024,
+      "allowed_extensions_source": [
+        "gif",
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "allowed_mime_types_source": [
+        "image/gif",
+        "image/jpeg",
+        "image/png"
+      ],
+      "runtime_allowed_extensions": [
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "runtime_allowed_mime_types": [
+        "image/jpeg",
+        "image/png"
+      ],
+      "max_file_size_bytes": 153600,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": true,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "in-app-fullscreen-320x480-html5",
+      "display_name": "In-app / Fullscreen / 320x480 / html5",
+      "network_slug": "in_app_fullscreen",
+      "network_display_name": "In-app",
+      "platform_slug": "in_app_fullscreen",
+      "format_slug": "320x480",
+      "creative_type_slug": "html5",
+      "width": 320,
+      "height": 480,
+      "allowed_extensions_source": [
+        "zip"
+      ],
+      "allowed_mime_types_source": [
+        "application/zip"
+      ],
+      "runtime_allowed_extensions": [],
+      "runtime_allowed_mime_types": [],
+      "max_file_size_bytes": 153600,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": false,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "in-app-fullscreen-480x320-html5",
+      "display_name": "In-app / Fullscreen / 480x320 / html5",
+      "network_slug": "in_app_fullscreen",
+      "network_display_name": "In-app",
+      "platform_slug": "in_app_fullscreen",
+      "format_slug": "480x320",
+      "creative_type_slug": "html5",
+      "width": 480,
+      "height": 320,
+      "allowed_extensions_source": [
+        "zip"
+      ],
+      "allowed_mime_types_source": [
+        "application/zip"
+      ],
+      "runtime_allowed_extensions": [],
+      "runtime_allowed_mime_types": [],
+      "max_file_size_bytes": 153600,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": false,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "in-app-fullscreen-1024x768-html5",
+      "display_name": "In-app / Fullscreen / 1024x768 / html5",
+      "network_slug": "in_app_fullscreen",
+      "network_display_name": "In-app",
+      "platform_slug": "in_app_fullscreen",
+      "format_slug": "1024x768",
+      "creative_type_slug": "html5",
+      "width": 1024,
+      "height": 768,
+      "allowed_extensions_source": [
+        "zip"
+      ],
+      "allowed_mime_types_source": [
+        "application/zip"
+      ],
+      "runtime_allowed_extensions": [],
+      "runtime_allowed_mime_types": [],
+      "max_file_size_bytes": 153600,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": false,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "in-app-fullscreen-768x1024-html5",
+      "display_name": "In-app / Fullscreen / 768x1024 / html5",
+      "network_slug": "in_app_fullscreen",
+      "network_display_name": "In-app",
+      "platform_slug": "in_app_fullscreen",
+      "format_slug": "768x1024",
+      "creative_type_slug": "html5",
+      "width": 768,
+      "height": 1024,
+      "allowed_extensions_source": [
+        "zip"
+      ],
+      "allowed_mime_types_source": [
+        "application/zip"
+      ],
+      "runtime_allowed_extensions": [],
+      "runtime_allowed_mime_types": [],
+      "max_file_size_bytes": 153600,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": false,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "in-app-video-15-960x640-video",
+      "display_name": "In-app / Video 15 sec / 960x640 / video",
+      "network_slug": "in_app_video_15",
+      "network_display_name": "In-app",
+      "platform_slug": "in_app_video_15",
+      "format_slug": "960x640",
+      "creative_type_slug": "video",
+      "width": 960,
+      "height": 640,
+      "allowed_extensions_source": [
+        "mp4"
+      ],
+      "allowed_mime_types_source": [
+        "video/mp4"
+      ],
+      "runtime_allowed_extensions": [],
+      "runtime_allowed_mime_types": [],
+      "max_file_size_bytes": 3145728,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": false,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "in-app-video-15-640x960-video",
+      "display_name": "In-app / Video 15 sec / 640x960 / video",
+      "network_slug": "in_app_video_15",
+      "network_display_name": "In-app",
+      "platform_slug": "in_app_video_15",
+      "format_slug": "640x960",
+      "creative_type_slug": "video",
+      "width": 640,
+      "height": 960,
+      "allowed_extensions_source": [
+        "mp4"
+      ],
+      "allowed_mime_types_source": [
+        "video/mp4"
+      ],
+      "runtime_allowed_extensions": [],
+      "runtime_allowed_mime_types": [],
+      "max_file_size_bytes": 3145728,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": false,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "upravel-video-1920x1080-video",
+      "display_name": "UpRavel / видео / 1920x1080 / video",
+      "network_slug": "upravel_video",
+      "network_display_name": "UpRavel",
+      "platform_slug": "upravel_video",
+      "format_slug": "1920x1080",
+      "creative_type_slug": "video",
+      "width": 1920,
+      "height": 1080,
+      "allowed_extensions_source": [
+        "mp4"
+      ],
+      "allowed_mime_types_source": [
+        "video/mp4"
+      ],
+      "runtime_allowed_extensions": [],
+      "runtime_allowed_mime_types": [],
+      "max_file_size_bytes": 5242880,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": false,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "upravel-video-1080x1920-video",
+      "display_name": "UpRavel / видео / 1080x1920 / video",
+      "network_slug": "upravel_video",
+      "network_display_name": "UpRavel",
+      "platform_slug": "upravel_video",
+      "format_slug": "1080x1920",
+      "creative_type_slug": "video",
+      "width": 1080,
+      "height": 1920,
+      "allowed_extensions_source": [
+        "mp4"
+      ],
+      "allowed_mime_types_source": [
+        "video/mp4"
+      ],
+      "runtime_allowed_extensions": [],
+      "runtime_allowed_mime_types": [],
+      "max_file_size_bytes": 5242880,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": false,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "upravel-video-320x480-video",
+      "display_name": "UpRavel / видео / 320x480 / video",
+      "network_slug": "upravel_video",
+      "network_display_name": "UpRavel",
+      "platform_slug": "upravel_video",
+      "format_slug": "320x480",
+      "creative_type_slug": "video",
+      "width": 320,
+      "height": 480,
+      "allowed_extensions_source": [
+        "mp4"
+      ],
+      "allowed_mime_types_source": [
+        "video/mp4"
+      ],
+      "runtime_allowed_extensions": [],
+      "runtime_allowed_mime_types": [],
+      "max_file_size_bytes": 5242880,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": false,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "upravel-video-400x250-video",
+      "display_name": "UpRavel / видео / 400x250 / video",
+      "network_slug": "upravel_video",
+      "network_display_name": "UpRavel",
+      "platform_slug": "upravel_video",
+      "format_slug": "400x250",
+      "creative_type_slug": "video",
+      "width": 400,
+      "height": 250,
+      "allowed_extensions_source": [
+        "mp4"
+      ],
+      "allowed_mime_types_source": [
+        "video/mp4"
+      ],
+      "runtime_allowed_extensions": [],
+      "runtime_allowed_mime_types": [],
+      "max_file_size_bytes": 5242880,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": false,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "upravel-video-480x320-video",
+      "display_name": "UpRavel / видео / 480x320 / video",
+      "network_slug": "upravel_video",
+      "network_display_name": "UpRavel",
+      "platform_slug": "upravel_video",
+      "format_slug": "480x320",
+      "creative_type_slug": "video",
+      "width": 480,
+      "height": 320,
+      "allowed_extensions_source": [
+        "mp4"
+      ],
+      "allowed_mime_types_source": [
+        "video/mp4"
+      ],
+      "runtime_allowed_extensions": [],
+      "runtime_allowed_mime_types": [],
+      "max_file_size_bytes": 5242880,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": false,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "upravel-video-768x1024-video",
+      "display_name": "UpRavel / видео / 768x1024 / video",
+      "network_slug": "upravel_video",
+      "network_display_name": "UpRavel",
+      "platform_slug": "upravel_video",
+      "format_slug": "768x1024",
+      "creative_type_slug": "video",
+      "width": 768,
+      "height": 1024,
+      "allowed_extensions_source": [
+        "mp4"
+      ],
+      "allowed_mime_types_source": [
+        "video/mp4"
+      ],
+      "runtime_allowed_extensions": [],
+      "runtime_allowed_mime_types": [],
+      "max_file_size_bytes": 5242880,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": false,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "upravel-video-600x338-video",
+      "display_name": "UpRavel / видео / 600x338 / video",
+      "network_slug": "upravel_video",
+      "network_display_name": "UpRavel",
+      "platform_slug": "upravel_video",
+      "format_slug": "600x338",
+      "creative_type_slug": "video",
+      "width": 600,
+      "height": 338,
+      "allowed_extensions_source": [
+        "mp4"
+      ],
+      "allowed_mime_types_source": [
+        "video/mp4"
+      ],
+      "runtime_allowed_extensions": [],
+      "runtime_allowed_mime_types": [],
+      "max_file_size_bytes": 5242880,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": false,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "upravel-video-426x240-video",
+      "display_name": "UpRavel / видео / 426x240 / video",
+      "network_slug": "upravel_video",
+      "network_display_name": "UpRavel",
+      "platform_slug": "upravel_video",
+      "format_slug": "426x240",
+      "creative_type_slug": "video",
+      "width": 426,
+      "height": 240,
+      "allowed_extensions_source": [
+        "mp4"
+      ],
+      "allowed_mime_types_source": [
+        "video/mp4"
+      ],
+      "runtime_allowed_extensions": [],
+      "runtime_allowed_mime_types": [],
+      "max_file_size_bytes": 5242880,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": false,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "upravel-video-480x600-video",
+      "display_name": "UpRavel / видео / 480x600 / video",
+      "network_slug": "upravel_video",
+      "network_display_name": "UpRavel",
+      "platform_slug": "upravel_video",
+      "format_slug": "480x600",
+      "creative_type_slug": "video",
+      "width": 480,
+      "height": 600,
+      "allowed_extensions_source": [
+        "mp4"
+      ],
+      "allowed_mime_types_source": [
+        "video/mp4"
+      ],
+      "runtime_allowed_extensions": [],
+      "runtime_allowed_mime_types": [],
+      "max_file_size_bytes": 5242880,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": false,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "upravel-video-640x480-video",
+      "display_name": "UpRavel / видео / 640x480 / video",
+      "network_slug": "upravel_video",
+      "network_display_name": "UpRavel",
+      "platform_slug": "upravel_video",
+      "format_slug": "640x480",
+      "creative_type_slug": "video",
+      "width": 640,
+      "height": 480,
+      "allowed_extensions_source": [
+        "mp4"
+      ],
+      "allowed_mime_types_source": [
+        "video/mp4"
+      ],
+      "runtime_allowed_extensions": [],
+      "runtime_allowed_mime_types": [],
+      "max_file_size_bytes": 5242880,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": false,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "upravel-video-600x340-video",
+      "display_name": "UpRavel / видео / 600x340 / video",
+      "network_slug": "upravel_video",
+      "network_display_name": "UpRavel",
+      "platform_slug": "upravel_video",
+      "format_slug": "600x340",
+      "creative_type_slug": "video",
+      "width": 600,
+      "height": 340,
+      "allowed_extensions_source": [
+        "mp4"
+      ],
+      "allowed_mime_types_source": [
+        "video/mp4"
+      ],
+      "runtime_allowed_extensions": [],
+      "runtime_allowed_mime_types": [],
+      "max_file_size_bytes": 5242880,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": false,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "upravel-video-300x250-video",
+      "display_name": "UpRavel / видео / 300x250 / video",
+      "network_slug": "upravel_video",
+      "network_display_name": "UpRavel",
+      "platform_slug": "upravel_video",
+      "format_slug": "300x250",
+      "creative_type_slug": "video",
+      "width": 300,
+      "height": 250,
+      "allowed_extensions_source": [
+        "mp4"
+      ],
+      "allowed_mime_types_source": [
+        "video/mp4"
+      ],
+      "runtime_allowed_extensions": [],
+      "runtime_allowed_mime_types": [],
+      "max_file_size_bytes": 5242880,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": false,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "upravel-video-600x320-video",
+      "display_name": "UpRavel / видео / 600x320 / video",
+      "network_slug": "upravel_video",
+      "network_display_name": "UpRavel",
+      "platform_slug": "upravel_video",
+      "format_slug": "600x320",
+      "creative_type_slug": "video",
+      "width": 600,
+      "height": 320,
+      "allowed_extensions_source": [
+        "mp4"
+      ],
+      "allowed_mime_types_source": [
+        "video/mp4"
+      ],
+      "runtime_allowed_extensions": [],
+      "runtime_allowed_mime_types": [],
+      "max_file_size_bytes": 5242880,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": false,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "upravel-video-640x360-video",
+      "display_name": "UpRavel / видео / 640x360 / video",
+      "network_slug": "upravel_video",
+      "network_display_name": "UpRavel",
+      "platform_slug": "upravel_video",
+      "format_slug": "640x360",
+      "creative_type_slug": "video",
+      "width": 640,
+      "height": 360,
+      "allowed_extensions_source": [
+        "mp4"
+      ],
+      "allowed_mime_types_source": [
+        "video/mp4"
+      ],
+      "runtime_allowed_extensions": [],
+      "runtime_allowed_mime_types": [],
+      "max_file_size_bytes": 5242880,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": false,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "telegram-ads-16x9-image",
+      "display_name": "Telegram Ads / 16x9_image / image",
+      "network_slug": "telegram_ads",
+      "network_display_name": "Telegram Ads",
+      "platform_slug": "telegram_ads",
+      "format_slug": "16x9_image",
+      "creative_type_slug": "image",
+      "width": null,
+      "height": null,
+      "allowed_extensions_source": [
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "allowed_mime_types_source": [
+        "image/jpeg",
+        "image/png"
+      ],
+      "runtime_allowed_extensions": [
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "runtime_allowed_mime_types": [
+        "image/jpeg",
+        "image/png"
+      ],
+      "max_file_size_bytes": 5242880,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": false,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "telegram-ads-16x9-video",
+      "display_name": "Telegram Ads / 16x9_video / video",
+      "network_slug": "telegram_ads",
+      "network_display_name": "Telegram Ads",
+      "platform_slug": "telegram_ads",
+      "format_slug": "16x9_video",
+      "creative_type_slug": "video",
+      "width": null,
+      "height": null,
+      "allowed_extensions_source": [
+        "mp4"
+      ],
+      "allowed_mime_types_source": [
+        "video/mp4"
+      ],
+      "runtime_allowed_extensions": [],
+      "runtime_allowed_mime_types": [],
+      "max_file_size_bytes": 20971520,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": false,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "app-advertising-1280x720-video",
+      "display_name": "Video / Banner / Native для рекламы приложений / 1280x720 / video",
+      "network_slug": "app_advertising",
+      "network_display_name": "Video",
+      "platform_slug": "app_advertising",
+      "format_slug": "1280x720",
+      "creative_type_slug": "video",
+      "width": 1280,
+      "height": 720,
+      "allowed_extensions_source": [
+        "mp4"
+      ],
+      "allowed_mime_types_source": [
+        "video/mp4"
+      ],
+      "runtime_allowed_extensions": [],
+      "runtime_allowed_mime_types": [],
+      "max_file_size_bytes": 15728640,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": false,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "app-advertising-720x1280-video",
+      "display_name": "Video / Banner / Native для рекламы приложений / 720x1280 / video",
+      "network_slug": "app_advertising",
+      "network_display_name": "Video",
+      "platform_slug": "app_advertising",
+      "format_slug": "720x1280",
+      "creative_type_slug": "video",
+      "width": 720,
+      "height": 1280,
+      "allowed_extensions_source": [
+        "mp4"
+      ],
+      "allowed_mime_types_source": [
+        "video/mp4"
+      ],
+      "runtime_allowed_extensions": [],
+      "runtime_allowed_mime_types": [],
+      "max_file_size_bytes": 15728640,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": false,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "app-advertising-320x50-image",
+      "display_name": "Video / Banner / Native для рекламы приложений / 320x50 / image",
+      "network_slug": "app_advertising",
+      "network_display_name": "Video",
+      "platform_slug": "app_advertising",
+      "format_slug": "320x50",
+      "creative_type_slug": "image",
+      "width": 320,
+      "height": 50,
+      "allowed_extensions_source": [
+        "jpeg",
+        "jpg"
+      ],
+      "allowed_mime_types_source": [
+        "image/jpeg"
+      ],
+      "runtime_allowed_extensions": [
+        "jpeg",
+        "jpg"
+      ],
+      "runtime_allowed_mime_types": [
+        "image/jpeg"
+      ],
+      "max_file_size_bytes": 5242880,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": true,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "app-advertising-300x250-image",
+      "display_name": "Video / Banner / Native для рекламы приложений / 300x250 / image",
+      "network_slug": "app_advertising",
+      "network_display_name": "Video",
+      "platform_slug": "app_advertising",
+      "format_slug": "300x250",
+      "creative_type_slug": "image",
+      "width": 300,
+      "height": 250,
+      "allowed_extensions_source": [
+        "jpeg",
+        "jpg"
+      ],
+      "allowed_mime_types_source": [
+        "image/jpeg"
+      ],
+      "runtime_allowed_extensions": [
+        "jpeg",
+        "jpg"
+      ],
+      "runtime_allowed_mime_types": [
+        "image/jpeg"
+      ],
+      "max_file_size_bytes": 5242880,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": true,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "app-advertising-320x480-image",
+      "display_name": "Video / Banner / Native для рекламы приложений / 320x480 / image",
+      "network_slug": "app_advertising",
+      "network_display_name": "Video",
+      "platform_slug": "app_advertising",
+      "format_slug": "320x480",
+      "creative_type_slug": "image",
+      "width": 320,
+      "height": 480,
+      "allowed_extensions_source": [
+        "jpeg",
+        "jpg"
+      ],
+      "allowed_mime_types_source": [
+        "image/jpeg"
+      ],
+      "runtime_allowed_extensions": [
+        "jpeg",
+        "jpg"
+      ],
+      "runtime_allowed_mime_types": [
+        "image/jpeg"
+      ],
+      "max_file_size_bytes": 5242880,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": true,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "app-advertising-480x320-image",
+      "display_name": "Video / Banner / Native для рекламы приложений / 480x320 / image",
+      "network_slug": "app_advertising",
+      "network_display_name": "Video",
+      "platform_slug": "app_advertising",
+      "format_slug": "480x320",
+      "creative_type_slug": "image",
+      "width": 480,
+      "height": 320,
+      "allowed_extensions_source": [
+        "jpeg",
+        "jpg"
+      ],
+      "allowed_mime_types_source": [
+        "image/jpeg"
+      ],
+      "runtime_allowed_extensions": [
+        "jpeg",
+        "jpg"
+      ],
+      "runtime_allowed_mime_types": [
+        "image/jpeg"
+      ],
+      "max_file_size_bytes": 5242880,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": true,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "app-advertising-1280x720-image",
+      "display_name": "Video / Banner / Native для рекламы приложений / 1280x720 / image",
+      "network_slug": "app_advertising",
+      "network_display_name": "Video",
+      "platform_slug": "app_advertising",
+      "format_slug": "1280x720",
+      "creative_type_slug": "image",
+      "width": 1280,
+      "height": 720,
+      "allowed_extensions_source": [
+        "jpeg",
+        "jpg"
+      ],
+      "allowed_mime_types_source": [
+        "image/jpeg"
+      ],
+      "runtime_allowed_extensions": [
+        "jpeg",
+        "jpg"
+      ],
+      "runtime_allowed_mime_types": [
+        "image/jpeg"
+      ],
+      "max_file_size_bytes": 5242880,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": true,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "app-advertising-720x1280-image",
+      "display_name": "Video / Banner / Native для рекламы приложений / 720x1280 / image",
+      "network_slug": "app_advertising",
+      "network_display_name": "Video",
+      "platform_slug": "app_advertising",
+      "format_slug": "720x1280",
+      "creative_type_slug": "image",
+      "width": 720,
+      "height": 1280,
+      "allowed_extensions_source": [
+        "jpeg",
+        "jpg"
+      ],
+      "allowed_mime_types_source": [
+        "image/jpeg"
+      ],
+      "runtime_allowed_extensions": [
+        "jpeg",
+        "jpg"
+      ],
+      "runtime_allowed_mime_types": [
+        "image/jpeg"
+      ],
+      "max_file_size_bytes": 5242880,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": true,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    },
+    {
+      "slug": "native-banner-default-native-banner",
+      "display_name": "Нативный баннер / default / native_banner",
+      "network_slug": "native_banner",
+      "network_display_name": "Нативный баннер",
+      "platform_slug": "native_banner",
+      "format_slug": "default",
+      "creative_type_slug": "native_banner",
+      "width": null,
+      "height": null,
+      "allowed_extensions_source": [
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "allowed_mime_types_source": [
+        "image/jpeg",
+        "image/png"
+      ],
+      "runtime_allowed_extensions": [
+        "jpeg",
+        "jpg",
+        "png"
+      ],
+      "runtime_allowed_mime_types": [
+        "image/jpeg",
+        "image/png"
+      ],
+      "max_file_size_bytes": 2097152,
+      "requires_ad_marking": false,
+      "runtime_upload_supported": false,
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+    }
+  ],
+  "placements": {
+    "metadata": {
+      "source": "reports_ad/docs/examples/FD -- Примеры скриншотов/площадки.txt",
+      "live_check_date_utc": "2026-07-09",
+      "live_check_summary": [
+        "Checked hosts with urllib from workspace using reports_ad/.venv/bin/python and a Mozilla-like User-Agent.",
+        "dzen.ru, m.dzen.ru, yandex.ru redirected to Yandex Passport/SSO in this environment, so selectors are fallback heuristics.",
+        "kniga-online.com returned HTTP 403; m.video.yandex.ru and m.images.yandex.ru failed certificate hostname validation; drug.vokrug did not resolve.",
+        "deti-online.com exposed class ads-wrap; ok.ru exposed media-layer_banners/media-layer_banners_cnt; pogoda.yandex.ru/m.pogoda.yandex.ru exposed footer_ecom_adv. These are weak HTML-sample observations, not end-to-end verified slots.",
+        "All templates remain dimension-based safe fallback heuristics unless selector_confidence is observed_sample."
+      ]
+    },
+    "sites": [
+      {
+        "host": "dzen.ru",
+        "category": "video",
+        "selector_confidence": "blocked_sso",
+        "observed_selectors": [],
+        "fallback_templates": [
+          "video-landscape",
+          "in-content",
+          "top-banner"
+        ]
+      },
+      {
+        "host": "yandex.ru",
+        "category": "video,banner",
+        "selector_confidence": "blocked_sso_redirect",
+        "observed_selectors": [],
+        "fallback_templates": [
+          "top-banner",
+          "video-landscape",
+          "in-content"
+        ]
+      },
+      {
+        "host": "deti-online.com",
+        "category": "video",
+        "selector_confidence": "observed_sample",
+        "observed_selectors": [
+          ".ads-wrap"
+        ],
+        "fallback_templates": [
+          "in-content",
+          "sidebar-rect",
+          "top-banner"
+        ]
+      },
+      {
+        "host": "kniga-online.com",
+        "category": "video",
+        "selector_confidence": "blocked_http_403",
+        "observed_selectors": [],
+        "fallback_templates": [
+          "in-content",
+          "video-landscape"
+        ]
+      },
+      {
+        "host": "m.dzen.ru",
+        "category": "video",
+        "selector_confidence": "blocked_sso",
+        "observed_selectors": [],
+        "fallback_templates": [
+          "mobile-banner",
+          "video-landscape",
+          "in-content"
+        ]
+      },
+      {
+        "host": "m.knigavuhe.org",
+        "category": "video",
+        "selector_confidence": "no_ad_selector_observed",
+        "observed_selectors": [],
+        "fallback_templates": [
+          "mobile-banner",
+          "in-content",
+          "video-landscape"
+        ]
+      },
+      {
+        "host": "amd.online",
+        "category": "video",
+        "selector_confidence": "no_ad_selector_observed",
+        "observed_selectors": [],
+        "fallback_templates": [
+          "video-landscape",
+          "in-content",
+          "sidebar-rect"
+        ]
+      },
+      {
+        "host": "ya.ru",
+        "category": "video",
+        "selector_confidence": "no_ad_selector_observed",
+        "observed_selectors": [],
+        "fallback_templates": [
+          "top-banner",
+          "in-content"
+        ]
+      },
+      {
+        "host": "ok.ru",
+        "category": "video,banner",
+        "selector_confidence": "observed_sample",
+        "observed_selectors": [
+          ".media-layer_banners",
+          ".media-layer_banners_cnt"
+        ],
+        "fallback_templates": [
+          "top-banner",
+          "in-content",
+          "video-landscape"
+        ]
+      },
+      {
+        "host": "www.woman.ru",
+        "category": "video",
+        "selector_confidence": "no_ad_selector_observed",
+        "observed_selectors": [],
+        "fallback_templates": [
+          "in-content",
+          "sidebar-rect",
+          "top-banner"
+        ]
+      },
+      {
+        "host": "game.yandex.ru",
+        "category": "banner",
+        "selector_confidence": "observed_sample",
+        "observed_selectors": [
+          "[data-ad-status]"
+        ],
+        "fallback_templates": [
+          "top-banner",
+          "in-content",
+          "mobile-banner"
+        ]
+      },
+      {
+        "host": "m.video.yandex.ru",
+        "category": "banner",
+        "selector_confidence": "blocked_tls_hostname_mismatch",
+        "observed_selectors": [],
+        "fallback_templates": [
+          "mobile-banner",
+          "video-landscape",
+          "in-content"
+        ]
+      },
+      {
+        "host": "m.images.yandex.ru",
+        "category": "banner",
+        "selector_confidence": "blocked_tls_hostname_mismatch",
+        "observed_selectors": [],
+        "fallback_templates": [
+          "mobile-banner",
+          "in-content",
+          "top-banner"
+        ]
+      },
+      {
+        "host": "drug.vokrug",
+        "category": "banner",
+        "selector_confidence": "blocked_dns_not_resolved",
+        "observed_selectors": [],
+        "fallback_templates": [
+          "mobile-banner",
+          "in-content"
+        ]
+      },
+      {
+        "host": "pogoda.yandex.ru",
+        "category": "banner",
+        "selector_confidence": "observed_sample",
+        "observed_selectors": [
+          "#footer_ecom_adv"
+        ],
+        "fallback_templates": [
+          "top-banner",
+          "sidebar-rect",
+          "in-content"
+        ]
+      },
+      {
+        "host": "images.yandex.ru",
+        "category": "banner",
+        "selector_confidence": "no_ad_selector_observed",
+        "observed_selectors": [],
+        "fallback_templates": [
+          "top-banner",
+          "in-content",
+          "mobile-banner"
+        ]
+      },
+      {
+        "host": "m.pogoda.yandex.ru",
+        "category": "banner",
+        "selector_confidence": "observed_sample",
+        "observed_selectors": [
+          "#footer_ecom_adv"
+        ],
+        "fallback_templates": [
+          "mobile-banner",
+          "top-banner",
+          "in-content"
+        ]
+      }
+    ],
+    "templates": {
+      "top-banner": {
+        "label": "Top horizontal banner",
+        "selectors": [
+          "[data-ad-slot=\"top\"]",
+          ".ad-top",
+          ".top-banner",
+          "[data-ad-status]",
+          "#footer_ecom_adv",
+          "header",
+          "body"
+        ],
+        "preferred_dimensions": [
+          "728x90",
+          "970x90",
+          "970x250",
+          "320x50",
+          "320x100"
+        ]
+      },
+      "sidebar-rect": {
+        "label": "Right/sidebar rectangle",
+        "selectors": [
+          "[data-ad-slot=\"sidebar\"]",
+          ".ad-sidebar",
+          ".ads-wrap",
+          "aside",
+          ".sidebar",
+          "body"
+        ],
+        "preferred_dimensions": [
+          "240x400",
+          "300x250",
+          "300x500",
+          "300x600",
+          "336x280",
+          "160x600"
+        ]
+      },
+      "in-content": {
+        "label": "In-content/native block",
+        "selectors": [
+          "[data-ad-slot=\"content\"]",
+          ".ad-content",
+          ".ads-wrap",
+          "article",
+          "main",
+          "body"
+        ],
+        "preferred_dimensions": [
+          "300x250",
+          "336x280",
+          "580x400",
+          "600x600",
+          "1080x607",
+          "480x320"
+        ]
+      },
+      "mobile-banner": {
+        "label": "Mobile banner/fullscreen fallback",
+        "selectors": [
+          "[data-ad-slot=\"mobile\"]",
+          ".ad-mobile",
+          ".mobile-ad",
+          "main",
+          "body"
+        ],
+        "preferred_dimensions": [
+          "320x50",
+          "320x100",
+          "320x480",
+          "480x320",
+          "768x1024"
+        ]
+      },
+      "video-landscape": {
+        "label": "Video/landscape proof slot",
+        "selectors": [
+          "[data-ad-slot=\"video\"]",
+          ".video-ad",
+          ".player",
+          ".video-player",
+          "video",
+          "main",
+          "body"
+        ],
+        "preferred_dimensions": [
+          "1280x720",
+          "1920x1080",
+          "640x360",
+          "576x320",
+          "600x338",
+          "600x340"
+        ]
+      }
+    }
+  }
+}

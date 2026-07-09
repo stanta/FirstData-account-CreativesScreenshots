@@ -6,14 +6,16 @@
 
 - Telegram polling bot на `python-telegram-bot` 21+.
 - Пошаговый сценарий ввода:
-  1. URL страницы рекламной площадки;
-  2. тип/формат баннера;
-  3. PNG/JPEG-креатив через Telegram-файл/фото или локальный путь в тестовом режиме;
-  4. URL landing page;
-  5. UTM-параметры строкой;
-  6. место вставки: CSS-селектор или template ID;
-  7. подтверждение генерации.
-- Валидация URL, UTM, MIME/размера/размерности изображения и placement.
+  1. выбор рекламной сети из локального каталога;
+  2. выбор типа баннера/spec, отфильтрованного по сети;
+  3. URL страницы рекламной площадки;
+  4. PNG/JPEG-креатив через Telegram-файл/фото или локальный путь в тестовом режиме;
+  5. URL landing page;
+  6. UTM-параметры строкой;
+  7. review screen со всеми параметрами и командами `edit <field>`;
+  8. явное подтверждение генерации.
+- Валидация URL, UTM, MIME/размера/точной размерности изображения по выбранному spec и placement.
+- Локальный каталог `reports_ad/reports_ad/data/creative_catalog.json` нормализован из `validator-ai/backend/app/seed/creative_specs.json`: сохранены slug, display name, network/platform, format/dimensions, source MIME/extensions и file-size limit.
 - Playwright/Chromium генератор: открывает страницу, вставляет статичный баннер, назначает click URL с UTM, эмулирует клик, получает landing page и собирает итоговое изображение, где нижние 20% заняты landing page.
 - Нет сохранения истории задач; состояние диалога и per-user locks только в памяти процесса.
 - Временные файлы удаляются после отправки результата, отмены или ошибки.
@@ -109,12 +111,24 @@ docker compose down
 | `REPORTS_AD_TIMEZONE`                  |       `Europe/Moscow` | timezone browser context                                           |
 | `REPORTS_AD_TEMP_ROOT`                 |                   нет | корневая директория временных файлов; в Docker используется tmpfs  |
 
-## Placement syntax
+## Catalog and placement behavior
+
+Каталог содержит 96 source specs из `creative_specs.json` и 19 рекламных сетей/platform groups. Runtime-фильтр бота показывает только specs, которые можно принять как статичный PNG/JPEG с фиксированными размерами. Если source spec допускает GIF, PSD, ZIP, MP4 или HTML5, эти данные сохранены в catalog metadata, но Telegram runtime MVP их не принимает.
+
+После ввода advertising page URL бот выбирает placement автоматически:
+
+- если host есть в списке `reports_ad/docs/examples/FD -- Примеры скриншотов/площадки.txt` и для него есть слабонаблюдаемый selector из HTML sample, используется selector;
+- иначе применяется безопасный dimension-based fallback template по размеру выбранного spec;
+- если host неизвестен, используется template по размеру или `in-content` как последний fallback.
+
+Статус проверки площадок сохранен в catalog metadata. Проверка выполнялась из workspace через `reports_ad/.venv/bin/python` с HTML-sample запросами. Ограничения: `dzen.ru`, `m.dzen.ru`, `yandex.ru` редиректили на Yandex Passport/SSO; `kniga-online.com` вернул HTTP 403; `m.video.yandex.ru` и `m.images.yandex.ru` дали TLS hostname mismatch; `drug.vokrug` не резолвился DNS. Поэтому selectors с confidence не `observed_sample` являются fallback heuristics, а не verified production selectors.
+
+## Manual placement syntax for internal validation helpers
 
 Поддерживаются два варианта:
 
 - `selector: .ad-slot` — явный CSS-селектор. Это основной production-safe режим MVP.
-- `template: top-banner`, `template: sidebar-rect`, `template: in-content` — ограниченные fallback-шаблоны. Если известный слот не найден, генератор создает контролируемый proof-контейнер в DOM страницы.
+- `template: top-banner`, `template: sidebar-rect`, `template: in-content`, `template: mobile-banner`, `template: video-landscape` — ограниченные fallback-шаблоны. Если известный слот не найден, генератор создает контролируемый proof-контейнер в DOM страницы.
 
 ## UTM syntax
 

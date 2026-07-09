@@ -28,7 +28,9 @@ reports-ad-bot = "reports_ad.bot:main"
 where = ["."]
 include = ["reports_ad*"]
 
+[tool.setuptools.package-data]
+reports_ad = ["data/*.json"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
-

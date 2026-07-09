@@ -7,6 +7,7 @@ from typing import Any
 
 from PIL import Image
 
+from .catalog import selectors_for_template
 from .models import Placement, ProofRequest, ProofResult
 from .validation import ValidationError, merge_url_with_utm
 
@@ -27,13 +28,6 @@ class ScreenshotGenerationError(RuntimeError):
     def __init__(self, safe_message: str) -> None:
         super().__init__(safe_message)
         self.safe_message = safe_message
-
-
-TEMPLATE_SELECTORS: dict[str, tuple[str, ...]] = {
-    "top-banner": ("[data-ad-slot='top']", ".ad-top", ".top-banner", "header", "body"),
-    "sidebar-rect": ("[data-ad-slot='sidebar']", ".ad-sidebar", "aside", ".sidebar", "body"),
-    "in-content": ("[data-ad-slot='content']", ".ad-content", "article", "main", "body"),
-}
 
 
 async def generate_proof(request: ProofRequest) -> ProofResult:
@@ -87,6 +81,8 @@ async def generate_proof(request: ProofRequest) -> ProofResult:
                     creative_data_url=creative_data_url,
                     click_url=effective_click_url,
                     banner_type=request.banner_type,
+                    width=request.spec.width,
+                    height=request.spec.height,
                     timeout_ms=request.page_load_timeout_ms,
                 )
                 timings["creative_inserted"] = _elapsed_ms(started)
@@ -192,6 +188,8 @@ async def _insert_creative(
     creative_data_url: str,
     click_url: str,
     banner_type: str,
+    width: int | None,
+    height: int | None,
     timeout_ms: int,
 ) -> None:
     if placement.mode == "selector":
@@ -203,9 +201,9 @@ async def _insert_creative(
         box = await locator.bounding_box()
         if not box or box["width"] < 16 or box["height"] < 16:
             raise ScreenshotGenerationError("Выбранный слот слишком мал или недоступен для вставки рекламы.")
-        await locator.evaluate(_replace_slot_script(), _creative_payload(creative_data_url, click_url, banner_type))
+        await locator.evaluate(_replace_slot_script(), _creative_payload(creative_data_url, click_url, banner_type, width, height))
     else:
-        await _insert_into_template_slot(page, placement.value, creative_data_url, click_url, banner_type, timeout_ms)
+        await _insert_into_template_slot(page, placement.value, creative_data_url, click_url, banner_type, width, height, timeout_ms)
 
     marker = page.locator("[data-reports-ad-proof='creative']").first
     try:
@@ -220,10 +218,12 @@ async def _insert_into_template_slot(
     creative_data_url: str,
     click_url: str,
     banner_type: str,
+    width: int | None,
+    height: int | None,
     timeout_ms: int,
 ) -> None:
-    selectors = TEMPLATE_SELECTORS.get(template_id, ("body",))
-    payload = _creative_payload(creative_data_url, click_url, banner_type)
+    selectors = selectors_for_template(template_id) or ("body",)
+    payload = _creative_payload(creative_data_url, click_url, banner_type, width, height)
     for selector in selectors:
         locator = page.locator(selector).first
         if await locator.count() == 0:
@@ -239,7 +239,9 @@ async def _insert_into_template_slot(
         (args) => {
           const slot = document.createElement('div');
           slot.setAttribute('data-reports-ad-proof-template-slot', args.templateId);
-          slot.style.cssText = 'width:100%;max-width:100%;min-height:120px;margin:12px auto;display:block;z-index:2147483647;background:#fff;';
+          const width = args.width || 300;
+          const height = args.height || 250;
+          slot.style.cssText = `width:${width}px;max-width:100%;min-height:${height}px;margin:12px auto;display:block;z-index:2147483647;background:#fff;`;
           document.body.prepend(slot);
           const link = document.createElement('a');
           link.href = args.clickUrl;
@@ -247,11 +249,11 @@ async def _insert_into_template_slot(
           link.rel = 'noopener noreferrer';
           link.setAttribute('data-reports-ad-proof', 'creative');
           link.setAttribute('aria-label', args.bannerType);
-          link.style.cssText = 'display:block;width:100%;text-decoration:none;';
+          link.style.cssText = `display:block;width:${width}px;height:${height}px;max-width:100%;text-decoration:none;`;
           const img = document.createElement('img');
           img.src = args.creativeDataUrl;
           img.alt = args.bannerType;
-          img.style.cssText = 'display:block;width:100%;height:auto;max-height:280px;object-fit:contain;margin:0 auto;';
+          img.style.cssText = `display:block;width:100%;height:100%;object-fit:contain;margin:0 auto;`;
           link.appendChild(img);
           slot.appendChild(link);
         }
@@ -296,28 +298,31 @@ def _replace_slot_script() -> str:
     return """
     (element, args) => {
       element.innerHTML = '';
-      element.style.minHeight = element.style.minHeight || '90px';
+      const width = args.width || element.getBoundingClientRect().width || 300;
+      const height = args.height || element.getBoundingClientRect().height || 250;
+      element.style.width = element.style.width || `${width}px`;
+      element.style.maxWidth = element.style.maxWidth || '100%';
+      element.style.minHeight = element.style.minHeight || `${height}px`;
       const link = document.createElement('a');
       link.href = args.clickUrl;
       link.target = '_blank';
       link.rel = 'noopener noreferrer';
       link.setAttribute('data-reports-ad-proof', 'creative');
       link.setAttribute('aria-label', args.bannerType);
-      link.style.cssText = 'display:block;width:100%;height:100%;text-decoration:none;';
+      link.style.cssText = `display:block;width:${width}px;height:${height}px;max-width:100%;text-decoration:none;`;
       const img = document.createElement('img');
       img.src = args.creativeDataUrl;
       img.alt = args.bannerType;
-      img.style.cssText = 'display:block;width:100%;height:auto;max-height:100%;object-fit:contain;margin:0 auto;';
+      img.style.cssText = 'display:block;width:100%;height:100%;object-fit:contain;margin:0 auto;';
       link.appendChild(img);
       element.appendChild(link);
     }
     """
 
 
-def _creative_payload(creative_data_url: str, click_url: str, banner_type: str) -> dict[str, str]:
-    return {"creativeDataUrl": creative_data_url, "clickUrl": click_url, "bannerType": banner_type}
+def _creative_payload(creative_data_url: str, click_url: str, banner_type: str, width: int | None, height: int | None) -> dict[str, str | int | None]:
+    return {"creativeDataUrl": creative_data_url, "clickUrl": click_url, "bannerType": banner_type, "width": width, "height": height}
 
 
 def _elapsed_ms(started: float) -> int:
     return int((time.monotonic() - started) * 1000)
-

@@ -19,22 +19,42 @@ from telegram.ext import (
     filters,
 )
 
+from .catalog import (
+    catalog_summary,
+    choose_placement_for_url,
+    get_network,
+    get_site_placement,
+    get_spec,
+    list_networks,
+    list_runtime_specs,
+    specs_summary,
+)
 from .config import BotConfig
-from .models import CreativeInfo, ProofRequest, ProofResult
+from .models import CreativeInfo, CreativeSpec, ProofRequest, ProofResult
 from .proof import ScreenshotGenerationError, generate_proof
 from .validation import (
     ValidationError,
     merge_url_with_utm,
-    normalize_placement,
     normalize_public_url,
     parse_utm_params,
-    validate_banner_type,
     validate_creative_file,
+    validate_network_slug,
+    validate_spec_slug,
 )
 
 logger = logging.getLogger(__name__)
 
-AD_PAGE_URL, BANNER_TYPE, CREATIVE, LANDING_URL, UTM, PLACEMENT, CONFIRM = range(7)
+NETWORK, BANNER_TYPE, AD_PAGE_URL, CREATIVE, LANDING_URL, UTM, REVIEW = range(7)
+EDIT_TARGETS = {
+    "network": NETWORK,
+    "spec": BANNER_TYPE,
+    "banner": BANNER_TYPE,
+    "ad_url": AD_PAGE_URL,
+    "page": AD_PAGE_URL,
+    "creative": CREATIVE,
+    "landing": LANDING_URL,
+    "utm": UTM,
+}
 
 ProofGenerator = Callable[[ProofRequest], Awaitable[ProofResult]]
 
@@ -49,13 +69,13 @@ def build_application(config: BotConfig | None = None, proof_generator: ProofGen
     conversation = ConversationHandler(
         entry_points=[CommandHandler("start", start), CommandHandler("help", start)],
         states={
-            AD_PAGE_URL: [MessageHandler(filters.TEXT & ~filters.COMMAND, collect_ad_page_url)],
+            NETWORK: [MessageHandler(filters.TEXT & ~filters.COMMAND, collect_network)],
             BANNER_TYPE: [MessageHandler(filters.TEXT & ~filters.COMMAND, collect_banner_type)],
+            AD_PAGE_URL: [MessageHandler(filters.TEXT & ~filters.COMMAND, collect_ad_page_url)],
             CREATIVE: [MessageHandler((filters.PHOTO | filters.Document.IMAGE | filters.TEXT) & ~filters.COMMAND, collect_creative)],
             LANDING_URL: [MessageHandler(filters.TEXT & ~filters.COMMAND, collect_landing_url)],
             UTM: [MessageHandler(filters.TEXT & ~filters.COMMAND, collect_utm)],
-            PLACEMENT: [MessageHandler(filters.TEXT & ~filters.COMMAND, collect_placement)],
-            CONFIRM: [MessageHandler(filters.TEXT & ~filters.COMMAND, confirm_and_generate)],
+            REVIEW: [MessageHandler(filters.TEXT & ~filters.COMMAND, review_or_generate)],
         },
         fallbacks=[CommandHandler("cancel", cancel), CommandHandler("start", start)],
         allow_reentry=True,
@@ -70,11 +90,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data["request_id"] = uuid.uuid4().hex[:12]
     await update.effective_message.reply_text(
         "Я сформирую proof-скриншот рекламного размещения.\n\n"
-        "Понадобятся: URL рекламной страницы, тип баннера, PNG/JPEG-креатив, landing URL, UTM-строка и CSS-селектор/template.\n"
-        "Отправьте URL страницы, где нужно разместить рекламу.\n\n"
+        "Новый сценарий: рекламная сеть → тип баннера → URL рекламной страницы → PNG/JPEG-креатив → landing URL → UTM → review/edit → старт.\n"
+        "MVP принимает только PNG/JPEG, даже если исходный каталог содержит GIF/video/HTML5.\n\n"
+        "Выберите рекламную сеть, отправив ее slug:\n"
+        f"{catalog_summary()}\n\n"
         "Команда /cancel отменяет текущую заявку."
     )
-    return AD_PAGE_URL
+    return NETWORK
 
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -84,26 +106,87 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return ConversationHandler.END
 
 
-async def collect_ad_page_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    config = _config(context)
+async def collect_network(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    allowed = {network["slug"] for network in list_networks()}
     try:
-        context.user_data["ad_page_url"] = normalize_public_url(update.effective_message.text, allow_local=config.allow_local_urls)
+        network_slug = validate_network_slug(update.effective_message.text, allowed)
     except ValidationError as exc:
-        await update.effective_message.reply_text(exc.safe_message)
-        return AD_PAGE_URL
+        await update.effective_message.reply_text(f"{exc.safe_message}\n\n{catalog_summary()}")
+        return NETWORK
 
-    await update.effective_message.reply_text("Введите тип/формат баннера, например: banner, sidebar, native, tgo.")
+    network = get_network(network_slug) or {"slug": network_slug, "display_name": network_slug}
+    context.user_data["network_slug"] = network_slug
+    context.user_data["network_display_name"] = network.get("display_name", network_slug)
+    if "spec" in context.user_data and context.user_data["spec"].network_slug != network_slug:
+        _clear_from(context.user_data, "spec")
+    await update.effective_message.reply_text(
+        f"Сеть выбрана: {context.user_data['network_display_name']}.\n"
+        "Теперь выберите тип баннера/spec, отправив slug:\n"
+        f"{specs_summary(network_slug)}"
+    )
     return BANNER_TYPE
 
 
 async def collect_banner_type(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    network_slug = context.user_data.get("network_slug")
+    if not network_slug:
+        await update.effective_message.reply_text("Сначала выберите рекламную сеть.\n" + catalog_summary())
+        return NETWORK
+
+    specs = list_runtime_specs(network_slug)
+    allowed = {spec.slug for spec in specs}
     try:
-        context.user_data["banner_type"] = validate_banner_type(update.effective_message.text)
+        spec_slug = validate_spec_slug(update.effective_message.text, allowed)
     except ValidationError as exc:
-        await update.effective_message.reply_text(exc.safe_message)
+        await update.effective_message.reply_text(f"{exc.safe_message}\n\n{specs_summary(network_slug)}")
         return BANNER_TYPE
 
-    await update.effective_message.reply_text("Загрузите PNG/JPEG-креатив как фото или документ.")
+    spec = get_spec(spec_slug)
+    if spec is None or not spec.runtime_upload_supported:
+        await update.effective_message.reply_text("Выбранный формат не поддерживается runtime. Выберите PNG/JPEG spec из списка.")
+        return BANNER_TYPE
+
+    context.user_data["spec"] = spec
+    context.user_data["banner_type"] = spec.display_name
+    if "ad_page_url" in context.user_data:
+        context.user_data["placement"] = choose_placement_for_url(context.user_data["ad_page_url"], spec)
+    if "creative" in context.user_data or "landing_url" in context.user_data or "utm_params" in context.user_data:
+        await update.effective_message.reply_text(
+            "Тип баннера обновлен. Проверьте совместимость креатива с новым spec и при необходимости используйте edit creative.\n\n"
+            + _review_text(context.user_data)
+        )
+        return REVIEW
+    await update.effective_message.reply_text(
+        f"Тип баннера выбран: {spec.display_name}\n"
+        f"Ожидаемый размер: {spec.dimensions_label}; лимит файла: {spec.max_file_size_bytes} байт.\n"
+        "Введите URL рекламной страницы, где нужно разместить рекламу."
+    )
+    return AD_PAGE_URL
+
+
+async def collect_ad_page_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    config = _config(context)
+    try:
+        ad_page_url = normalize_public_url(update.effective_message.text, allow_local=config.allow_local_urls)
+    except ValidationError as exc:
+        await update.effective_message.reply_text(exc.safe_message)
+        return AD_PAGE_URL
+
+    spec: CreativeSpec = context.user_data["spec"]
+    placement = choose_placement_for_url(ad_page_url, spec)
+    context.user_data["ad_page_url"] = ad_page_url
+    context.user_data["placement"] = placement
+    site = get_site_placement(ad_page_url)
+    placement_note = f"Автоматически выбран placement: {placement.label}."
+    if site:
+        placement_note += f" Площадка: {site.host}; статус селектора: {site.selector_confidence}."
+    else:
+        placement_note += " Площадка не найдена в списке; использован dimension-based fallback."
+
+    if "creative" in context.user_data and "landing_url" in context.user_data and "utm_params" in context.user_data:
+        await update.effective_message.reply_text(f"{placement_note}\n\n" + _review_text(context.user_data))
+        return REVIEW
+    await update.effective_message.reply_text(f"{placement_note}\n" "Загрузите PNG/JPEG-креатив как фото или документ.")
     return CREATIVE
 
 
@@ -117,6 +200,9 @@ async def collect_creative(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return CREATIVE
 
     context.user_data["creative"] = creative_info
+    if "landing_url" in context.user_data and "utm_params" in context.user_data:
+        await message.reply_text(_review_text(context.user_data))
+        return REVIEW
     await message.reply_text("Введите landing URL, куда должен вести клик по баннеру.")
     return LANDING_URL
 
@@ -129,6 +215,9 @@ async def collect_landing_url(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.effective_message.reply_text(exc.safe_message)
         return LANDING_URL
 
+    if "utm_params" in context.user_data:
+        await update.effective_message.reply_text(_review_text(context.user_data))
+        return REVIEW
     await update.effective_message.reply_text("Введите UTM-строку, например: utm_source=telegram&utm_medium=cpc&utm_campaign=test")
     return UTM
 
@@ -143,46 +232,41 @@ async def collect_utm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         return UTM
 
     context.user_data["utm_params"] = utm_params
-    await update.effective_message.reply_text(
-        "Введите место вставки: CSS-селектор (`selector: .ad-slot`) или template: top-banner / sidebar-rect / in-content."
-    )
-    return PLACEMENT
+    await update.effective_message.reply_text(_review_text(context.user_data))
+    return REVIEW
 
 
-async def collect_placement(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    try:
-        placement = normalize_placement(update.effective_message.text)
-    except ValidationError as exc:
-        await update.effective_message.reply_text(exc.safe_message)
-        return PLACEMENT
-
-    context.user_data["placement"] = placement
-    creative: CreativeInfo = context.user_data["creative"]
-    utm_keys = ", ".join(sorted(context.user_data["utm_params"].keys()))
-    await update.effective_message.reply_text(
-        "Проверьте заявку:\n"
-        f"• страница: {context.user_data['ad_page_url']}\n"
-        f"• формат: {context.user_data['banner_type']}\n"
-        f"• креатив: {creative.mime_type}, {creative.width}×{creative.height}, {creative.size_bytes} байт\n"
-        f"• landing: {context.user_data['landing_url']}\n"
-        f"• UTM-ключи: {utm_keys}\n"
-        f"• placement: {placement.label}\n\n"
-        "Ответьте `yes`, чтобы запустить генерацию, или /cancel для отмены."
-    )
-    return CONFIRM
-
-
-async def confirm_and_generate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def review_or_generate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     answer = (update.effective_message.text or "").strip().lower()
-    if answer not in {"yes", "y", "да", "д"}:
-        await update.effective_message.reply_text("Генерация не запущена. Ответьте `yes` или отмените заявку через /cancel.")
-        return CONFIRM
+    if answer in {"yes", "y", "да", "д", "start", "go", "generate", "старт", "запуск"}:
+        return await _generate(update, context)
 
+    if answer.startswith("edit") or answer.startswith("изменить"):
+        parts = answer.split(maxsplit=1)
+        target = parts[1].strip() if len(parts) > 1 else ""
+        next_state = EDIT_TARGETS.get(target)
+        if next_state is None:
+            await update.effective_message.reply_text(
+                "Неизвестное поле для редактирования. Используйте: edit network, edit spec, edit ad_url, edit creative, edit landing, edit utm."
+            )
+            return REVIEW
+        _clear_for_edit(context.user_data, target)
+        await update.effective_message.reply_text(_edit_prompt(target, context.user_data))
+        return next_state
+
+    await update.effective_message.reply_text(
+        "Генерация не запущена. Ответьте `yes` для старта или `edit <field>` для правки.\n\n"
+        + _review_text(context.user_data)
+    )
+    return REVIEW
+
+
+async def _generate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_id = update.effective_user.id if update.effective_user else 0
     lock = _user_lock(context, user_id)
     if lock.locked():
         await update.effective_message.reply_text("У вас уже выполняется генерация. Дождитесь завершения или отмените текущую заявку.")
-        return CONFIRM
+        return REVIEW
 
     async with lock:
         await update.effective_message.reply_text("Генерирую proof-скриншот. Это может занять до 1–2 минут.")
@@ -217,10 +301,12 @@ async def confirm_and_generate(update: Update, context: ContextTypes.DEFAULT_TYP
 
 async def _save_and_validate_creative(message: Any, context: ContextTypes.DEFAULT_TYPE, config: BotConfig) -> CreativeInfo:
     temp_dir = _ensure_temp_dir(context.user_data, config)
+    spec: CreativeSpec = context.user_data["spec"]
+    max_bytes = min(config.max_creative_bytes, spec.max_file_size_bytes or config.max_creative_bytes)
 
     if message.document:
         document = message.document
-        if document.file_size and document.file_size > config.max_creative_bytes:
+        if document.file_size and document.file_size > max_bytes:
             raise ValidationError("Файл креатива превышает допустимый размер.")
         suffix = Path(document.file_name or "creative.jpg").suffix.lower() or ".jpg"
         destination = temp_dir / f"creative{suffix}"
@@ -229,13 +315,14 @@ async def _save_and_validate_creative(message: Any, context: ContextTypes.DEFAUL
         return validate_creative_file(
             destination,
             declared_mime_type=document.mime_type,
-            max_bytes=config.max_creative_bytes,
+            max_bytes=max_bytes,
             max_pixels=config.max_creative_pixels,
+            spec=spec,
         )
 
     if message.photo:
         photo = message.photo[-1]
-        if photo.file_size and photo.file_size > config.max_creative_bytes:
+        if photo.file_size and photo.file_size > max_bytes:
             raise ValidationError("Файл креатива превышает допустимый размер.")
         destination = temp_dir / "creative.jpg"
         tg_file = await photo.get_file()
@@ -243,16 +330,18 @@ async def _save_and_validate_creative(message: Any, context: ContextTypes.DEFAUL
         return validate_creative_file(
             destination,
             declared_mime_type="image/jpeg",
-            max_bytes=config.max_creative_bytes,
+            max_bytes=max_bytes,
             max_pixels=config.max_creative_pixels,
+            spec=spec,
         )
 
     if message.text and config.allow_local_creative_path:
         return validate_creative_file(
             Path(message.text.strip()),
             declared_mime_type=None,
-            max_bytes=config.max_creative_bytes,
+            max_bytes=max_bytes,
             max_pixels=config.max_creative_pixels,
+            spec=spec,
         )
 
     raise ValidationError("Загрузите PNG/JPEG-файл как фото или документ.")
@@ -262,6 +351,9 @@ def _build_proof_request(user_data: dict[str, Any], config: BotConfig, output_pa
     return ProofRequest(
         request_id=user_data["request_id"],
         ad_page_url=user_data["ad_page_url"],
+        network_slug=user_data["network_slug"],
+        network_display_name=user_data["network_display_name"],
+        spec=user_data["spec"],
         banner_type=user_data["banner_type"],
         creative=user_data["creative"],
         landing_url=user_data["landing_url"],
@@ -284,6 +376,68 @@ def _ensure_temp_dir(user_data: dict[str, Any], config: BotConfig) -> Path:
     if "temp_dir_obj" not in user_data:
         user_data["temp_dir_obj"] = tempfile.TemporaryDirectory(prefix="reports-ad-", dir=config.temp_root)
     return Path(user_data["temp_dir_obj"].name)
+
+
+def _review_text(user_data: dict[str, Any]) -> str:
+    creative: CreativeInfo = user_data["creative"]
+    spec: CreativeSpec = user_data["spec"]
+    utm_keys = ", ".join(sorted(user_data["utm_params"].keys()))
+    return (
+        "Проверьте заявку перед запуском:\n"
+        f"• сеть: {user_data['network_display_name']} ({user_data['network_slug']})\n"
+        f"• тип баннера: {spec.display_name}\n"
+        f"• размер spec: {spec.dimensions_label}; лимит: {spec.max_file_size_bytes} байт\n"
+        f"• страница размещения: {user_data['ad_page_url']}\n"
+        f"• placement: {user_data['placement'].label}\n"
+        f"• креатив: {creative.mime_type}, {creative.width}×{creative.height}, {creative.size_bytes} байт\n"
+        f"• landing: {user_data['landing_url']}\n"
+        f"• UTM-ключи: {utm_keys}\n\n"
+        "Ответьте `yes`, чтобы запустить генерацию. Для правки используйте: edit network, edit spec, edit ad_url, edit creative, edit landing, edit utm."
+    )
+
+
+def _clear_for_edit(user_data: dict[str, Any], target: str) -> None:
+    if target == "network":
+        _clear_from(user_data, "network_slug")
+    elif target in {"spec", "banner"}:
+        _clear_from(user_data, "spec")
+    elif target in {"ad_url", "page"}:
+        _clear_from(user_data, "ad_page_url")
+    elif target == "creative":
+        user_data.pop("creative", None)
+    elif target == "landing":
+        _clear_from(user_data, "landing_url")
+    elif target == "utm":
+        user_data.pop("utm_params", None)
+
+
+def _clear_from(user_data: dict[str, Any], key: str) -> None:
+    order = ["network_slug", "network_display_name", "spec", "banner_type", "ad_page_url", "placement", "creative", "landing_url", "utm_params"]
+    if key not in order:
+        return
+    for candidate in order[order.index(key) :]:
+        if candidate == "creative":
+            continue
+        user_data.pop(candidate, None)
+
+
+def _edit_prompt(target: str, user_data: dict[str, Any]) -> str:
+    if target == "network":
+        return "Выберите рекламную сеть, отправив slug:\n" + catalog_summary()
+    if target in {"spec", "banner"}:
+        network_slug = user_data.get("network_slug")
+        if not network_slug:
+            return "Сначала выберите рекламную сеть:\n" + catalog_summary()
+        return "Выберите тип баннера/spec, отправив slug:\n" + specs_summary(network_slug)
+    if target in {"ad_url", "page"}:
+        return "Введите URL рекламной страницы. Placement будет выбран заново по площадке и размеру spec."
+    if target == "creative":
+        return "Загрузите новый PNG/JPEG-креатив как фото или документ."
+    if target == "landing":
+        return "Введите новый landing URL."
+    if target == "utm":
+        return "Введите новую UTM-строку, например: utm_source=telegram&utm_medium=cpc&utm_campaign=test"
+    return "Введите новое значение."
 
 
 async def _cleanup_state(user_data: dict[str, Any]) -> None:
@@ -313,4 +467,3 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     application = build_application()
     application.run_polling(allowed_updates=Update.ALL_TYPES)
-

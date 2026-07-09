@@ -8,6 +8,7 @@ from PIL import Image, UnidentifiedImageError
 
 from .models import (
     CreativeInfo,
+    CreativeSpec,
     Placement,
     SUPPORTED_CREATIVE_EXTENSIONS,
     SUPPORTED_CREATIVE_MIME_TYPES,
@@ -115,6 +116,24 @@ def validate_banner_type(raw_value: str) -> str:
     return value
 
 
+def validate_network_slug(raw_value: str, allowed_slugs: set[str]) -> str:
+    value = (raw_value or "").strip()
+    if value.isdigit():
+        raise ValidationError("Отправьте slug рекламной сети, а не номер из списка.")
+    if value not in allowed_slugs:
+        raise ValidationError("Неизвестная рекламная сеть. Выберите slug из списка.")
+    return value
+
+
+def validate_spec_slug(raw_value: str, allowed_slugs: set[str]) -> str:
+    value = (raw_value or "").strip()
+    if value.isdigit():
+        raise ValidationError("Отправьте slug типа баннера, а не номер из списка.")
+    if value not in allowed_slugs:
+        raise ValidationError("Неизвестный тип баннера для выбранной сети. Выберите slug из списка.")
+    return value
+
+
 def normalize_placement(raw_value: str) -> Placement:
     value = (raw_value or "").strip()
     if not value:
@@ -140,12 +159,26 @@ def normalize_placement(raw_value: str) -> Placement:
     return Placement(mode="selector", value=selector)
 
 
+def validate_creative_against_spec(creative: CreativeInfo, spec: CreativeSpec) -> None:
+    if not spec.runtime_upload_supported:
+        raise ValidationError("Выбранный формат пока не поддерживается runtime: MVP принимает только PNG/JPEG с фиксированными размерами.")
+    if creative.mime_type not in set(spec.runtime_allowed_mime_types):
+        raise ValidationError("MIME-тип креатива не поддерживается выбранным форматом.")
+    if creative.path.suffix.lower().lstrip(".") not in set(spec.runtime_allowed_extensions):
+        raise ValidationError("Расширение креатива не поддерживается выбранным форматом.")
+    if spec.max_file_size_bytes and creative.size_bytes > spec.max_file_size_bytes:
+        raise ValidationError(f"Файл превышает лимит выбранного формата: {spec.max_file_size_bytes} байт.")
+    if spec.width and spec.height and (creative.width != spec.width or creative.height != spec.height):
+        raise ValidationError(f"Размер креатива должен быть {spec.width}×{spec.height} пикселей.")
+
+
 def validate_creative_file(
     path: Path | str,
     *,
     declared_mime_type: str | None = None,
     max_bytes: int = 10 * 1024 * 1024,
     max_pixels: int = 20_000_000,
+    spec: CreativeSpec | None = None,
 ) -> CreativeInfo:
     file_path = Path(path)
     if not file_path.exists() or not file_path.is_file():
@@ -179,5 +212,7 @@ def validate_creative_file(
     if width <= 0 or height <= 0 or width * height > max_pixels:
         raise ValidationError("Размеры изображения выходят за допустимые ограничения.")
 
-    return CreativeInfo(path=file_path, mime_type=actual_mime, width=width, height=height, size_bytes=size_bytes)
-
+    creative = CreativeInfo(path=file_path, mime_type=actual_mime, width=width, height=height, size_bytes=size_bytes)
+    if spec is not None:
+        validate_creative_against_spec(creative, spec)
+    return creative
