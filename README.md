@@ -36,6 +36,59 @@ python -m reports_ad
 reports-ad-bot
 ```
 
+## Docker
+
+Контейнерный runtime рассчитан на polling-бота и headless Playwright Chromium внутри Linux-контейнера. Браузер и системные зависимости устанавливаются на этапе сборки образа, поэтому интерактивный `playwright install` при старте контейнера не нужен.
+
+### Сборка образа
+
+```bash
+cd /512-2/FD/reports_ad
+docker build -t reports-ad:local .
+```
+
+### Запуск через docker run
+
+1. Подготовьте переменные окружения, минимум `REPORTS_AD_TELEGRAM_TOKEN`.
+2. Запустите контейнер:
+
+```bash
+cd /512-2/FD/reports_ad
+docker run --rm \
+  --name reports-ad-bot \
+  --env-file .env \
+  --shm-size=1gb \
+  --tmpfs /tmp/reports-ad:size=268435456,mode=1777 \
+  reports-ad:local
+```
+
+### Запуск через Docker Compose
+
+1. Создайте локальный файл окружения на основе примера:
+
+```bash
+cd /512-2/FD/reports_ad
+cp .env.example .env
+```
+
+2. Заполните реальный `REPORTS_AD_TELEGRAM_TOKEN` в `.env`.
+3. Соберите и запустите сервис:
+
+```bash
+cd /512-2/FD/reports_ad
+docker compose up -d --build
+```
+
+Полезные команды:
+
+```bash
+cd /512-2/FD/reports_ad
+docker compose logs -f reports-ad-bot
+docker compose down
+```
+
+Контейнер использует entrypoint `python -m reports_ad` и читает конфигурацию только из environment variables.
+
 ## Переменные окружения
 
 | Переменная                             | Значение по умолчанию | Назначение                                                         |
@@ -47,7 +100,14 @@ reports-ad-bot
 | `REPORTS_AD_VIEWPORT_WIDTH`            |                `1365` | ширина viewport/final screenshot                                   |
 | `REPORTS_AD_VIEWPORT_HEIGHT`           |                 `768` | высота viewport/final screenshot                                   |
 | `REPORTS_AD_MAX_CREATIVE_BYTES`        |            `10485760` | максимальный размер креатива                                       |
+| `REPORTS_AD_MAX_CREATIVE_PIXELS`       |            `20000000` | максимальное число пикселей входного креатива                      |
 | `REPORTS_AD_REQUEST_TIMEOUT_SECONDS`   |                  `90` | общий timeout генерации для одного запроса                         |
+| `REPORTS_AD_PAGE_LOAD_TIMEOUT_MS`      |               `30000` | timeout загрузки страницы в Playwright                             |
+| `REPORTS_AD_CLICK_TIMEOUT_MS`          |                `7000` | timeout ожидания popup/click flow                                  |
+| `REPORTS_AD_SCREENSHOT_TIMEOUT_MS`     |               `15000` | timeout создания screenshot                                        |
+| `REPORTS_AD_LOCALE`                    |               `ru-RU` | locale browser context                                             |
+| `REPORTS_AD_TIMEZONE`                  |       `Europe/Moscow` | timezone browser context                                           |
+| `REPORTS_AD_TEMP_ROOT`                 |                   нет | корневая директория временных файлов; в Docker используется tmpfs  |
 
 ## Placement syntax
 
@@ -80,6 +140,21 @@ pytest
 ```bash
 python -m playwright install chromium
 ```
+
+## Docker-проверки
+
+Если в среде доступен Docker, минимальные проверки для container assets такие:
+
+```bash
+cd /512-2/FD/reports_ad
+docker compose config
+docker build -t reports-ad:local .
+docker run --rm --env-file .env reports-ad:local
+```
+
+- `docker compose config` валидирует YAML и interpolation переменных.
+- `docker build` проверяет сборку Python/Playwright runtime.
+- `docker run` проверяет, что контейнер стартует с существующим entrypoint и читает обязательные environment variables.
 
 ## Ограничения MVP
 
