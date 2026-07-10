@@ -33,6 +33,8 @@ class BotConfig:
     page_load_timeout_ms: int = 30_000
     click_timeout_ms: int = 7_000
     screenshot_timeout_ms: int = 15_000
+    timeout_diagnostics: bool = True
+    timeout_diagnostics_timeout_ms: int = 5_000
     locale: str = "ru-RU"
     timezone_id: str = "Europe/Moscow"
     temp_root: Path | None = None
@@ -59,8 +61,9 @@ class BotConfig:
             page_load_timeout_ms=_int_from_env("REPORTS_AD_PAGE_LOAD_TIMEOUT_MS", 30_000),
             click_timeout_ms=_int_from_env("REPORTS_AD_CLICK_TIMEOUT_MS", 7_000),
             screenshot_timeout_ms=_int_from_env("REPORTS_AD_SCREENSHOT_TIMEOUT_MS", 15_000),
+            timeout_diagnostics=_bool_from_env("REPORTS_AD_TIMEOUT_DIAGNOSTICS", True),
+            timeout_diagnostics_timeout_ms=_int_from_env("REPORTS_AD_TIMEOUT_DIAGNOSTICS_TIMEOUT_MS", 5_000),
             locale=os.getenv("REPORTS_AD_LOCALE", "ru-RU"),
             timezone_id=os.getenv("REPORTS_AD_TIMEZONE", "Europe/Moscow"),
             temp_root=temp_root,
         )
-

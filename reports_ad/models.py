@@ -99,6 +99,8 @@ class ProofRequest:
     page_load_timeout_ms: int = 30_000
     click_timeout_ms: int = 7_000
     screenshot_timeout_ms: int = 15_000
+    timeout_diagnostics: bool = True
+    timeout_diagnostics_timeout_ms: int = 5_000
     locale: str = "ru-RU"
     timezone_id: str = "Europe/Moscow"
 

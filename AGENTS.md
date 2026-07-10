@@ -259,9 +259,94 @@ python -m playwright install chromium
 
 Selectors с `selector_confidence=observed_sample` не являются end-to-end verified production selectors: это только HTML-sample observations без интерактивной Playwright-проверки, логина и обхода anti-bot. Остальные placements являются dimension-based fallback heuristics. В catalog metadata это зафиксировано, чтобы не выдавать эвристики за проверенные селекторы.
 
+---
+
+## Ход проекта — 2026-07-10 — диагностика timeout/no-result proof generation
+
+Проверен путь ошибки, о которой сообщил пользователь: после сообщения «Генерирую proof-скриншот. Это может занять до 1–2 минут.» бот возвращал общий timeout «Истекло время загрузки страницы, клика или создания скриншота.».
+
+### Диагноз и вероятная причина
+
+Рассмотрены основные источники зависания: запуск Chromium, создание browser context, загрузка рекламной страницы, вставка баннера, клик/popup flow, загрузка landing page, screenshot, композиция изображения и отправка Telegram. Наиболее вероятный источник — фаза клика/landing navigation: прежняя функция `_click_and_get_landing_page` перехватывала почти любые ошибки клика/popup и выполняла fallback `landing_page.goto()`, а timeout этого fallback пробрасывался наружу как общий `PlaywrightTimeoutError`. Внешний `generate_proof` затем заменял его одним общим сообщением, из-за чего нельзя было понять, где именно остановилась генерация.
+
+### Что изменено
+
+- Добавлены фазовые диагностические логи в `reports_ad/reports_ad/proof.py` и `reports_ad/reports_ad/bot.py`: `request_id`, хеш user/chat, host рекламной и landing страниц, сеть/spec, размеры, viewport, placement, phase/status, `elapsed_ms`, timeout и безопасно усеченные exception class/message.
+- Полные URL с UTM, Telegram token, локальные temp paths и содержимое upload-файлов в логи не пишутся.
+- Добавлен `ProofTimeoutError` с `phase` и `timeout_ms`, чтобы пользовательские ошибки различали timeout рекламной страницы, click/landing, screenshot и общий generation timeout.
+- Playwright wait strategy явно зафиксирована как `domcontentloaded` + bounded `body` wait + короткая стабилизация. `networkidle` намеренно не используется, потому что рекламные страницы часто держат сеть активной трекерами, long polling и lazy-load рекламой.
+- Добавлены unit-тесты без реального браузера для safe hostname logging, безопасного усечения exception message, redaction context и timeout classification.
+
+### Операторские заметки
+
+При повторении timeout смотреть в логах последнюю фазу `proof_phase` с `status='failure'`. Если это `landing_page_load` или `landing_click`, проверить DNS/TLS/anti-bot/доступность landing host из контейнера. Если `ad_page_load`, проверить доступность площадки и selector/template. Если `ad_screenshot` или `landing_screenshot`, проверить ресурсы контейнера, `shm_size` и сложность страницы.
+
 ### Проверки и ограничения
 
 Плановая проверка: `cd /512-2/FD/reports_ad && .venv/bin/pytest`. Внешняя проверка сайтов ограничена доступностью, SSO/403/TLS/DNS и anti-bot; для production надежности нужны ручные/Playwright-проверки конкретных страниц и согласованные CSS selectors/templates по каждой площадке.
+
+---
+
+## Ход проекта — 2026-07-10 — Docker logs и container network diagnostics
+
+Проверены Docker Compose service и runtime logs для `reports_ad` по запросу пользователя.
+
+### Проверенные команды
+
+- `cd /512-2/FD/reports_ad && docker compose ps --all`
+- `cd /512-2/FD/reports_ad && docker compose logs --since 24h --no-color reports-ad-bot` с редактированием вывода: Telegram token и полные URL не выводились в summary.
+- Временный container-side smoke через `docker compose exec -T reports-ad-bot python -c ...`: DNS, HTTPS/TLS через stdlib и Chromium `page.goto(..., wait_until='commit')`.
+
+### Наблюдение и гипотеза
+
+Логи показали, что `reports-ad-bot` запущен, Telegram polling работает, Chromium стартует, browser context создается. Конкретная заявка `request_id=f35bac617a07` остановилась на `proof_phase phase='ad_page_load' status='failure'` после `30000` ms для `ad_host='dzen.ru'`; до `creative_insert`, `landing_click` и screenshot дело не дошло. Ошибка Playwright: timeout в `Page.goto`, ожидание `domcontentloaded`.
+
+Container-side smoke показал: DNS для `dzen.ru`, `firstdata.io`, `api.telegram.org` резолвится; HTTPS/TLS handshake к `dzen.ru` и `firstdata.io` истекает по timeout; Chromium не доходит даже до `commit` для `dzen.ru`. После добавления helper повторная проверка новым image подтвердила более узкую картину: DNS ok, TCP connect ok, но `tls_handshake` timeout для `dzen.ru` и `firstdata.io` внутри Docker-контейнера. Поэтому наиболее вероятная причина — TLS/HTTPS egress filtering, proxy/VPN/firewall, Docker daemon network path или upstream blocking контейнерного egress, а не отсутствие Chromium dependencies, sandbox flags, `shm_size`, сертификатов или selector logic.
+
+### Что изменено
+
+- Добавлен `reports_ad.diagnostics` как безопасный container-side smoke helper: DNS, TCP connect и TLS handshake по hostname без логирования URL path/query/UTM.
+- При timeout `ad_page_load` `reports_ad/reports_ad/proof.py` теперь автоматически пишет `container_network_diagnostic` события для advertising host и landing host, чтобы в Docker logs было видно, где ломается цепочка: DNS, TCP или TLS.
+- Добавлены env-переменные `REPORTS_AD_TIMEOUT_DIAGNOSTICS` и `REPORTS_AD_TIMEOUT_DIAGNOSTICS_TIMEOUT_MS` в Compose/example config.
+- Обновлен `README.md` с командами `docker compose logs` и ручным запуском `python -m reports_ad.diagnostics` внутри контейнера.
+
+### Оставшиеся шаги
+
+После rebuild/restart контейнера повторить заявку и смотреть `container_network_diagnostic`. Если DNS ok, но `tcp_connect` или `tls_handshake` failure для нескольких публичных hosts, проверять Docker daemon network, host firewall, corporate proxy/VPN, cloud egress rules, IPv4/IPv6 routing and upstream blocking. Если diagnostics ok, но Playwright всё еще timeout, углублять Chromium-level diagnostics: request failures, response status, redirects, anti-bot/challenge and user-agent/locale behavior.
+
+Проверки после изменений: `.venv/bin/pytest` — 36 passed; `docker compose config --quiet` — ok; `.venv/bin/python -m reports_ad.diagnostics dzen.ru firstdata.io --timeout-ms 1000` на host network — TLS ok; `docker compose build reports-ad-bot` — ok; `docker compose run --rm --no-deps reports-ad-bot python -m reports_ad.diagnostics dzen.ru firstdata.io --timeout-ms 1000` — DNS/TCP ok, TLS handshake timeout внутри контейнера.
+
+---
+
+## Ход проекта — 2026-07-10 — повторная проверка Docker logs после diagnostics
+
+Повторно проверены Docker Compose logs и runtime состояние сервиса `reports-ad-bot` без раскрытия Telegram token, полных URL/query/UTM и пользовательских файлов.
+
+### Проверенные команды
+
+- `docker compose -f reports_ad/docker-compose.yml --env-file reports_ad/.env ps --all`
+- `docker compose -f reports_ad/docker-compose.yml --env-file reports_ad/.env logs --since 24h --no-color reports-ad-bot` с фильтром по `proof_phase`, `container_network_diagnostic`, `ad_page_load`, TLS/DNS/TCP/timeout и Chromium-событиям.
+- `docker inspect` для running container и `docker image inspect reports-ad:local` для сверки image id.
+- `docker compose ... exec -T reports-ad-bot` для проверки runtime env `REPORTS_AD_TIMEOUT_DIAGNOSTICS`, `REPORTS_AD_TIMEOUT_DIAGNOSTICS_TIMEOUT_MS`, `REPORTS_AD_PAGE_LOAD_TIMEOUT_MS`, `REPORTS_AD_REQUEST_TIMEOUT_SECONDS` и наличия `reports-ad-diagnostics`.
+- `reports-ad-diagnostics dzen.ru --timeout-ms 5000` внутри контейнера.
+- `reports-ad-diagnostics example.com --timeout-ms 5000` внутри контейнера как контрольный публичный HTTPS host.
+- Chromium smoke внутри контейнера: `page.goto(..., wait_until='commit')` для `dzen.ru` и `example.com`, затем отдельная проверка `dzen.ru` с `wait_until='domcontentloaded'` и ожиданием `body`.
+
+### Свежие наблюдения
+
+Последняя заявка `request_id=31c7c8a47c97` дошла до `browser_launch` и `browser_context` успешно, затем остановилась на фазе `ad_page_load` для `ad_host='dzen.ru'` после `30000` ms. До `creative_insert`, `landing_click` и screenshot выполнение не дошло. `container_network_diagnostic` уже присутствует в логах running container: `dns`, `tcp_connect` и `tls_handshake` для `dzen.ru` завершились `status='ok'`; значит контейнер запущен с новым image и diagnostics env включены.
+
+Сверка container image показала, что running container использует тот же `sha256:c247411a...`, что и локальный `reports-ad:local`; recreate/rebuild для получения diagnostics не требуется. В `.env` явно не заданы новые diagnostics-переменные, но Compose defaults из `docker-compose.yml` передают `REPORTS_AD_TIMEOUT_DIAGNOSTICS='1'` и `REPORTS_AD_TIMEOUT_DIAGNOSTICS_TIMEOUT_MS='5000'` в контейнер.
+
+Manual diagnostics внутри контейнера: для `dzen.ru` DNS/TCP/TLS ok; для `example.com` DNS/TCP/TLS ok, но TLS около 3900 ms, что медленно, но укладывается в 5000 ms. Chromium `commit` для `dzen.ru` и `example.com` ok. Дополнительный smoke показал, что `dzen.ru` не достигает `domcontentloaded` за 10000 ms, а `body` не становится attached за 5000 ms после commit.
+
+### Текущая гипотеза
+
+Предыдущая гипотеза про общий container TLS egress timeout больше не главная: свежие diagnostics показывают успешные DNS/TCP/TLS и Chromium commit. Наиболее вероятная текущая причина — специфика загрузки `dzen.ru` в headless Chromium/Docker: страница принимает соединение/commit, но не завершает `domcontentloaded` и не предоставляет пригодный `body` в ожидаемые сроки, вероятно из-за redirect/challenge/anti-bot/динамической загрузки/блокировки headless-контекста. Это operational/site-behavior issue, а не проблема Telegram token, Docker image, Chromium dependencies, selector logic или UTM.
+
+### Следующая рекомендация
+
+Для подтверждения нужно снять Chromium-level diagnostics по `dzen.ru`: request failures, final URL chain, response status, console/pageerror, `document.readyState`, minimal HTML length and title after `commit`, без логирования query/UTM. Если product допускает, можно изменить стратегию загрузки рекламной страницы с `domcontentloaded` на более tolerant `commit` плюс bounded wait for DOM/html/body and known site-specific handling; но это уже code change и его стоит делать после подтверждения диагноза на конкретной площадке.
 
 ---
 
@@ -304,3 +389,9 @@ Selectors с `selector_confidence=observed_sample` не являются end-to-
 ## Ход проекта — 2026-07-10 — изменение порядка загрузки креатива
 
 По обратной связи пользователя изменен порядок Telegram-сценария: после выбора типа баннера/spec бот больше не запрашивает сразу URL рекламной страницы, а сначала просит отправить PNG/JPEG-креатив с параметрами выбранного spec. Загруженный файл валидируется по MIME, расширению, размеру файла и пиксельным размерам; при несовпадении бот отправляет безопасное сообщение о причине и остается в шаге загрузки креатива. Только после успешной проверки креатив сохраняется во временной директории текущей заявки и бот переходит к запросу URL рекламной страницы. При редактировании spec креатив сбрасывается и требуется повторная загрузка, чтобы не сохранить несовместимый файл. История задач по-прежнему не сохраняется.
+
+---
+
+## Ход проекта — 2026-07-10 — русское меню review screen
+
+По обратной связи пользователя review screen `Проверьте заявку перед запуском:` переведен с текстовой инструкции `yes`/`edit ...` на `telegram_menu` reply-keyboard с русскими пунктами правки всех доступных полей и финальной кнопкой `Запустить`. Старые текстовые команды оставлены только как fallback. При запуске генерации клавиатура снимается; при переходе к правке текстовых/файловых полей меню также снимается, а для сети/spec показываются соответствующие меню. Правка spec по-прежнему сбрасывает креатив и требует повторной загрузки. История задач не сохраняется, состояние остается in-memory.

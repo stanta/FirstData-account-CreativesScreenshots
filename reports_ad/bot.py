@@ -56,11 +56,21 @@ EDIT_TARGETS = {
     "landing": LANDING_URL,
     "utm": UTM,
 }
+REVIEW_MENU_ACTIONS = {
+    "Изменить рекламную сеть": "network",
+    "Изменить тип баннера": "spec",
+    "Изменить креатив": "creative",
+    "Изменить URL рекламной страницы": "ad_url",
+    "Изменить landing URL": "landing",
+    "Изменить UTM-строку": "utm",
+    "Запустить": "generate",
+}
 
 ProofGenerator = Callable[[ProofRequest], Awaitable[ProofResult]]
 
 NETWORK_MENU_PROMPT = "Выберите рекламную сеть кнопкой меню telegram_menu:"
 SPEC_MENU_PROMPT = "Теперь выберите тип баннера/spec кнопкой меню telegram_menu:"
+REVIEW_MENU_PROMPT = "Выберите действие кнопкой меню telegram_menu:"
 TELEGRAM_KEYBOARD_BUTTON_TEXT_LIMIT = 64
 
 
@@ -206,7 +216,7 @@ async def collect_ad_page_url(update: Update, context: ContextTypes.DEFAULT_TYPE
         placement_note += " Площадка не найдена в списке; использован dimension-based fallback."
 
     if "landing_url" in context.user_data and "utm_params" in context.user_data:
-        await update.effective_message.reply_text(f"{placement_note}\n\n" + _review_text(context.user_data))
+        await _reply_review(update.effective_message, context.user_data, prefix=placement_note)
         return REVIEW
     await update.effective_message.reply_text(f"{placement_note}\nВведите landing URL, куда должен вести клик по баннеру.")
     return LANDING_URL
@@ -223,7 +233,7 @@ async def collect_creative(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     context.user_data["creative"] = creative_info
     if "ad_page_url" in context.user_data and "landing_url" in context.user_data and "utm_params" in context.user_data:
-        await message.reply_text(_review_text(context.user_data))
+        await _reply_review(message, context.user_data)
         return REVIEW
     if "ad_page_url" in context.user_data:
         await message.reply_text("Креатив принят. Введите landing URL, куда должен вести клик по баннеру.")
@@ -241,7 +251,7 @@ async def collect_landing_url(update: Update, context: ContextTypes.DEFAULT_TYPE
         return LANDING_URL
 
     if "utm_params" in context.user_data:
-        await update.effective_message.reply_text(_review_text(context.user_data))
+        await _reply_review(update.effective_message, context.user_data)
         return REVIEW
     await update.effective_message.reply_text("Введите UTM-строку, например: utm_source=telegram&utm_medium=cpc&utm_campaign=test")
     return UTM
@@ -257,65 +267,104 @@ async def collect_utm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         return UTM
 
     context.user_data["utm_params"] = utm_params
-    await update.effective_message.reply_text(_review_text(context.user_data))
+    await _reply_review(update.effective_message, context.user_data)
     return REVIEW
 
 
 async def review_or_generate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    answer = (update.effective_message.text or "").strip().lower()
-    if answer in {"yes", "y", "да", "д", "start", "go", "generate", "старт", "запуск"}:
+    action = review_menu_action(update.effective_message.text)
+    if action == "generate":
         return await _generate(update, context)
 
-    if answer.startswith("edit") or answer.startswith("изменить"):
-        parts = answer.split(maxsplit=1)
-        target = parts[1].strip() if len(parts) > 1 else ""
-        next_state = EDIT_TARGETS.get(target)
-        if next_state is None:
-            await update.effective_message.reply_text(
-                "Неизвестное поле для редактирования. Используйте: edit network, edit spec, edit ad_url, edit creative, edit landing, edit utm."
-            )
-            return REVIEW
-        _clear_for_edit(context.user_data, target)
-        await update.effective_message.reply_text(_edit_prompt(target, context.user_data), reply_markup=_edit_reply_markup(target, context.user_data))
-        return next_state
+    if action in EDIT_TARGETS:
+        _clear_for_edit(context.user_data, action)
+        await update.effective_message.reply_text(_edit_prompt(action, context.user_data), reply_markup=_edit_reply_markup(action, context.user_data))
+        return EDIT_TARGETS[action]
 
-    await update.effective_message.reply_text(
-        "Генерация не запущена. Ответьте `yes` для старта или `edit <field>` для правки.\n\n"
-        + _review_text(context.user_data)
-    )
+    if action == "unknown_edit":
+        await update.effective_message.reply_text(
+            "Неизвестное поле для редактирования. Выберите действие кнопкой меню или используйте fallback: "
+            "edit network, edit spec, edit ad_url, edit creative, edit landing, edit utm.",
+            reply_markup=review_menu_keyboard(),
+        )
+        return REVIEW
+
+    await _reply_review(update.effective_message, context.user_data, prefix="Генерация не запущена. Выберите действие в меню.")
     return REVIEW
 
 
 async def _generate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_id = update.effective_user.id if update.effective_user else 0
+    effective_chat = getattr(update, "effective_chat", None)
+    chat_id = effective_chat.id if effective_chat else 0
     lock = _user_lock(context, user_id)
     if lock.locked():
         await update.effective_message.reply_text("У вас уже выполняется генерация. Дождитесь завершения или отмените текущую заявку.")
         return REVIEW
 
     async with lock:
-        await update.effective_message.reply_text("Генерирую proof-скриншот. Это может занять до 1–2 минут.")
+        await update.effective_message.reply_text(
+            "Генерирую proof-скриншот. Это может занять до 1–2 минут.",
+            reply_markup=ReplyKeyboardRemove(),
+        )
         request_id = context.user_data.get("request_id", uuid.uuid4().hex[:12])
         user_hash = _safe_user_hash(user_id)
-        logger.info("proof_generation_started request_id=%s user=%s", request_id, user_hash)
+        chat_hash = _safe_user_hash(chat_id)
+        started = asyncio.get_running_loop().time()
+        logger.info("proof_generation_started request_id=%s user=%s chat=%s", request_id, user_hash, chat_hash)
         try:
             config = _config(context)
             output_path = _ensure_temp_dir(context.user_data, config) / "proof-result.png"
             request = _build_proof_request(context.user_data, config, output_path)
+            logger.info(
+                "proof_generation_request_built request_id=%s user=%s chat=%s ad_host=%s landing_host=%s network=%s spec=%s dimensions=%s viewport=%sx%s placement=%s timeout_seconds=%s",
+                request_id,
+                user_hash,
+                chat_hash,
+                _safe_host(request.ad_page_url),
+                _safe_host(request.landing_url),
+                request.network_slug,
+                request.spec.slug,
+                request.spec.dimensions_label,
+                request.viewport_width,
+                request.viewport_height,
+                request.placement.label,
+                config.request_timeout_seconds,
+            )
             proof_generator: ProofGenerator = context.bot_data["proof_generator"]
             async with asyncio.timeout(config.request_timeout_seconds):
                 result = await proof_generator(request)
+            send_started = asyncio.get_running_loop().time()
+            logger.info("proof_telegram_send_started request_id=%s user=%s chat=%s elapsed_ms=%s", request_id, user_hash, chat_hash, _loop_elapsed_ms(send_started))
             with result.output_path.open("rb") as image_file:
                 await update.effective_message.reply_photo(photo=image_file, caption="Proof-скриншот готов.")
-            logger.info("proof_generation_done request_id=%s user=%s", request_id, user_hash)
-        except asyncio.TimeoutError:
-            logger.warning("proof_generation_timeout request_id=%s user=%s", request_id, user_hash)
+            logger.info("proof_telegram_send_done request_id=%s user=%s chat=%s elapsed_ms=%s", request_id, user_hash, chat_hash, _loop_elapsed_ms(send_started))
+            logger.info("proof_generation_done request_id=%s user=%s chat=%s elapsed_ms=%s", request_id, user_hash, chat_hash, _loop_elapsed_ms(started))
+        except asyncio.TimeoutError as exc:
+            logger.warning(
+                "proof_generation_timeout request_id=%s user=%s chat=%s elapsed_ms=%s timeout_seconds=%s exception_class=%s exception_message=%s",
+                request_id,
+                user_hash,
+                chat_hash,
+                _loop_elapsed_ms(started),
+                _config(context).request_timeout_seconds,
+                type(exc).__name__,
+                _safe_exception_message(exc),
+            )
             await update.effective_message.reply_text("Истекло время генерации proof-скриншота. Попробуйте позже или упростите страницу/селектор.")
         except (ValidationError, ScreenshotGenerationError) as exc:
-            logger.warning("proof_generation_failed request_id=%s user=%s reason=%s", request_id, user_hash, type(exc).__name__)
+            logger.warning(
+                "proof_generation_failed request_id=%s user=%s chat=%s elapsed_ms=%s reason=%s exception_message=%s",
+                request_id,
+                user_hash,
+                chat_hash,
+                _loop_elapsed_ms(started),
+                type(exc).__name__,
+                _safe_exception_message(exc),
+            )
             await update.effective_message.reply_text(exc.safe_message)
-        except Exception:
-            logger.exception("proof_generation_unexpected request_id=%s user=%s", request_id, user_hash)
+        except Exception as exc:
+            logger.exception("proof_generation_unexpected request_id=%s user=%s chat=%s elapsed_ms=%s exception_class=%s", request_id, user_hash, chat_hash, _loop_elapsed_ms(started), type(exc).__name__)
             await update.effective_message.reply_text("Не удалось сформировать proof-скриншот. Проверьте входные данные и попробуйте снова.")
         finally:
             await _cleanup_state(context.user_data)
@@ -392,6 +441,8 @@ def _build_proof_request(user_data: dict[str, Any], config: BotConfig, output_pa
         page_load_timeout_ms=config.page_load_timeout_ms,
         click_timeout_ms=config.click_timeout_ms,
         screenshot_timeout_ms=config.screenshot_timeout_ms,
+        timeout_diagnostics=config.timeout_diagnostics,
+        timeout_diagnostics_timeout_ms=config.timeout_diagnostics_timeout_ms,
         locale=config.locale,
         timezone_id=config.timezone_id,
     )
@@ -417,8 +468,15 @@ def _review_text(user_data: dict[str, Any]) -> str:
         f"• креатив: {creative.mime_type}, {creative.width}×{creative.height}, {creative.size_bytes} байт\n"
         f"• landing: {user_data['landing_url']}\n"
         f"• UTM-ключи: {utm_keys}\n\n"
-        "Ответьте `yes`, чтобы запустить генерацию. Для правки используйте: edit network, edit spec, edit ad_url, edit creative, edit landing, edit utm."
+        f"{REVIEW_MENU_PROMPT}"
     )
+
+
+async def _reply_review(message: Any, user_data: dict[str, Any], *, prefix: str = "") -> None:
+    text = _review_text(user_data)
+    if prefix:
+        text = f"{prefix}\n\n{text}"
+    await message.reply_text(text, reply_markup=review_menu_keyboard())
 
 
 def network_menu_keyboard() -> ReplyKeyboardMarkup:
@@ -438,6 +496,14 @@ def spec_menu_keyboard(network_slug: str) -> ReplyKeyboardMarkup:
     for spec in list_runtime_specs(network_slug):
         label = _spec_menu_label(spec)
         _add_menu_row_button(menu, label=label, args=spec.slug)
+    return menu.gen_keyboard_content()
+
+
+def review_menu_keyboard() -> ReplyKeyboardMarkup:
+    menu = ReportsAdMenuMessage(navigation=None, label="reports-ad-review", input_field=REVIEW_MENU_PROMPT)
+    menu.keyboard = []
+    for label in REVIEW_MENU_ACTIONS:
+        _add_menu_row_button(menu, label=label, args=label)
     return menu.gen_keyboard_content()
 
 
@@ -480,6 +546,24 @@ def _menu_value(text: str | None) -> str:
     if "[" in value and "]" in value:
         return value.split("[", 1)[1].split("]", 1)[0].strip()
     return value
+
+
+def review_menu_action(text: str | None) -> str:
+    raw_value = (text or "").strip()
+    menu_action = REVIEW_MENU_ACTIONS.get(raw_value)
+    if menu_action:
+        return menu_action
+
+    answer = raw_value.lower()
+    if answer in {"yes", "y", "да", "д", "start", "go", "generate", "старт", "запуск", "запустить"}:
+        return "generate"
+
+    if answer.startswith("edit") or answer.startswith("изменить"):
+        parts = answer.split(maxsplit=1)
+        target = parts[1].strip() if len(parts) > 1 else ""
+        return target if target in EDIT_TARGETS else "unknown_edit"
+
+    return ""
 
 
 def _clear_for_edit(user_data: dict[str, Any], target: str) -> None:
@@ -561,6 +645,20 @@ def _user_lock(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> asyncio.Lock
 
 def _safe_user_hash(user_id: int) -> str:
     return hashlib.sha256(str(user_id).encode("utf-8")).hexdigest()[:12]
+
+
+def _safe_host(url: str) -> str:
+    from urllib.parse import urlparse
+
+    return (urlparse(url).hostname or "").lower()[:120]
+
+
+def _safe_exception_message(exc: BaseException) -> str:
+    return str(exc).replace("\n", " ")[:240]
+
+
+def _loop_elapsed_ms(started: float) -> int:
+    return int((asyncio.get_running_loop().time() - started) * 1000)
 
 
 def main() -> None:

@@ -24,6 +24,7 @@ dev = [
 
 [project.scripts]
 reports-ad-bot = "reports_ad.bot:main"
+reports-ad-diagnostics = "reports_ad.diagnostics:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
