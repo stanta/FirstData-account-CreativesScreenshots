@@ -262,3 +262,39 @@ Selectors с `selector_confidence=observed_sample` не являются end-to-
 ### Проверки и ограничения
 
 Плановая проверка: `cd /512-2/FD/reports_ad && .venv/bin/pytest`. Внешняя проверка сайтов ограничена доступностью, SSO/403/TLS/DNS и anti-bot; для production надежности нужны ручные/Playwright-проверки конкретных страниц и согласованные CSS selectors/templates по каждой площадке.
+
+---
+
+## Ход проекта — 2026-07-09 — миграция выбора сети/spec на telegram_menu
+
+Выполнен точечный перевод только двух шагов активного Telegram workflow на библиотеку `telegram_menu`: выбор рекламной сети и выбор размера/типа баннера из runtime-supported catalog specs. Остальной сценарий сохранен без переписывания: URL рекламной страницы, PNG/JPEG upload, landing URL, UTM, review/edit и явный старт генерации остаются на существующем `python-telegram-bot` `ConversationHandler`.
+
+### Что изменено
+
+- `reports_ad/pyproject.toml` — добавлена зависимость `telegram_menu>=3.0.0,<4.0.0`.
+- `reports_ad/uv.lock` — обновлен lock-файл через `uv lock`; добавлены `telegram-menu` и его транзитивные зависимости `APScheduler`, `cachetools`, `emoji`, `tzdata`, `tzlocal`, `validators`.
+- `reports_ad/reports_ad/bot.py` — добавлен lightweight adapter `ReportsAdMenuMessage` поверх `telegram_menu.BaseMessage`; функции `network_menu_keyboard()` и `spec_menu_keyboard()` строят reply-keyboard buttons из существующего catalog/runtime filter. Handlers принимают label кнопки формата `Display [slug] — detail` и извлекают slug через `_menu_value()`, сохраняя совместимость с ручным вводом slug.
+- `reports_ad/tests/test_validation.py` — добавлены unit-тесты, проверяющие построение `telegram_menu` keyboards, фильтрацию spec-menu по выбранной сети и roundtrip label → slug без реального Telegram token.
+- `reports_ad/README.md` — описано новое menu-based поведение и dependency/import note: PyPI/distribution name может отображаться как `telegram-menu`/`telegram_menu`, Python import — `telegram_menu`.
+
+### Проверка совместимости и ограничение
+
+Проверена фактическая совместимость: `telegram_menu==3.0.0` импортируется как `telegram_menu`, требует Python `>=3.10` и `python-telegram-bot>=22.0,<23.0`; текущий lock уже использует `python-telegram-bot 22.8`, поэтому версии совместимы.
+
+Полная `TelegramMenuSession` из библиотеки намеренно не внедрялась: она создает собственный `Application`, persistence и набор handlers, что конфликтует с текущим no-history polling runtime и уже существующим `ConversationHandler`. Использован безопасный adapter, который применяет библиотеку для построения requested menus/buttons именно в двух шагах выбора, не меняя proof generation, catalog selection semantics, Docker/runtime и validation logic.
+
+### Проверки
+
+Запланированные проверки после изменения: `cd /512-2/FD/reports_ad && .venv/bin/python -m pytest`. Дополнительно выполнена проверка install/import API через `.venv/bin/python -m pip install 'telegram_menu>=3.0.0,<4.0.0'` и Python import smoke для `telegram_menu.BaseMessage`/`MenuButton`.
+
+---
+
+## Ход проекта — 2026-07-09 — уточнение spec-step menu prompt
+
+По пользовательскому фидбеку закреплено поведение шага выбора типа баннера/spec: сразу после выбора сети бот отправляет точный prompt `Теперь выберите тип баннера/spec кнопкой меню telegram_menu:` и показывает `telegram_menu` reply-keyboard, отфильтрованную по выбранной сети. Ручной ввод slug оставлен только как fallback и не должен заменять основной выбор кнопкой меню.
+
+---
+
+## Ход проекта — 2026-07-10 — bugfix перехода сеть → spec в Telegram menu
+
+Исправлен runtime-баг: после выбора рекламной сети бот мог оставаться на шаге выбора сети и визуально показывать сетевое меню повторно, потому что generated `telegram_menu` keyboard содержал пустую первую строку, а spec-кнопки могли превышать Telegram limit в 64 символа. В `reports_ad/reports_ad/bot.py` меню теперь строятся без пустых строк, spec-label сокращен до `размер [spec-slug]`, slug fallback сохранен. Добавлен regression test: валидная network menu label сразу возвращает spec prompt/menu, а последующая spec menu label переводит flow к вводу URL рекламной страницы.

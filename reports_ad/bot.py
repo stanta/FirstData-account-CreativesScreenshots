@@ -8,7 +8,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
-from telegram import Update
+from telegram import ReplyKeyboardMarkup, ReplyKeyboardRemove, Update
 from telegram.ext import (
     Application,
     ApplicationBuilder,
@@ -18,6 +18,7 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
+from telegram_menu import BaseMessage
 
 from .catalog import (
     catalog_summary,
@@ -58,6 +59,17 @@ EDIT_TARGETS = {
 
 ProofGenerator = Callable[[ProofRequest], Awaitable[ProofResult]]
 
+NETWORK_MENU_PROMPT = "Выберите рекламную сеть кнопкой меню telegram_menu:"
+SPEC_MENU_PROMPT = "Теперь выберите тип баннера/spec кнопкой меню telegram_menu:"
+TELEGRAM_KEYBOARD_BUTTON_TEXT_LIMIT = 64
+
+
+class ReportsAdMenuMessage(BaseMessage):
+    """Small telegram_menu message adapter used to build reply-keyboard menus."""
+
+    def update(self, context: ContextTypes.DEFAULT_TYPE | None = None) -> str:
+        return ""
+
 
 def build_application(config: BotConfig | None = None, proof_generator: ProofGenerator = generate_proof) -> Application:
     runtime_config = config or BotConfig.from_env()
@@ -90,11 +102,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data["request_id"] = uuid.uuid4().hex[:12]
     await update.effective_message.reply_text(
         "Я сформирую proof-скриншот рекламного размещения.\n\n"
-        "Новый сценарий: рекламная сеть → тип баннера → URL рекламной страницы → PNG/JPEG-креатив → landing URL → UTM → review/edit → старт.\n"
+        "Выберите: рекламную сеть → тип баннера → URL рекламной страницы → PNG/JPEG-креатив → landing URL → UTM → review/edit → старт.\n"
         "MVP принимает только PNG/JPEG, даже если исходный каталог содержит GIF/video/HTML5.\n\n"
-        "Выберите рекламную сеть, отправив ее slug:\n"
+        f"{NETWORK_MENU_PROMPT}\n"
         f"{catalog_summary()}\n\n"
-        "Команда /cancel отменяет текущую заявку."
+        "Команда /cancel отменяет текущую заявку.",
+        reply_markup=network_menu_keyboard(),
     )
     return NETWORK
 
@@ -102,16 +115,19 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await _cleanup_state(context.user_data)
     context.user_data.clear()
-    await update.effective_message.reply_text("Заявка отменена, временные файлы удалены.")
+    await update.effective_message.reply_text("Заявка отменена, временные файлы удалены.", reply_markup=ReplyKeyboardRemove())
     return ConversationHandler.END
 
 
 async def collect_network(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     allowed = {network["slug"] for network in list_networks()}
     try:
-        network_slug = validate_network_slug(update.effective_message.text, allowed)
+        network_slug = validate_network_slug(_menu_value(update.effective_message.text), allowed)
     except ValidationError as exc:
-        await update.effective_message.reply_text(f"{exc.safe_message}\n\n{catalog_summary()}")
+        await update.effective_message.reply_text(
+            f"{exc.safe_message}\n\n{NETWORK_MENU_PROMPT}\n{catalog_summary()}",
+            reply_markup=network_menu_keyboard(),
+        )
         return NETWORK
 
     network = get_network(network_slug) or {"slug": network_slug, "display_name": network_slug}
@@ -121,8 +137,8 @@ async def collect_network(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         _clear_from(context.user_data, "spec")
     await update.effective_message.reply_text(
         f"Сеть выбрана: {context.user_data['network_display_name']}.\n"
-        "Теперь выберите тип баннера/spec, отправив slug:\n"
-        f"{specs_summary(network_slug)}"
+        f"{spec_menu_prompt(network_slug)}",
+        reply_markup=spec_menu_keyboard(network_slug),
     )
     return BANNER_TYPE
 
@@ -130,20 +146,29 @@ async def collect_network(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 async def collect_banner_type(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     network_slug = context.user_data.get("network_slug")
     if not network_slug:
-        await update.effective_message.reply_text("Сначала выберите рекламную сеть.\n" + catalog_summary())
+        await update.effective_message.reply_text(
+            f"Сначала выберите рекламную сеть.\n{NETWORK_MENU_PROMPT}\n{catalog_summary()}",
+            reply_markup=network_menu_keyboard(),
+        )
         return NETWORK
 
     specs = list_runtime_specs(network_slug)
     allowed = {spec.slug for spec in specs}
     try:
-        spec_slug = validate_spec_slug(update.effective_message.text, allowed)
+        spec_slug = validate_spec_slug(_menu_value(update.effective_message.text), allowed)
     except ValidationError as exc:
-        await update.effective_message.reply_text(f"{exc.safe_message}\n\n{specs_summary(network_slug)}")
+        await update.effective_message.reply_text(
+            f"{exc.safe_message}\n\n{spec_menu_prompt(network_slug)}",
+            reply_markup=spec_menu_keyboard(network_slug),
+        )
         return BANNER_TYPE
 
     spec = get_spec(spec_slug)
     if spec is None or not spec.runtime_upload_supported:
-        await update.effective_message.reply_text("Выбранный формат не поддерживается runtime. Выберите PNG/JPEG spec из списка.")
+        await update.effective_message.reply_text(
+            "Выбранный формат не поддерживается runtime. Выберите PNG/JPEG spec из меню.",
+            reply_markup=spec_menu_keyboard(network_slug),
+        )
         return BANNER_TYPE
 
     context.user_data["spec"] = spec
@@ -159,7 +184,8 @@ async def collect_banner_type(update: Update, context: ContextTypes.DEFAULT_TYPE
     await update.effective_message.reply_text(
         f"Тип баннера выбран: {spec.display_name}\n"
         f"Ожидаемый размер: {spec.dimensions_label}; лимит файла: {spec.max_file_size_bytes} байт.\n"
-        "Введите URL рекламной страницы, где нужно разместить рекламу."
+        "Введите URL рекламной страницы, где нужно разместить рекламу.",
+        reply_markup=ReplyKeyboardRemove(),
     )
     return AD_PAGE_URL
 
@@ -251,7 +277,7 @@ async def review_or_generate(update: Update, context: ContextTypes.DEFAULT_TYPE)
             )
             return REVIEW
         _clear_for_edit(context.user_data, target)
-        await update.effective_message.reply_text(_edit_prompt(target, context.user_data))
+        await update.effective_message.reply_text(_edit_prompt(target, context.user_data), reply_markup=_edit_reply_markup(target, context.user_data))
         return next_state
 
     await update.effective_message.reply_text(
@@ -396,6 +422,59 @@ def _review_text(user_data: dict[str, Any]) -> str:
     )
 
 
+def network_menu_keyboard() -> ReplyKeyboardMarkup:
+    menu = ReportsAdMenuMessage(navigation=None, label="reports-ad-network", input_field="Выберите рекламную сеть")
+    menu.keyboard = []
+    for network in list_networks():
+        slug = network.get("slug", "")
+        count = len(list_runtime_specs(slug))
+        label = _menu_label(network.get("display_name", slug), slug, f"{count} specs")
+        _add_menu_row_button(menu, label=label, args=slug)
+    return menu.gen_keyboard_content()
+
+
+def spec_menu_keyboard(network_slug: str) -> ReplyKeyboardMarkup:
+    menu = ReportsAdMenuMessage(navigation=None, label=f"reports-ad-spec-{network_slug}", input_field=SPEC_MENU_PROMPT)
+    menu.keyboard = []
+    for spec in list_runtime_specs(network_slug):
+        label = _spec_menu_label(spec)
+        _add_menu_row_button(menu, label=label, args=spec.slug)
+    return menu.gen_keyboard_content()
+
+
+def spec_menu_prompt(network_slug: str) -> str:
+    return f"{SPEC_MENU_PROMPT}\n{specs_summary(network_slug)}"
+
+
+def _add_menu_row_button(menu: ReportsAdMenuMessage, *, label: str, args: str) -> None:
+    new_row = bool(menu.keyboard and menu.keyboard[-1])
+    menu.add_button(label=label, args=args, new_row=new_row)
+
+
+def _menu_label(display_name: str, slug: str, detail: str = "") -> str:
+    base = f"{display_name} [{slug}]"
+    return f"{base} — {detail}" if detail else base
+
+
+def _spec_menu_label(spec: CreativeSpec) -> str:
+    label = _menu_label(spec.dimensions_label, spec.slug)
+    if len(label) <= TELEGRAM_KEYBOARD_BUTTON_TEXT_LIMIT:
+        return label
+
+    label = f"[{spec.slug}]"
+    if len(label) <= TELEGRAM_KEYBOARD_BUTTON_TEXT_LIMIT:
+        return label
+
+    return spec.slug
+
+
+def _menu_value(text: str | None) -> str:
+    value = (text or "").strip()
+    if "[" in value and "]" in value:
+        return value.split("[", 1)[1].split("]", 1)[0].strip()
+    return value
+
+
 def _clear_for_edit(user_data: dict[str, Any], target: str) -> None:
     if target == "network":
         _clear_from(user_data, "network_slug")
@@ -423,12 +502,12 @@ def _clear_from(user_data: dict[str, Any], key: str) -> None:
 
 def _edit_prompt(target: str, user_data: dict[str, Any]) -> str:
     if target == "network":
-        return "Выберите рекламную сеть, отправив slug:\n" + catalog_summary()
+        return f"{NETWORK_MENU_PROMPT}\n{catalog_summary()}"
     if target in {"spec", "banner"}:
         network_slug = user_data.get("network_slug")
         if not network_slug:
-            return "Сначала выберите рекламную сеть:\n" + catalog_summary()
-        return "Выберите тип баннера/spec, отправив slug:\n" + specs_summary(network_slug)
+            return f"Сначала выберите рекламную сеть.\n{NETWORK_MENU_PROMPT}\n{catalog_summary()}"
+        return spec_menu_prompt(network_slug)
     if target in {"ad_url", "page"}:
         return "Введите URL рекламной страницы. Placement будет выбран заново по площадке и размеру spec."
     if target == "creative":
@@ -438,6 +517,17 @@ def _edit_prompt(target: str, user_data: dict[str, Any]) -> str:
     if target == "utm":
         return "Введите новую UTM-строку, например: utm_source=telegram&utm_medium=cpc&utm_campaign=test"
     return "Введите новое значение."
+
+
+def _edit_reply_markup(target: str, user_data: dict[str, Any]) -> ReplyKeyboardMarkup | ReplyKeyboardRemove:
+    if target == "network":
+        return network_menu_keyboard()
+    if target in {"spec", "banner"}:
+        network_slug = user_data.get("network_slug")
+        if network_slug:
+            return spec_menu_keyboard(network_slug)
+        return network_menu_keyboard()
+    return ReplyKeyboardRemove()
 
 
 async def _cleanup_state(user_data: dict[str, Any]) -> None:

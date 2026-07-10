@@ -6,8 +6,8 @@
 
 - Telegram polling bot на `python-telegram-bot` 21+.
 - Пошаговый сценарий ввода:
-  1. выбор рекламной сети из локального каталога;
-  2. выбор типа баннера/spec, отфильтрованного по сети;
+  1. выбор рекламной сети кнопкой reply-menu, построенной через `telegram_menu`;
+  2. выбор типа баннера/spec кнопкой `telegram_menu`, отфильтрованной по сети;
   3. URL страницы рекламной площадки;
   4. PNG/JPEG-креатив через Telegram-файл/фото или локальный путь в тестовом режиме;
   5. URL landing page;
@@ -19,6 +19,16 @@
 - Playwright/Chromium генератор: открывает страницу, вставляет статичный баннер, назначает click URL с UTM, эмулирует клик, получает landing page и собирает итоговое изображение, где нижние 20% заняты landing page.
 - Нет сохранения истории задач; состояние диалога и per-user locks только в памяти процесса.
 - Временные файлы удаляются после отправки результата, отмены или ошибки.
+
+## Menu selection dependency note
+
+Выбор рекламной сети и размера/spec переведен с ручного ввода slug на reply-keyboard меню, построенные через библиотеку `telegram_menu`.
+
+- PyPI package name в lock/dependency metadata отображается как `telegram-menu`/`telegram_menu`; импорт в Python выполняется как `telegram_menu`.
+- Используется легкий adapter на `telegram_menu.BaseMessage`: бот остается на существующем `python-telegram-bot` `ConversationHandler` и polling lifecycle, а `telegram_menu` применяется для построения keyboard buttons только в двух шагах выбора.
+- После выбора рекламной сети бот сразу отправляет prompt `Теперь выберите тип баннера/spec кнопкой меню telegram_menu:` и показывает `telegram_menu` reply-keyboard только со spec-кнопками выбранной сети; выбранный label вида `Display [spec-slug] — размер` мапится обратно в slug.
+- Полная `TelegramMenuSession` из библиотеки не включена, потому что она создает собственное приложение, persistence и handlers; это конфликтовало бы с текущим no-history runtime и существующим polling flow. Остальные шаги по-прежнему принимают текст/файл без меню.
+- На случай ручного ввода бот сохраняет обратную совместимость: принимает как menu label вида `Яндекс [yandex_graphic_banners] — 12 specs`, так и сам slug.
 
 ## Быстрый старт
 
@@ -113,7 +123,7 @@ docker compose down
 
 ## Catalog and placement behavior
 
-Каталог содержит 96 source specs из `creative_specs.json` и 19 рекламных сетей/platform groups. Runtime-фильтр бота показывает только specs, которые можно принять как статичный PNG/JPEG с фиксированными размерами. Если source spec допускает GIF, PSD, ZIP, MP4 или HTML5, эти данные сохранены в catalog metadata, но Telegram runtime MVP их не принимает.
+Каталог содержит 96 source specs из `creative_specs.json` и 19 рекламных сетей/platform groups. Runtime-фильтр бота показывает в `telegram_menu` только specs, которые можно принять как статичный PNG/JPEG с фиксированными размерами. Если source spec допускает GIF, PSD, ZIP, MP4 или HTML5, эти данные сохранены в catalog metadata, но Telegram runtime MVP их не принимает.
 
 После ввода advertising page URL бот выбирает placement автоматически:
 
