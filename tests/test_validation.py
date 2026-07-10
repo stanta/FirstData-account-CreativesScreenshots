@@ -4,17 +4,21 @@ import pytest
 from PIL import Image
 
 from reports_ad.bot import (
+    AD_PAGE_URL,
+    CREATIVE,
     SPEC_MENU_PROMPT,
     TELEGRAM_KEYBOARD_BUTTON_TEXT_LIMIT,
     _menu_label,
     _menu_value,
     collect_banner_type,
+    collect_creative,
     collect_network,
     network_menu_keyboard,
     spec_menu_keyboard,
     spec_menu_prompt,
 )
 from reports_ad.catalog import choose_placement_for_url, get_site_placement, get_spec, list_runtime_specs
+from reports_ad.config import BotConfig
 from reports_ad.models import Placement
 from reports_ad.validation import (
     ValidationError,
@@ -160,7 +164,7 @@ async def test_network_selection_immediately_sends_filtered_spec_menu() -> None:
 
 
 @pytest.mark.asyncio
-async def test_network_menu_button_then_spec_menu_button_advances_to_ad_url_step() -> None:
+async def test_network_menu_button_then_spec_menu_button_advances_to_creative_upload_step() -> None:
     context = _FakeContext()
     network_message = _FakeMessage("Яндекс [yandex_graphic_banners] — 12 specs")
 
@@ -177,10 +181,47 @@ async def test_network_menu_button_then_spec_menu_button_advances_to_ad_url_step
     spec_state = await collect_banner_type(_FakeUpdate(spec_message), context)
 
     assert network_state == 1
-    assert spec_state == 2
+    assert spec_state == CREATIVE
     assert context.user_data["network_slug"] == "yandex_graphic_banners"
     assert context.user_data["spec"].slug == "yandex-graphic-banners-300x250-image"
-    assert spec_message.replies[-1]["text"].endswith("Введите URL рекламной страницы, где нужно разместить рекламу.")
+    assert "Отправьте PNG/JPEG-креатив" in spec_message.replies[-1]["text"]
+    assert "Ожидаемые размеры: 300×250" in spec_message.replies[-1]["text"]
+    assert "Введите URL рекламной страницы" not in spec_message.replies[-1]["text"]
+
+
+@pytest.mark.asyncio
+async def test_invalid_creative_stays_in_creative_upload_state_and_asks_reupload(tmp_path: Path) -> None:
+    spec = get_spec("yandex-graphic-banners-300x250-image")
+    assert spec is not None
+    image_path = tmp_path / "wrong-size.png"
+    Image.new("RGB", (320, 250), "red").save(image_path)
+    message = _FakeMessage(str(image_path))
+    context = _FakeContext(BotConfig(telegram_token="test", allow_local_creative_path=True, temp_root=tmp_path))
+    context.user_data["spec"] = spec
+
+    state = await collect_creative(_FakeUpdate(message), context)
+
+    assert state == CREATIVE
+    assert "creative" not in context.user_data
+    assert "Креатив не подходит" in message.replies[-1]["text"]
+    assert "Отправьте PNG/JPEG-креатив" in message.replies[-1]["text"]
+
+
+@pytest.mark.asyncio
+async def test_valid_creative_transitions_to_ad_url_prompt_state(tmp_path: Path) -> None:
+    spec = get_spec("yandex-graphic-banners-300x250-image")
+    assert spec is not None
+    image_path = tmp_path / "creative.png"
+    Image.new("RGB", (300, 250), "red").save(image_path)
+    message = _FakeMessage(str(image_path))
+    context = _FakeContext(BotConfig(telegram_token="test", allow_local_creative_path=True, temp_root=tmp_path))
+    context.user_data["spec"] = spec
+
+    state = await collect_creative(_FakeUpdate(message), context)
+
+    assert state == AD_PAGE_URL
+    assert context.user_data["creative"].width == 300
+    assert message.replies[-1]["text"] == "Креатив принят. Введите URL рекламной страницы, где нужно разместить рекламу."
 
 
 def test_menu_label_roundtrip_preserves_slug_for_validation() -> None:
@@ -199,6 +240,8 @@ def test_spec_menu_label_roundtrip_preserves_slug_for_validation() -> None:
 class _FakeMessage:
     def __init__(self, text: str) -> None:
         self.text = text
+        self.document = None
+        self.photo = []
         self.replies: list[dict] = []
 
     async def reply_text(self, text: str, reply_markup=None) -> None:
@@ -211,5 +254,6 @@ class _FakeUpdate:
 
 
 class _FakeContext:
-    def __init__(self) -> None:
+    def __init__(self, config: BotConfig | None = None) -> None:
         self.user_data: dict = {}
+        self.bot_data: dict = {"config": config or BotConfig(telegram_token="test")}

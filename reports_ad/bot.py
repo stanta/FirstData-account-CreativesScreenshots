@@ -45,7 +45,7 @@ from .validation import (
 
 logger = logging.getLogger(__name__)
 
-NETWORK, BANNER_TYPE, AD_PAGE_URL, CREATIVE, LANDING_URL, UTM, REVIEW = range(7)
+NETWORK, BANNER_TYPE, CREATIVE, AD_PAGE_URL, LANDING_URL, UTM, REVIEW = range(7)
 EDIT_TARGETS = {
     "network": NETWORK,
     "spec": BANNER_TYPE,
@@ -102,7 +102,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data["request_id"] = uuid.uuid4().hex[:12]
     await update.effective_message.reply_text(
         "Я сформирую proof-скриншот рекламного размещения.\n\n"
-        "Выберите: рекламную сеть → тип баннера → URL рекламной страницы → PNG/JPEG-креатив → landing URL → UTM → review/edit → старт.\n"
+        "Выберите: рекламную сеть → тип баннера → PNG/JPEG-креатив → URL рекламной страницы → landing URL → UTM → review/edit → старт.\n"
         "MVP принимает только PNG/JPEG, даже если исходный каталог содержит GIF/video/HTML5.\n\n"
         f"{NETWORK_MENU_PROMPT}\n"
         f"{catalog_summary()}\n\n"
@@ -173,21 +173,17 @@ async def collect_banner_type(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     context.user_data["spec"] = spec
     context.user_data["banner_type"] = spec.display_name
+    context.user_data.pop("creative", None)
     if "ad_page_url" in context.user_data:
         context.user_data["placement"] = choose_placement_for_url(context.user_data["ad_page_url"], spec)
-    if "creative" in context.user_data or "landing_url" in context.user_data or "utm_params" in context.user_data:
-        await update.effective_message.reply_text(
-            "Тип баннера обновлен. Проверьте совместимость креатива с новым spec и при необходимости используйте edit creative.\n\n"
-            + _review_text(context.user_data)
-        )
-        return REVIEW
+    if "landing_url" in context.user_data or "utm_params" in context.user_data:
+        _clear_from(context.user_data, "landing_url")
     await update.effective_message.reply_text(
         f"Тип баннера выбран: {spec.display_name}\n"
-        f"Ожидаемый размер: {spec.dimensions_label}; лимит файла: {spec.max_file_size_bytes} байт.\n"
-        "Введите URL рекламной страницы, где нужно разместить рекламу.",
+        f"{creative_upload_prompt(spec)}",
         reply_markup=ReplyKeyboardRemove(),
     )
-    return AD_PAGE_URL
+    return CREATIVE
 
 
 async def collect_ad_page_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -209,11 +205,11 @@ async def collect_ad_page_url(update: Update, context: ContextTypes.DEFAULT_TYPE
     else:
         placement_note += " Площадка не найдена в списке; использован dimension-based fallback."
 
-    if "creative" in context.user_data and "landing_url" in context.user_data and "utm_params" in context.user_data:
+    if "landing_url" in context.user_data and "utm_params" in context.user_data:
         await update.effective_message.reply_text(f"{placement_note}\n\n" + _review_text(context.user_data))
         return REVIEW
-    await update.effective_message.reply_text(f"{placement_note}\n" "Загрузите PNG/JPEG-креатив как фото или документ.")
-    return CREATIVE
+    await update.effective_message.reply_text(f"{placement_note}\nВведите landing URL, куда должен вести клик по баннеру.")
+    return LANDING_URL
 
 
 async def collect_creative(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -222,15 +218,18 @@ async def collect_creative(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     try:
         creative_info = await _save_and_validate_creative(message, context, config)
     except ValidationError as exc:
-        await message.reply_text(exc.safe_message)
+        await message.reply_text(f"Креатив не подходит: {exc.safe_message}\nОтправьте PNG/JPEG-креатив для выбранного spec еще раз.")
         return CREATIVE
 
     context.user_data["creative"] = creative_info
-    if "landing_url" in context.user_data and "utm_params" in context.user_data:
+    if "ad_page_url" in context.user_data and "landing_url" in context.user_data and "utm_params" in context.user_data:
         await message.reply_text(_review_text(context.user_data))
         return REVIEW
-    await message.reply_text("Введите landing URL, куда должен вести клик по баннеру.")
-    return LANDING_URL
+    if "ad_page_url" in context.user_data:
+        await message.reply_text("Креатив принят. Введите landing URL, куда должен вести клик по баннеру.")
+        return LANDING_URL
+    await message.reply_text("Креатив принят. Введите URL рекламной страницы, где нужно разместить рекламу.")
+    return AD_PAGE_URL
 
 
 async def collect_landing_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -446,6 +445,14 @@ def spec_menu_prompt(network_slug: str) -> str:
     return f"{SPEC_MENU_PROMPT}\n{specs_summary(network_slug)}"
 
 
+def creative_upload_prompt(spec: CreativeSpec) -> str:
+    limit = f"; максимальный размер файла: {spec.max_file_size_bytes} байт" if spec.max_file_size_bytes else ""
+    return (
+        f"Отправьте PNG/JPEG-креатив как фото или документ для выбранного spec. "
+        f"Ожидаемые размеры: {spec.dimensions_label}{limit}."
+    )
+
+
 def _add_menu_row_button(menu: ReportsAdMenuMessage, *, label: str, args: str) -> None:
     new_row = bool(menu.keyboard and menu.keyboard[-1])
     menu.add_button(label=label, args=args, new_row=new_row)
@@ -481,7 +488,7 @@ def _clear_for_edit(user_data: dict[str, Any], target: str) -> None:
     elif target in {"spec", "banner"}:
         _clear_from(user_data, "spec")
     elif target in {"ad_url", "page"}:
-        _clear_from(user_data, "ad_page_url")
+        _clear_from(user_data, "ad_page_url", keep_creative=True)
     elif target == "creative":
         user_data.pop("creative", None)
     elif target == "landing":
@@ -490,12 +497,12 @@ def _clear_for_edit(user_data: dict[str, Any], target: str) -> None:
         user_data.pop("utm_params", None)
 
 
-def _clear_from(user_data: dict[str, Any], key: str) -> None:
+def _clear_from(user_data: dict[str, Any], key: str, *, keep_creative: bool = False) -> None:
     order = ["network_slug", "network_display_name", "spec", "banner_type", "ad_page_url", "placement", "creative", "landing_url", "utm_params"]
     if key not in order:
         return
     for candidate in order[order.index(key) :]:
-        if candidate == "creative":
+        if candidate == "creative" and keep_creative:
             continue
         user_data.pop(candidate, None)
 
@@ -511,6 +518,9 @@ def _edit_prompt(target: str, user_data: dict[str, Any]) -> str:
     if target in {"ad_url", "page"}:
         return "Введите URL рекламной страницы. Placement будет выбран заново по площадке и размеру spec."
     if target == "creative":
+        spec = user_data.get("spec")
+        if isinstance(spec, CreativeSpec):
+            return creative_upload_prompt(spec)
         return "Загрузите новый PNG/JPEG-креатив как фото или документ."
     if target == "landing":
         return "Введите новый landing URL."
