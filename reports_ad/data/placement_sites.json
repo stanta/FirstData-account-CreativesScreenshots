@@ -1,0 +1,31 @@
+{
+    "source": "reports_ad/docs/examples/FD -- Примеры скриншотов/площадки.txt",
+    "migrated_at_utc": "2026-07-13",
+    "description": "Predefined advertising page fallback hosts grouped by media type. Hosts are converted to HTTPS root URLs at runtime; paths, query strings, UTM values, and user-provided URLs are not stored here.",
+    "media_types": {
+        "video": [
+            "dzen.ru",
+            "yandex.ru",
+            "deti-online.com",
+            "kniga-online.com",
+            "m.dzen.ru",
+            "m.knigavuhe.org",
+            "amd.online",
+            "ya.ru",
+            "ok.ru",
+            "www.woman.ru"
+        ],
+        "banner": [
+            "dzen.ru",
+            "game.yandex.ru",
+            "m.video.yandex.ru",
+            "m.images.yandex.ru",
+            "yandex.ru",
+            "drug.vokrug",
+            "pogoda.yandex.ru",
+            "ok.ru",
+            "images.yandex.ru",
+            "m.pogoda.yandex.ru"
+        ]
+    }
+}

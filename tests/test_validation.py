@@ -25,7 +25,7 @@ from reports_ad.bot import (
     spec_menu_keyboard,
     spec_menu_prompt,
 )
-from reports_ad.catalog import choose_placement_for_url, get_site_placement, get_spec, list_runtime_specs
+from reports_ad.catalog import choose_placement_for_url, get_site_placement, get_spec, infer_media_type_from_spec, list_placement_sites, list_runtime_specs, placement_site_urls
 from reports_ad.config import BotConfig
 from reports_ad.models import CreativeInfo, Placement, ProofResult
 from reports_ad.validation import (
@@ -97,6 +97,34 @@ def test_catalog_loads_runtime_png_jpeg_specs() -> None:
     assert {"image/png", "image/jpeg"}.issuperset(specs[0].runtime_allowed_mime_types)
 
 
+def test_placement_sites_json_loads_by_media_type() -> None:
+    assert list_placement_sites("video") == [
+        "dzen.ru",
+        "yandex.ru",
+        "deti-online.com",
+        "kniga-online.com",
+        "m.dzen.ru",
+        "m.knigavuhe.org",
+        "amd.online",
+        "ya.ru",
+        "ok.ru",
+        "www.woman.ru",
+    ]
+    assert list_placement_sites("banner") == [
+        "dzen.ru",
+        "game.yandex.ru",
+        "m.video.yandex.ru",
+        "m.images.yandex.ru",
+        "yandex.ru",
+        "drug.vokrug",
+        "pogoda.yandex.ru",
+        "ok.ru",
+        "images.yandex.ru",
+        "m.pogoda.yandex.ru",
+    ]
+    assert placement_site_urls("banner")[0] == "https://dzen.ru/"
+
+
 def test_validate_creative_against_selected_spec_accepts_exact_dimensions(tmp_path: Path) -> None:
     spec = get_spec("yandex-graphic-banners-300x250-image")
     assert spec is not None
@@ -104,6 +132,13 @@ def test_validate_creative_against_selected_spec_accepts_exact_dimensions(tmp_pa
     Image.new("RGB", (300, 250), "red").save(image_path)
     info = validate_creative_file(image_path, declared_mime_type="image/png", spec=spec)
     validate_creative_against_spec(info, spec)
+
+
+def test_media_type_inference_defaults_static_png_jpeg_specs_to_banner() -> None:
+    spec = get_spec("yandex-graphic-banners-300x250-image")
+    assert spec is not None
+
+    assert infer_media_type_from_spec(spec) == "banner"
 
 
 def test_validate_creative_against_selected_spec_rejects_wrong_dimensions(tmp_path: Path) -> None:
@@ -162,6 +197,7 @@ def test_review_text_uses_russian_menu_prompt_without_old_instruction(tmp_path: 
 
     assert text.startswith("Проверьте заявку перед запуском:")
     assert REVIEW_MENU_PROMPT in text
+    assert "fallback-площадки: banner" in text
     assert "Ответьте `yes`" not in text
     assert "edit network" not in text
 

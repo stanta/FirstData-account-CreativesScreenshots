@@ -3,15 +3,16 @@ from __future__ import annotations
 import base64
 import logging
 import time
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Awaitable, Callable
 from urllib.parse import urlparse
 
 from PIL import Image
 
-from .catalog import selectors_for_template
+from .catalog import choose_placement_for_url, infer_media_type_from_spec, placement_site_urls, selectors_for_template
 from .diagnostics import log_network_diagnostics
-from .models import Placement, ProofRequest, ProofResult
+from .models import Placement, PlacementMediaType, ProofRequest, ProofResult
 from .validation import ValidationError, merge_url_with_utm
 
 logger = logging.getLogger(__name__)
@@ -20,6 +21,7 @@ AD_PAGE_LOAD_TIMEOUT_MESSAGE = "Истекло время загрузки ре�
 LANDING_CLICK_TIMEOUT_MESSAGE = "Истекло время клика по баннеру или открытия landing page. Проверьте landing URL и доступность страницы перехода."
 SCREENSHOT_TIMEOUT_MESSAGE = "Истекло время создания скриншота. Попробуйте позже или уменьшите сложность страницы."
 GENERATION_TIMEOUT_MESSAGE = "Истекло время генерации proof-скриншота. Попробуйте позже или упростите страницу/селектор."
+AD_PAGE_FALLBACK_FAILED_MESSAGE = "Не удалось загрузить рекламную страницу: все fallback-площадки для выбранного типа размещения не открылись. Попробуйте другой URL рекламной страницы или повторите позже."
 _EXCEPTION_MESSAGE_LIMIT = 240
 _CHROMIUM_DIAGNOSTIC_LIMIT = 12
 
@@ -49,6 +51,22 @@ class ProofTimeoutError(ScreenshotGenerationError):
         super().__init__(safe_message)
         self.phase = phase
         self.timeout_ms = timeout_ms
+
+
+class AdPageFallbackError(ScreenshotGenerationError):
+    """All requested and predefined ad-page candidates failed to load."""
+
+    def __init__(self, media_type: PlacementMediaType, failures: list[dict[str, str]]) -> None:
+        super().__init__(AD_PAGE_FALLBACK_FAILED_MESSAGE)
+        self.media_type = media_type
+        self.failures = failures
+
+
+@dataclass(frozen=True, slots=True)
+class AdPageCandidate:
+    url: str
+    media_type: PlacementMediaType
+    is_fallback: bool
 
 
 async def generate_proof(request: ProofRequest) -> ProofResult:
@@ -102,10 +120,10 @@ async def generate_proof(request: ProofRequest) -> ProofResult:
                 phase_started = time.monotonic()
                 _log_phase("ad_page_load", "start", phase_started, **log_context, timeout_ms=request.page_load_timeout_ms)
                 try:
-                    await _load_ad_page_with_fallback(
-                        page=page,
-                        url=request.ad_page_url,
-                        timeout_ms=request.page_load_timeout_ms,
+                    page, selected_candidate = await _load_ad_page_with_site_fallback(
+                        context=context,
+                        initial_page=page,
+                        request=request,
                         log_context=log_context,
                     )
                 except PlaywrightTimeoutError as exc:
@@ -118,6 +136,14 @@ async def generate_proof(request: ProofRequest) -> ProofResult:
                             request_id=request.request_id,
                         )
                     raise ProofTimeoutError("ad_page_load", request.page_load_timeout_ms, AD_PAGE_LOAD_TIMEOUT_MESSAGE) from exc
+                active_placement = choose_placement_for_url(selected_candidate.url, request.spec)
+                log_context = {
+                    **log_context,
+                    "placement": active_placement.label,
+                    "resolved_ad_host": _safe_host(selected_candidate.url),
+                    "ad_page_fallback_used": selected_candidate.is_fallback,
+                    "fallback_media_type": selected_candidate.media_type,
+                }
                 _log_phase("ad_page_load", "success", phase_started, **log_context, timeout_ms=request.page_load_timeout_ms)
                 timings["page_loaded"] = _elapsed_ms(started)
 
@@ -136,7 +162,7 @@ async def generate_proof(request: ProofRequest) -> ProofResult:
                 try:
                     await _insert_creative(
                         page=page,
-                        placement=request.placement,
+                        placement=active_placement,
                         creative_data_url=creative_data_url,
                         click_url=effective_click_url,
                         banner_type=request.banner_type,
@@ -211,6 +237,9 @@ async def generate_proof(request: ProofRequest) -> ProofResult:
             effective_click_url=effective_click_url,
             request_id=request.request_id,
             landing_fallback_used=landing_fallback_used,
+            ad_page_fallback_used=selected_candidate.is_fallback,
+            fallback_media_type=selected_candidate.media_type,
+            resolved_ad_page_host=_safe_host(selected_candidate.url),
             timings_ms=timings,
         )
     except ValidationError:
@@ -372,6 +401,98 @@ async def _load_ad_page_with_fallback(*, page: Any, url: str, timeout_ms: int, l
 
     _log_chromium_diagnostics("ad_page_load_chromium", diagnostics, log_context, page=page, document_probe=probe)
     raise body_timeout or dom_timeout or PlaywrightTimeoutError("Ad page did not expose an inspectable DOM after commit.")
+
+
+async def _load_ad_page_with_site_fallback(
+    *,
+    context: Any,
+    initial_page: Any,
+    request: ProofRequest,
+    log_context: dict[str, Any],
+) -> tuple[Any, AdPageCandidate]:
+    current_page = initial_page
+
+    async def load_candidate(candidate: AdPageCandidate) -> Any:
+        nonlocal current_page
+        await _load_ad_page_with_fallback(
+            page=current_page,
+            url=candidate.url,
+            timeout_ms=request.page_load_timeout_ms,
+            log_context={**log_context, "candidate_host": _safe_host(candidate.url), "fallback_media_type": candidate.media_type},
+        )
+        return current_page
+
+    async def reset_after_failure() -> None:
+        nonlocal current_page
+        try:
+            await current_page.close()
+        except Exception:
+            pass
+        current_page = await context.new_page()
+
+    candidates = _ad_page_candidates(request)
+    page, candidate = await _select_first_loadable_ad_page(
+        candidates=candidates,
+        load_candidate=load_candidate,
+        reset_after_failure=reset_after_failure,
+        timeout_ms=request.page_load_timeout_ms,
+        log_context=log_context,
+    )
+    return page, candidate
+
+
+def _ad_page_candidates(request: ProofRequest) -> list[AdPageCandidate]:
+    media_type = infer_media_type_from_spec(request.spec)
+    candidates = [AdPageCandidate(url=request.ad_page_url, media_type=media_type, is_fallback=False)]
+    seen_hosts = {_safe_host(request.ad_page_url)}
+    for fallback_url in placement_site_urls(media_type):
+        host = _safe_host(fallback_url)
+        if host and host not in seen_hosts:
+            candidates.append(AdPageCandidate(url=fallback_url, media_type=media_type, is_fallback=True))
+            seen_hosts.add(host)
+    return candidates
+
+
+async def _select_first_loadable_ad_page(
+    *,
+    candidates: list[AdPageCandidate],
+    load_candidate: Callable[[AdPageCandidate], Awaitable[Any]],
+    reset_after_failure: Callable[[], Awaitable[None]] | None,
+    timeout_ms: int,
+    log_context: dict[str, Any],
+) -> tuple[Any, AdPageCandidate]:
+    failures: list[dict[str, str]] = []
+    count = len(candidates)
+    media_type = candidates[0].media_type if candidates else "banner"
+    for index, candidate in enumerate(candidates, start=1):
+        started = time.monotonic()
+        candidate_context = {
+            **log_context,
+            "fallback_media_type": candidate.media_type,
+            "candidate_index": index,
+            "candidate_count": count,
+            "candidate_host": _safe_host(candidate.url),
+            "candidate_kind": "fallback" if candidate.is_fallback else "requested",
+            "timeout_ms": timeout_ms,
+        }
+        _log_phase("ad_page_fallback_candidate", "start", started, **candidate_context)
+        try:
+            page = await load_candidate(candidate)
+        except Exception as exc:
+            failures.append(
+                {
+                    "host": _safe_host(candidate.url),
+                    "exception_class": type(exc).__name__,
+                    "exception_message": _safe_exception_message(exc),
+                }
+            )
+            _log_phase("ad_page_fallback_candidate", "failure", started, **candidate_context, exception=exc)
+            if reset_after_failure is not None and index < count:
+                await reset_after_failure()
+            continue
+        _log_phase("ad_page_fallback_candidate", "success", started, **candidate_context)
+        return page, candidate
+    raise AdPageFallbackError(media_type, failures)
 
 
 def _new_chromium_diagnostics() -> dict[str, list[dict[str, Any]]]:

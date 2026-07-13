@@ -5,9 +5,10 @@ from functools import lru_cache
 from importlib.resources import files
 from urllib.parse import urlparse
 
-from .models import CreativeSpec, Placement, PlacementTemplate, SitePlacement
+from .models import CreativeSpec, Placement, PlacementMediaType, PlacementTemplate, SitePlacement
 
 CATALOG_RESOURCE = "data/creative_catalog.json"
+PLACEMENT_SITES_RESOURCE = "data/placement_sites.json"
 
 
 class CatalogError(RuntimeError):
@@ -25,6 +26,61 @@ def load_catalog() -> dict:
 
 def list_networks() -> list[dict[str, str]]:
     return list(load_catalog().get("networks", []))
+
+
+@lru_cache(maxsize=1)
+def load_placement_sites_catalog() -> dict:
+    try:
+        resource = files("reports_ad").joinpath(PLACEMENT_SITES_RESOURCE)
+        return json.loads(resource.read_text(encoding="utf-8"))
+    except Exception as exc:  # pragma: no cover - defensive startup guard
+        raise CatalogError("Не удалось загрузить каталог fallback-площадок.") from exc
+
+
+def list_placement_sites(media_type: PlacementMediaType) -> list[str]:
+    raw_sites = load_placement_sites_catalog().get("media_types", {}).get(media_type, [])
+    return [site.strip().lower() for site in raw_sites if isinstance(site, str) and site.strip()]
+
+
+def safe_https_url_for_host(host_or_url: str) -> str:
+    value = (host_or_url or "").strip().lower()
+    if not value:
+        return ""
+    parsed = urlparse(value if "://" in value else f"https://{value}")
+    host = (parsed.hostname or "").lower()
+    if not host or any(char.isspace() for char in host):
+        return ""
+    return f"https://{host}/"
+
+
+def placement_site_urls(media_type: PlacementMediaType) -> list[str]:
+    urls: list[str] = []
+    seen_hosts: set[str] = set()
+    for site in list_placement_sites(media_type):
+        url = safe_https_url_for_host(site)
+        host = normalize_host(url)
+        if url and host and host not in seen_hosts:
+            urls.append(url)
+            seen_hosts.add(host)
+    return urls
+
+
+def infer_media_type_from_spec(spec: CreativeSpec) -> PlacementMediaType:
+    """Infer fallback media type from selected spec; static PNG/JPEG MVP defaults to banner."""
+    haystack = " ".join(
+        str(part).lower()
+        for part in (
+            spec.slug,
+            spec.display_name,
+            spec.format_slug,
+            spec.creative_type_slug,
+            " ".join(spec.allowed_extensions_source),
+            " ".join(spec.allowed_mime_types_source),
+        )
+    )
+    if any(marker in haystack for marker in ("video", "видео", "instream", "in-stream", "mp4", "mpeg", "quicktime")):
+        return "video"
+    return "banner"
 
 
 def list_runtime_specs(network_slug: str | None = None) -> list[CreativeSpec]:

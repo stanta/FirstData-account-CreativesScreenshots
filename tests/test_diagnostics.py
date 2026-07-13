@@ -11,12 +11,17 @@ from reports_ad.proof import (
     AD_PAGE_LOAD_TIMEOUT_MESSAGE,
     GENERATION_TIMEOUT_MESSAGE,
     LANDING_CLICK_TIMEOUT_MESSAGE,
+    AD_PAGE_FALLBACK_FAILED_MESSAGE,
+    AdPageCandidate,
+    AdPageFallbackError,
     ProofTimeoutError,
+    _ad_page_candidates,
     _can_continue_after_commit,
     _new_chromium_diagnostics,
     _safe_exception_message,
     _safe_host,
     _safe_log_context,
+    _select_first_loadable_ad_page,
 )
 
 
@@ -128,3 +133,86 @@ def test_chromium_diagnostics_shape_contains_only_safe_buckets() -> None:
 
     assert set(diagnostics) == {"request_failures", "responses", "console", "pageerrors", "navigation_requests"}
     assert all(value == [] for value in diagnostics.values())
+
+
+def test_ad_page_candidates_try_requested_url_then_banner_fallbacks(tmp_path: Path) -> None:
+    spec = get_spec("yandex-graphic-banners-300x250-image")
+    assert spec is not None
+    request = ProofRequest(
+        request_id="req-1",
+        ad_page_url="https://example.com/ad?secret=1",
+        network_slug="yandex_graphic_banners",
+        network_display_name="Яндекс",
+        spec=spec,
+        banner_type=spec.display_name,
+        creative=CreativeInfo(path=tmp_path / "creative.png", mime_type="image/png", width=300, height=250, size_bytes=123),
+        landing_url="https://landing.example/path",
+        utm_params={},
+        placement=Placement(mode="template", value="top-banner"),
+        output_path=tmp_path / "proof.png",
+    )
+
+    candidates = _ad_page_candidates(request)
+
+    assert candidates[0] == AdPageCandidate(url="https://example.com/ad?secret=1", media_type="banner", is_fallback=False)
+    assert candidates[1] == AdPageCandidate(url="https://dzen.ru/", media_type="banner", is_fallback=True)
+    assert all("secret" not in _safe_host(candidate.url) for candidate in candidates)
+
+
+@pytest.mark.asyncio
+async def test_fallback_iterator_chooses_first_successful_candidate_after_failures() -> None:
+    candidates = [
+        AdPageCandidate(url="https://requested.example/path", media_type="banner", is_fallback=False),
+        AdPageCandidate(url="https://bad.example/", media_type="banner", is_fallback=True),
+        AdPageCandidate(url="https://ok.example/", media_type="banner", is_fallback=True),
+    ]
+    attempted: list[str] = []
+    resets = 0
+
+    async def load_candidate(candidate: AdPageCandidate) -> str:
+        attempted.append(_safe_host(candidate.url))
+        if _safe_host(candidate.url) != "ok.example":
+            raise TimeoutError("download failed")
+        return "page-ok"
+
+    async def reset_after_failure() -> None:
+        nonlocal resets
+        resets += 1
+
+    page, candidate = await _select_first_loadable_ad_page(
+        candidates=candidates,
+        load_candidate=load_candidate,
+        reset_after_failure=reset_after_failure,
+        timeout_ms=100,
+        log_context={"request_id": "req-1"},
+    )
+
+    assert page == "page-ok"
+    assert candidate.url == "https://ok.example/"
+    assert attempted == ["requested.example", "bad.example", "ok.example"]
+    assert resets == 2
+
+
+@pytest.mark.asyncio
+async def test_fallback_iterator_all_failed_raises_classified_safe_error() -> None:
+    candidates = [
+        AdPageCandidate(url="https://requested.example/path?utm_secret=1", media_type="banner", is_fallback=False),
+        AdPageCandidate(url="https://bad.example/", media_type="banner", is_fallback=True),
+    ]
+
+    async def load_candidate(candidate: AdPageCandidate) -> str:
+        raise TimeoutError(f"failed host {_safe_host(candidate.url)}")
+
+    with pytest.raises(AdPageFallbackError) as error:
+        await _select_first_loadable_ad_page(
+            candidates=candidates,
+            load_candidate=load_candidate,
+            reset_after_failure=None,
+            timeout_ms=100,
+            log_context={"request_id": "req-1"},
+        )
+
+    assert error.value.safe_message == AD_PAGE_FALLBACK_FAILED_MESSAGE
+    assert error.value.media_type == "banner"
+    assert [failure["host"] for failure in error.value.failures] == ["requested.example", "bad.example"]
+    assert "utm_secret" not in str(error.value.failures)

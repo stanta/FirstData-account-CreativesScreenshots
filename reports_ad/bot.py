@@ -26,6 +26,7 @@ from .catalog import (
     get_network,
     get_site_placement,
     get_spec,
+    infer_media_type_from_spec,
     list_networks,
     list_runtime_specs,
     specs_summary,
@@ -458,12 +459,14 @@ def _review_text(user_data: dict[str, Any]) -> str:
     creative: CreativeInfo = user_data["creative"]
     spec: CreativeSpec = user_data["spec"]
     utm_keys = ", ".join(sorted(user_data["utm_params"].keys()))
+    fallback_media_type = infer_media_type_from_spec(spec)
     return (
         "Проверьте заявку перед запуском:\n"
         f"• сеть: {user_data['network_display_name']} ({user_data['network_slug']})\n"
         f"• тип баннера: {spec.display_name}\n"
         f"• размер spec: {spec.dimensions_label}; лимит: {spec.max_file_size_bytes} байт\n"
         f"• страница размещения: {user_data['ad_page_url']}\n"
+        f"• fallback-площадки: {fallback_media_type}\n"
         f"• placement: {user_data['placement'].label}\n"
         f"• креатив: {creative.mime_type}, {creative.width}×{creative.height}, {creative.size_bytes} байт\n"
         f"• landing: {user_data['landing_url']}\n"

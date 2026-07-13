@@ -133,6 +133,7 @@ docker compose down
 Ключевые фазы:
 
 - `ad_page_load` — загрузка рекламной страницы. Для ad-heavy страниц используется tolerant strategy: Chromium сначала ждет `commit`, затем bounded wait for `domcontentloaded` и `body`. Если `commit` уже произошел, но `domcontentloaded`/`body` зависли, generator проверяет безопасный DOM probe (`document.readyState`, title, наличие `html`/`body`, длину HTML) и продолжает только если есть inspectable `documentElement`; `networkidle` не используется, потому что рекламные трекеры, long polling и lazy-load могут держать сеть активной до timeout.
+- `ad_page_fallback_candidate` — попытка загрузить исходную advertising page или predefined fallback-площадку. Логируются только media type, индекс/количество кандидата, host, результат, длительность и безопасно усеченная причина ошибки; полные URL/query/UTM не пишутся.
 - `creative_insert` — поиск selector/template и вставка креатива.
 - `landing_click` / `landing_fallback_open` — клик по баннеру, ожидание popup/new page и fallback-открытие landing URL в контролируемой странице.
 - `ad_screenshot` / `landing_screenshot` — создание screenshot рекламной страницы и landing page.
@@ -226,6 +227,10 @@ Use these changes as operational experiments, not default code changes: the corr
 - если host есть в списке `reports_ad/docs/examples/FD -- Примеры скриншотов/площадки.txt` и для него есть слабонаблюдаемый selector из HTML sample, используется selector;
 - иначе применяется безопасный dimension-based fallback template по размеру выбранного spec;
 - если host неизвестен, используется template по размеру или `in-content` как последний fallback.
+
+Если исходная/current advertising page не открывается на фазе загрузки страницы (`commit`/bounded DOM/body), generator сначала фиксирует отказ по host, затем перебирает predefined fallback-площадки из `reports_ad/reports_ad/data/placement_sites.json`. Список мигрирован из `reports_ad/docs/examples/FD -- Примеры скриншотов/площадки.txt` и разделен по media type: `banner` и `video`. Runtime определяет media type по выбранному spec: source/video/in-stream/MP4 specs используют `video`, а статичные PNG/JPEG/image specs и все неясные случаи MVP используют documented default `banner`. Для каждого hostname строится только безопасный root HTTPS URL вида `https://host/`; пути, query, UTM, пользовательские URL и локальные файлы в JSON не сохраняются.
+
+Fallback применяется только к connectivity/page-download/page-load этапу до вставки креатива. Ошибки selector/template insertion остаются фазой `creative_insert` и не запускают перебор площадок. Если все кандидаты не открылись, пользователь получает русское сообщение о том, что все fallback-площадки недоступны, а в логах остаются только sanitized причины по host.
 
 Статус проверки площадок сохранен в catalog metadata. Проверка выполнялась из workspace через `reports_ad/.venv/bin/python` с HTML-sample запросами. Ограничения: `dzen.ru`, `m.dzen.ru`, `yandex.ru` редиректили на Yandex Passport/SSO; `kniga-online.com` вернул HTTP 403; `m.video.yandex.ru` и `m.images.yandex.ru` дали TLS hostname mismatch; `drug.vokrug` не резолвился DNS. Поэтому selectors с confidence не `observed_sample` являются fallback heuristics, а не verified production selectors.
 

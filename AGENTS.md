@@ -437,6 +437,26 @@ Manual diagnostics внутри контейнера: для `dzen.ru` DNS/TCP/T
 
 ---
 
+## Ход проекта — 2026-07-13 — fallback-площадки по media type
+
+Реализована активная заявка пользователя: «добавить функцию перебора адресов сайтов из `площадки.txt`; если невозможно подключиться к одному сайту и скачать страницу, выбрать следующий; список хранить отдельно в JSON и определять по типу медиа».
+
+### Что изменено
+
+- Добавлен отдельный JSON `reports_ad/reports_ad/data/placement_sites.json`, мигрированный из `reports_ad/docs/examples/FD -- Примеры скриншотов/площадки.txt`: списки разделены на `video` и `banner` без удаления исходного TXT.
+- В `reports_ad/reports_ad/catalog.py` добавлены helpers загрузки fallback-площадок, построения безопасных root HTTPS URL из hostname и определения media type по выбранному spec. Документированный default: статичные PNG/JPEG/image specs и неясные cases используют `banner`; specs с `video`/`in-stream`/MP4-маркерами используют `video`.
+- В `reports_ad/reports_ad/proof.py` загрузка advertising page теперь идет через ordered candidates: сначала пользовательский/current URL, затем predefined fallback URLs выбранного media type с dedupe по host. После успешной fallback-загрузки placement пересчитывается по фактически выбранному host/spec, затем продолжаются cookie handling, controlled creative insertion, click, screenshots и композиция.
+- Добавлены structured sanitized logs `ad_page_fallback_candidate`: media type, index/count, host, candidate kind, phase result, elapsed, timeout, exception class/message. Полные URL/query/UTM, Telegram token, temp paths и содержимое файлов не логируются.
+- Ошибки загрузки страницы отделены от ошибок вставки: перебор fallback выполняется только до `creative_insert`; selector/template failures остаются фазой `creative_insert`.
+- Review screen минимально показывает выбранный fallback media type, не меняя menu workflow и no-history runtime.
+
+### Тесты и ограничения
+
+- Добавлены unit-тесты без внешней сети: загрузка JSON по media type, default `banner` для PNG/JPEG specs, порядок кандидатов, выбор первого успешного fallback после simulated failures и classified all-failed error без утечки query/UTM.
+- Ограничение: fallback открывает root HTTPS host (`https://host/`), а не подбирает конкретную статью/страницу площадки; реальные площадки по-прежнему могут редиректить на SSO, возвращать 403, зависать на TLS/anti-bot или не иметь надежного selector. Для video runtime MVP всё еще не принимает видеофайлы, но media-type branch готов для будущих video specs.
+
+---
+
 ## Ход проекта — 2026-07-09 — миграция выбора сети/spec на telegram_menu
 
 Выполнен точечный перевод только двух шагов активного Telegram workflow на библиотеку `telegram_menu`: выбор рекламной сети и выбор размера/типа баннера из runtime-supported catalog specs. Остальной сценарий сохранен без переписывания: URL рекламной страницы, PNG/JPEG upload, landing URL, UTM, review/edit и явный старт генерации остаются на существующем `python-telegram-bot` `ConversationHandler`.

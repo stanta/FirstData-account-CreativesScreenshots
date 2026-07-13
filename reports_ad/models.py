@@ -10,6 +10,7 @@ SUPPORTED_CREATIVE_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg"})
 SUPPORTED_PLACEMENT_TEMPLATES = frozenset({"top-banner", "sidebar-rect", "in-content", "mobile-banner", "video-landscape"})
 
 PlacementMode = Literal["selector", "template"]
+PlacementMediaType = Literal["banner", "video"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,4 +114,7 @@ class ProofResult:
     effective_click_url: str
     request_id: str
     landing_fallback_used: bool = False
+    ad_page_fallback_used: bool = False
+    fallback_media_type: str = ""
+    resolved_ad_page_host: str = ""
     timings_ms: dict[str, int] = field(default_factory=dict)
