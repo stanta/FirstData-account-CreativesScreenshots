@@ -663,5 +663,7 @@ def _loop_elapsed_ms(started: float) -> int:
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
     application = build_application()
     application.run_polling(allowed_updates=Update.ALL_TYPES)

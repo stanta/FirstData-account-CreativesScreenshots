@@ -159,6 +159,64 @@ docker compose logs --since 30m --no-color reports-ad-bot \
   | grep -E "proof_generation|proof_phase|container_network_diagnostic"
 ```
 
+### Docker external-connectivity troubleshooting
+
+Use this checklist when the bot starts but cannot reliably reach Telegram, an advertising page, or a landing host from inside the container. Do not paste full Telegram API URLs, UTM URLs, uploaded file paths, or raw page HTML into tickets/logs.
+
+Safe first checks:
+
+```bash
+cd /512-2/FD/reports_ad
+docker compose ps reports-ad-bot
+docker compose logs --since 30m --no-color reports-ad-bot \
+  | sed -E 's#bot[0-9]+:[A-Za-z0-9_-]+#bot<REDACTED>#g; s#(https?://[^/?[:space:]"'"']+)[^[:space:]"'"']*#\1/<redacted>#g' \
+  | grep -Ei 'proof_phase|container_network_diagnostic|chromium|browser|dns|tcp|tls|proxy|cert|timeout|temporary failure|ERR_|net::|dzen|telegram|firstdata'
+docker compose exec -T reports-ad-bot reports-ad-diagnostics --timeout-ms 5000 api.telegram.org dzen.ru firstdata.io
+```
+
+Log interpretation matrix:
+
+| Evidence in sanitized logs                                                                                                                                         | Likely category                                                                                  | What to check/fix                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Temporary failure in name resolution`, `container_network_diagnostic check='dns' status='failure'`                                                                | Container DNS failure                                                                            | Docker container inherited a resolver that is not reachable from the container namespace or the resolver/firewall is flaky. Test `/etc/resolv.conf` inside the container. Try Compose `dns:` with trusted/corporate resolvers, or daemon-wide DNS in `/etc/docker/daemon.json`. Docker networking and Compose service DNS options are documented in Docker networking docs and Compose service reference: https://docs.docker.com/engine/network/ and https://docs.docker.com/reference/compose-file/services/.                                 |
+| DNS succeeds but `tcp_connect` fails or times out                                                                                                                  | Egress routing/firewall/NAT failure                                                              | Confirm host-level egress to the same host/port, Docker bridge forwarding/NAT rules, corporate firewall, VPN split tunneling, and whether `network_mode: host` is acceptable for a temporary diagnostic run on Linux. Docker Compose networking behavior is documented at https://docs.docker.com/compose/how-tos/networking/.                                                                                                                                                                                                                  |
+| DNS and TCP succeed but `tls_handshake` times out                                                                                                                  | TLS path/proxy/MTU/filtering issue or remote throttling                                          | Check whether the environment requires HTTP(S) proxy variables. Configure Docker daemon proxy or service `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY` only with approved values. Docker daemon proxy docs: https://docs.docker.com/engine/daemon/proxy/. If only HTTPS/TLS stalls, test path MTU and try Docker daemon/network MTU tuning with `dockerd --mtu` or network driver option; Docker `dockerd` documents `--mtu`: https://docs.docker.com/reference/cli/dockerd/.                                                                           |
+| Python DNS/TCP/TLS succeeds, but Chromium logs `Page.goto` timeout, `domcontentloaded=False`, `body=False`, redirect to SSO/challenge host, or `probe_error=Error` | Chromium/page lifecycle failure after network connect; site anti-bot/challenge/redirect behavior | The current generator already uses `wait_until="commit"` and a bounded DOM/body fallback because ad-heavy sites can keep loading indefinitely. For sites such as `dzen.ru`, redirect to Yandex Passport/SSO or anti-bot challenge can leave the page without an inspectable DOM; prefer known public article URLs, approved test URLs, explicit selectors, or manual operator verification. Playwright navigation/load-state behavior is documented at https://playwright.dev/docs/api/class-page and https://playwright.dev/docs/navigations/. |
+| Browser launch errors, renderer crashes, `Target closed`, `No space left on device`, `/dev/shm`, sandbox messages                                                  | Chromium resource/sandbox/shared-memory failure                                                  | Keep Compose `shm_size: "1gb"`; reduce concurrency; ensure tmpfs has enough space; use the official Playwright Docker image. Playwright Docker docs note root/sandbox behavior and recommended container setup: https://playwright.dev/python/docs/docker/.                                                                                                                                                                                                                                                                                     |
+| `409 Conflict: terminated by other getUpdates request`                                                                                                             | Telegram polling conflict, not external connectivity                                             | Stop duplicate bot instances that use the same token. Only one polling process can call Telegram `getUpdates` for a token at a time.                                                                                                                                                                                                                                                                                                                                                                                                            |
+
+Practical Compose snippets for operator experiments:
+
+```yaml
+services:
+  reports-ad-bot:
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
+    environment:
+      HTTPS_PROXY: ${HTTPS_PROXY:-}
+      HTTP_PROXY: ${HTTP_PROXY:-}
+      NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1}
+    shm_size: "1gb"
+```
+
+If TLS handshakes time out only inside Docker while host networking is healthy, test an MTU-specific Compose network in a temporary branch/environment:
+
+```yaml
+services:
+  reports-ad-bot:
+    networks:
+      - reports-ad-net
+
+networks:
+  reports-ad-net:
+    driver: bridge
+    driver_opts:
+      com.docker.network.driver.mtu: "1450"
+```
+
+Use these changes as operational experiments, not default code changes: the correct DNS, proxy, and MTU values depend on the server/VPN/cloud network. After each change, re-run `reports-ad-diagnostics` and a Chromium smoke check from the same running container.
+
 ## Catalog and placement behavior
 
 Каталог содержит 96 source specs из `creative_specs.json` и 19 рекламных сетей/platform groups. Runtime-фильтр бота показывает в `telegram_menu` только specs, которые можно принять как статичный PNG/JPEG с фиксированными размерами. Если source spec допускает GIF, PSD, ZIP, MP4 или HTML5, эти данные сохранены в catalog metadata, но Telegram runtime MVP их не принимает.

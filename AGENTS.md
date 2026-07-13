@@ -261,6 +261,57 @@ Selectors с `selector_confidence=observed_sample` не являются end-to-
 
 ---
 
+## Ход проекта — 2026-07-13 — повторная диагностика Docker external connectivity
+
+### Санитизированные команды
+
+- Проверка сервиса и Compose-конфигурации: `docker compose -f reports_ad/docker-compose.yml config --services`, `docker compose -f reports_ad/docker-compose.yml ps reports-ad-bot`.
+- Проверка наличия runtime-переменных без вывода секретов: `docker compose -f reports_ad/docker-compose.yml exec -T reports-ad-bot python -c '<env-presence-only>'`.
+- Проверка DNS-конфигурации без IP-адресов: чтение `/etc/resolv.conf` и первых строк `/etc/hosts` внутри контейнера с редактированием IP.
+- Сбор свежих логов: `docker compose -f reports_ad/docker-compose.yml logs --tail=2500 reports-ad-bot` с редактированием Telegram token и полных URL/query.
+- Host-only диагностика: `docker compose -f reports_ad/docker-compose.yml exec -T reports-ad-bot reports-ad-diagnostics --timeout-ms 5000 api.telegram.org dzen.ru firstdata.io`.
+- Минимальный Chromium smoke из контейнера: `page.goto(..., wait_until='commit')`, затем bounded waits для `domcontentloaded` и `body`, вывод только host/status/probe без HTML и query.
+
+### Наблюдения свежих логов
+
+- Контейнер `reports-ad-bot` был запущен и работал более 30 минут.
+- В логах зафиксированы ранние ошибки Telegram polling: `httpx.ConnectError: [Errno -3] Temporary failure in name resolution`, то есть временный container DNS failure для `api.telegram.org`.
+- Позже тот же контейнер регулярно получал `HTTP/1.1 200 OK` от Telegram API, значит DNS/egress для `api.telegram.org` восстановились; также был отдельный `409 Conflict`, который означает второй polling-клиент с тем же токеном, а не сетевую недоступность.
+- В текущей среде `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`, `SSL_CERT_FILE`, `SSL_CERT_DIR` не заданы в контейнере.
+- `/etc/resolv.conf` контейнера сгенерирован Docker Engine и указывает на Docker embedded resolver; host resolver основан на `127.0.0.53`.
+- `reports-ad-diagnostics` показал: `api.telegram.org` — DNS/TCP/TLS OK; `dzen.ru` — DNS OK, TCP OK, TLS handshake timeout; `firstdata.io` — DNS OK, TCP OK, TLS handshake timeout.
+- Chromium smoke: `api.telegram.org` редиректнул на `core.telegram.org` и загрузился; `dzen.ru` редиректнул на `sso.passport.yandex.ru`, где `commit` был получен, но `domcontentloaded/body` не наступили и DOM probe завершился ошибкой; `firstdata.io` получил `Page.goto` timeout на `commit` за 15 секунд.
+
+### Гипотезы и сужение причин
+
+Рассмотрены 7 источников проблемы: flaky DNS Docker/host resolver, TCP egress/firewall, TLS/proxy/certificate/MTU, Chromium resource/sandbox/shared-memory, Playwright wait strategy, site anti-bot/SSO/challenge/redirect, duplicate Telegram polling. По текущим данным наиболее вероятны 2 класса причин:
+
+1. Операционная сеть Docker/host для части HTTPS-направлений: DNS сейчас работает, TCP открывается, но TLS handshake для `dzen.ru` и `firstdata.io` таймаутится. Это больше похоже на egress filtering, proxy requirement, MTU/path-MTU или remote throttling/blocking, чем на selector или Python-код.
+2. Site-specific Chromium lifecycle/anti-bot: `dzen.ru` после сетевого commit уводит на Yandex Passport/SSO; Chromium не получает inspectable DOM/body в допустимое время. Это категория redirect/challenge/anti-bot, а не чистая DNS/TCP проблема.
+
+### Internet-sourced solution matrix
+
+- Docker DNS: Docker networking docs и Compose service reference рекомендуют проверять container networking/DNS и позволяют задавать service-level `dns`/`extra_hosts`; практическое действие — временно задать `dns: [1.1.1.1, 8.8.8.8]` или корпоративный DNS и повторить `reports-ad-diagnostics`. Источники: https://docs.docker.com/engine/network/, https://docs.docker.com/reference/compose-file/services/.
+- Docker proxy: если внешний доступ требует прокси, задать Docker daemon proxy или `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY` в сервисе. Источник: https://docs.docker.com/engine/daemon/proxy/.
+- MTU/TLS timeout: Docker `dockerd` поддерживает `--mtu`; для Compose bridge можно тестировать `driver_opts: com.docker.network.driver.mtu`. Источник по опции Docker: https://docs.docker.com/reference/cli/dockerd/.
+- Playwright/Chromium Docker: использовать официальный Playwright image, учитывать root/no-sandbox и resource constraints; текущий проект уже использует `mcr.microsoft.com/playwright/python:v1.61.0-noble`, `--no-sandbox`, `--disable-dev-shm-usage`, `shm_size: 1gb`. Источник: https://playwright.dev/python/docs/docker/.
+- Playwright navigation: для ad-heavy страниц не ждать `networkidle`; использовать bounded `commit`/`domcontentloaded`/selector waits и DOM probes. Источники: https://playwright.dev/docs/api/class-page, https://playwright.dev/docs/navigations/.
+
+### Изменения
+
+- В `reports_ad/reports_ad/bot.py` понижен уровень логгеров `httpx` и `httpcore` до `WARNING`, чтобы успешные Telegram API requests больше не печатали полный URL с bot token. Это безопасное исправление утечки секрета в runtime-логах и не меняет сетевое поведение.
+- В `reports_ad/README.md` добавлен раздел Docker external-connectivity troubleshooting: безопасные команды, матрица интерпретации DNS/TCP/TLS/Chromium/resource/anti-bot/polling-conflict и operational snippets для DNS/proxy/MTU experiments.
+
+### Рекомендуемые следующие шаги
+
+1. Оператору проверить server/VPN/firewall/proxy/MTU, потому что DNS/TCP до `dzen.ru`/`firstdata.io` есть, а TLS handshake висит.
+2. Повторить диагностику с временными `dns:` и, отдельно, с MTU 1450/1400 на отдельной Compose network; сравнить `tls_handshake` timings.
+3. Если сеть требует proxy, задать approved `HTTPS_PROXY`/`HTTP_PROXY`/`NO_PROXY` и повторить диагностику.
+4. Для `dzen.ru` использовать публичный URL без SSO/challenge или заранее подтвержденную площадку/selector; не считать SSO/challenge ошибкой proof-кода.
+5. Убедиться, что только один bot process использует данный Telegram token, чтобы убрать `409 Conflict`.
+
+---
+
 ## Ход проекта — 2026-07-10 — диагностика timeout/no-result proof generation
 
 Проверен путь ошибки, о которой сообщил пользователь: после сообщения «Генерирую proof-скриншот. Это может занять до 1–2 минут.» бот возвращал общий timeout «Истекло время загрузки страницы, клика или создания скриншота.».
@@ -347,6 +398,42 @@ Manual diagnostics внутри контейнера: для `dzen.ru` DNS/TCP/T
 ### Следующая рекомендация
 
 Для подтверждения нужно снять Chromium-level diagnostics по `dzen.ru`: request failures, final URL chain, response status, console/pageerror, `document.readyState`, minimal HTML length and title after `commit`, без логирования query/UTM. Если product допускает, можно изменить стратегию загрузки рекламной страницы с `domcontentloaded` на более tolerant `commit` плюс bounded wait for DOM/html/body and known site-specific handling; но это уже code change и его стоит делать после подтверждения диагноза на конкретной площадке.
+
+---
+
+## Ход проекта — 2026-07-10 — Chromium-level diagnostics и partial-DOM fallback
+
+Повторно проверен runtime `reports-ad-bot` по просьбе пользователя «проверь почему останавливается по таймауту, без результата, проверь докер композ лог». Секреты, полный advertising/landing URL, UTM/query и пользовательские файлы не выводились.
+
+### Проверенные команды
+
+- `docker compose --env-file .env ps --all`
+- `docker compose --env-file .env logs --since 12h --no-color reports-ad-bot` с фильтром по `proof_generation`, `proof_phase`, `container_network_diagnostic`, timeout/error и редактированием URL/query/token.
+- `docker compose --env-file .env exec -T reports-ad-bot python - <<'PY' ...` — Chromium-level smoke внутри running container: `page.goto(..., wait_until='commit')`, bounded `domcontentloaded`, bounded `body`, request failures, response status/host, navigation host chain, console/pageerror counts, minimal DOM probe.
+
+### Свежие sanitized findings
+
+- Running service: `reports_ad-reports-ad-bot-1`, image `reports-ad:local`, status `Up`.
+- Последняя новая заявка `request_id=1c6a9578722e`: `browser_launch` и `browser_context` успешны; `ad_page_load` снова упал после `30000` ms на `ad_host='dzen.ru'`, до `creative_insert`, `landing_click`, screenshot и Telegram send не дошло.
+- Container network diagnostics для этой заявки нестабильны по времени: DNS/TCP для `dzen.ru` и `firstdata.io` ok, но TLS handshake с timeout `5000` ms завершился failure для обоих hosts. Предыдущая заявка `31c7c8a47c97` показывала TLS ok для `dzen.ru`; поэтому проблема смешанная: slow/flaky container egress плюс site-specific Chromium redirect behavior.
+- Chromium smoke для `https://dzen.ru/`: `commit='ok'`, commit response status `200`, но response host уже `sso.passport.yandex.ru`; `domcontentloaded` за `10000` ms не наступил; `body` за `5000` ms не появился; navigation chain: `dzen.ru` → `sso.passport.yandex.ru` → `sso.dzen.ru`; request failure: `sso.dzen.ru` document `net::ERR_TIMED_OUT`; console/pageerror = 0. DOM probe в момент проверки не выполнился из-за уничтожения execution context во время navigation.
+
+### Диагноз
+
+Рассмотрены источники: Telegram runtime/token, Docker image/dependencies, Chromium launch/context, DNS/TCP/TLS egress, initial navigation, redirect/SSO/challenge behavior, selector/template insertion, landing click, screenshots. Наиболее вероятны 2 причины: (1) `dzen.ru` в headless Docker редиректит через Yandex/Dzen SSO и зависает/таймаутит на `sso.dzen.ru`, из-за чего прежнее ожидание `domcontentloaded`/`body` блокировало генерацию; (2) container TLS/egress остается медленным или нестабильным для части hosts, что видно по свежим TLS timeout diagnostics.
+
+### Что изменено
+
+- В `reports_ad/reports_ad/proof.py` загрузка ad page переведена на tolerant strategy: `commit` как первый обязательный рубеж, затем bounded wait for `domcontentloaded` и `body`.
+- Добавлены Chromium-level safe diagnostics: request failures, response status/host, navigation host chain, console/pageerror counts, page URL host, minimal DOM probe (`readyState`, title, наличие `html`/`body`, HTML lengths), без query/UTM/full HTML.
+- Если `commit` успешен, а `domcontentloaded`/`body` не наступили, generator продолжает только при inspectable `document.documentElement`; при отсутствии `body` безопасно создает контейнер и позволяет template insertion продолжиться.
+- Template fallback insertion больше не зависит жестко от `document.body`: использует `document.body || document.documentElement`, а при полном отсутствии контейнера выдает phase-specific actionable error.
+- Добавлены unit-тесты для решения partial-DOM fallback и формы Chromium diagnostics без live external sites.
+- Обновлен `README.md` с новым поведением Docker/log troubleshooting.
+
+### Оставшаяся рекомендация
+
+После rebuild/restart контейнера повторить реальную заявку. Если `ad_page_partial_dom_fallback` сработает, но итоговый screenshot будет показывать SSO/challenge вместо исходной площадки, это уже ограничение площадки `dzen.ru`/SSO в headless Docker: нужен approved test URL без SSO, площадочный allowlist/авторизованный context или отдельная product policy для заблокированных площадок. Если в логах продолжатся TLS timeouts для нескольких hosts, отдельно проверять Docker daemon network, proxy/VPN/firewall/cloud egress и upstream throttling.
 
 ---
 
