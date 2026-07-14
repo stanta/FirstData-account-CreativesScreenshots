@@ -29,8 +29,8 @@ class BotConfig:
     viewport_height: int = 768
     max_creative_bytes: int = 10 * 1024 * 1024
     max_creative_pixels: int = 20_000_000
-    request_timeout_seconds: int = 90
-    page_load_timeout_ms: int = 30_000
+    request_timeout_seconds: int = 300
+    page_load_timeout_ms: int = 12_000
     click_timeout_ms: int = 7_000
     screenshot_timeout_ms: int = 15_000
     timeout_diagnostics: bool = True
@@ -57,8 +57,8 @@ class BotConfig:
             viewport_height=_int_from_env("REPORTS_AD_VIEWPORT_HEIGHT", 768),
             max_creative_bytes=_int_from_env("REPORTS_AD_MAX_CREATIVE_BYTES", 10 * 1024 * 1024),
             max_creative_pixels=_int_from_env("REPORTS_AD_MAX_CREATIVE_PIXELS", 20_000_000),
-            request_timeout_seconds=_int_from_env("REPORTS_AD_REQUEST_TIMEOUT_SECONDS", 90),
-            page_load_timeout_ms=_int_from_env("REPORTS_AD_PAGE_LOAD_TIMEOUT_MS", 30_000),
+            request_timeout_seconds=_int_from_env("REPORTS_AD_REQUEST_TIMEOUT_SECONDS", 300),
+            page_load_timeout_ms=_int_from_env("REPORTS_AD_PAGE_LOAD_TIMEOUT_MS", 12_000),
             click_timeout_ms=_int_from_env("REPORTS_AD_CLICK_TIMEOUT_MS", 7_000),
             screenshot_timeout_ms=_int_from_env("REPORTS_AD_SCREENSHOT_TIMEOUT_MS", 15_000),
             timeout_diagnostics=_bool_from_env("REPORTS_AD_TIMEOUT_DIAGNOSTICS", True),

@@ -457,6 +457,28 @@ Manual diagnostics внутри контейнера: для `dzen.ru` DNS/TCP/T
 
 ---
 
+## Ход проекта — 2026-07-13 — runtime timeouts, disabled fallback hosts и промежуточный screenshot
+
+Реализованы точечные runtime-изменения по обратной связи пользователя без изменения Telegram menu/review workflow и без добавления Chromium availability checks для landing/target host (`firstdata.io` или аналогичных).
+
+### Что изменено
+
+- Общий timeout генерации увеличен с 90 до 300 секунд в `reports_ad/reports_ad/config.py`, `.env.example` и `docker-compose.yml`, чтобы fallback-цепочка успевала завершиться.
+- Timeout загрузки каждой advertising/fallback площадки снижен с 30000 до 12000 ms в config/Compose/example env, чтобы плохие площадки не расходовали по 30 секунд.
+- В `reports_ad/reports_ad/data/placement_sites.json` исторические entries `dzen.ru` и `deti-online.com` сохранены traceable metadata, но помечены `enabled: false` с `disabled_reason`; активный runtime loader в `reports_ad/reports_ad/catalog.py` пропускает disabled hosts при построении fallback URL list.
+- В `reports_ad/reports_ad/proof.py` добавлено сохранение промежуточного screenshot сразу после успешной вставки креатива и до landing click. Файл пишется в project-level `reports_ad/tmp` с безопасным именем вида `creative-stem__host__YYYYMMDD-HHMMSS.png`; в имени нет URL, UTM, Telegram IDs, token или локального пути upload-файла.
+- В `reports_ad/reports_ad/models.py` `ProofResult` получил `intermediate_screenshot_path`, но Telegram runtime по-прежнему отправляет пользователю только финальный proof screenshot; промежуточный artifact только логируется как операторский файл.
+- В Docker Compose добавлен bind mount `./tmp:/app/tmp`, чтобы промежуточные screenshots из контейнера попадали в project-level `reports_ad/tmp`; добавлен `reports_ad/tmp/.gitkeep`, а PNG artifacts игнорируются через `.gitignore`.
+- Обновлены README и unit-тесты без live internet: проверяется skip disabled hosts, новые timeout defaults, безопасное имя промежуточного screenshot и сохранение intermediate path в `ProofResult`.
+
+### Рationale и ограничения
+
+- Площадки, не загружающиеся в пределах 30 секунд по Docker logs, исключены из активной fallback-итерации, чтобы общий timeout тратился на более перспективные candidates.
+- Сохранение промежуточного screenshot намеренно сделано fail-fast: если Playwright screenshot timeout или запись artifact падает, генерация завершается понятной ошибкой и не отправляет частичный proof.
+- Дополнительная проверка доступности landing/target site не добавлялась: landing host остается частью обычного click/fallback-open flow, чтобы не вводить новый smoke-check для `firstdata.io` и аналогичных URL.
+
+---
+
 ## Ход проекта — 2026-07-09 — миграция выбора сети/spec на telegram_menu
 
 Выполнен точечный перевод только двух шагов активного Telegram workflow на библиотеку `telegram_menu`: выбор рекламной сети и выбор размера/типа баннера из runtime-supported catalog specs. Остальной сценарий сохранен без переписывания: URL рекламной страницы, PNG/JPEG upload, landing URL, UTM, review/edit и явный старт генерации остаются на существующем `python-telegram-bot` `ConversationHandler`.

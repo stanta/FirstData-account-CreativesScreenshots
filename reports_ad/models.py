@@ -81,6 +81,13 @@ class SitePlacement:
 
 
 @dataclass(frozen=True, slots=True)
+class PlacementSite:
+    host: str
+    enabled: bool = True
+    disabled_reason: str = ""
+
+
+@dataclass(frozen=True, slots=True)
 class ProofRequest:
     request_id: str
     ad_page_url: str
@@ -97,7 +104,7 @@ class ProofRequest:
     viewport_height: int = 768
     headless: bool = True
     allow_local_urls: bool = False
-    page_load_timeout_ms: int = 30_000
+    page_load_timeout_ms: int = 12_000
     click_timeout_ms: int = 7_000
     screenshot_timeout_ms: int = 15_000
     timeout_diagnostics: bool = True
@@ -113,6 +120,7 @@ class ProofResult:
     height: int
     effective_click_url: str
     request_id: str
+    intermediate_screenshot_path: Path | None = None
     landing_fallback_used: bool = False
     ad_page_fallback_used: bool = False
     fallback_media_type: str = ""

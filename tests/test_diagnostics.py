@@ -1,4 +1,5 @@
 from pathlib import Path
+from datetime import datetime, timezone
 
 import pytest
 
@@ -6,7 +7,7 @@ from reports_ad.bot import _safe_exception_message as bot_safe_exception_message
 from reports_ad.bot import _safe_host as bot_safe_host
 from reports_ad.catalog import get_spec
 from reports_ad.diagnostics import NetworkDiagnosticResult, safe_exception_message as diagnostic_safe_exception_message, safe_host as diagnostic_safe_host
-from reports_ad.models import CreativeInfo, Placement, ProofRequest
+from reports_ad.models import CreativeInfo, Placement, ProofRequest, ProofResult
 from reports_ad.proof import (
     AD_PAGE_LOAD_TIMEOUT_MESSAGE,
     GENERATION_TIMEOUT_MESSAGE,
@@ -22,6 +23,7 @@ from reports_ad.proof import (
     _safe_host,
     _safe_log_context,
     _select_first_loadable_ad_page,
+    intermediate_creative_screenshot_path,
 )
 
 
@@ -155,8 +157,37 @@ def test_ad_page_candidates_try_requested_url_then_banner_fallbacks(tmp_path: Pa
     candidates = _ad_page_candidates(request)
 
     assert candidates[0] == AdPageCandidate(url="https://example.com/ad?secret=1", media_type="banner", is_fallback=False)
-    assert candidates[1] == AdPageCandidate(url="https://dzen.ru/", media_type="banner", is_fallback=True)
+    assert candidates[1] == AdPageCandidate(url="https://game.yandex.ru/", media_type="banner", is_fallback=True)
+    assert all(_safe_host(candidate.url) not in {"dzen.ru", "deti-online.com"} for candidate in candidates if candidate.is_fallback)
     assert all("secret" not in _safe_host(candidate.url) for candidate in candidates)
+
+
+def test_intermediate_screenshot_filename_is_safe_and_traceable(tmp_path: Path) -> None:
+    created_at = datetime(2026, 7, 13, 12, 34, 56, tzinfo=timezone.utc)
+    path = intermediate_creative_screenshot_path(
+        creative_path=tmp_path / "unsafe creative/name banner.png",
+        ad_page_url="https://Game.Yandex.ru/path?utm_source=secret",
+        created_at=created_at,
+    )
+
+    assert path.parent.name == "tmp"
+    assert path.name == "name-banner__game.yandex.ru__20260713-123456.png"
+    assert "utm" not in path.name
+    assert "/" not in path.name
+
+
+def test_proof_result_can_store_intermediate_screenshot_path(tmp_path: Path) -> None:
+    artifact_path = tmp_path / "creative__example.com__20260713-123456.png"
+    result = ProofResult(
+        output_path=tmp_path / "proof.png",
+        width=1365,
+        height=768,
+        effective_click_url="https://landing.example/?utm_source=test",
+        request_id="req-1",
+        intermediate_screenshot_path=artifact_path,
+    )
+
+    assert result.intermediate_screenshot_path == artifact_path
 
 
 @pytest.mark.asyncio

@@ -4,9 +4,17 @@
     "description": "Predefined advertising page fallback hosts grouped by media type. Hosts are converted to HTTPS root URLs at runtime; paths, query strings, UTM values, and user-provided URLs are not stored here.",
     "media_types": {
         "video": [
-            "dzen.ru",
+            {
+                "host": "dzen.ru",
+                "enabled": false,
+                "disabled_reason": "Disabled for fallback iteration after Docker Chromium logs showed commit/SSO timeout and no inspectable body within 30 seconds. Historical source entry retained."
+            },
             "yandex.ru",
-            "deti-online.com",
+            {
+                "host": "deti-online.com",
+                "enabled": false,
+                "disabled_reason": "Disabled for fallback iteration after container logs showed slow TLS/commit timeout behavior within the 30 second exclusion threshold. Historical source entry retained."
+            },
             "kniga-online.com",
             "m.dzen.ru",
             "m.knigavuhe.org",
@@ -16,7 +24,16 @@
             "www.woman.ru"
         ],
         "banner": [
-            "dzen.ru",
+            {
+                "host": "dzen.ru",
+                "enabled": false,
+                "disabled_reason": "Disabled for banner fallback after Docker Chromium logs showed commit/SSO timeout and no inspectable body within 30 seconds. Historical source entry retained."
+            },
+            {
+                "host": "deti-online.com",
+                "enabled": false,
+                "disabled_reason": "Disabled for banner fallback after container logs showed TLS/commit timeout behavior within the 30 second exclusion threshold. Historical source entry retained from source examples."
+            },
             "game.yandex.ru",
             "m.video.yandex.ru",
             "m.images.yandex.ru",

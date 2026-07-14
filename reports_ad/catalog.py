@@ -5,7 +5,7 @@ from functools import lru_cache
 from importlib.resources import files
 from urllib.parse import urlparse
 
-from .models import CreativeSpec, Placement, PlacementMediaType, PlacementTemplate, SitePlacement
+from .models import CreativeSpec, Placement, PlacementMediaType, PlacementSite, PlacementTemplate, SitePlacement
 
 CATALOG_RESOURCE = "data/creative_catalog.json"
 PLACEMENT_SITES_RESOURCE = "data/placement_sites.json"
@@ -37,9 +37,34 @@ def load_placement_sites_catalog() -> dict:
         raise CatalogError("Не удалось загрузить каталог fallback-площадок.") from exc
 
 
-def list_placement_sites(media_type: PlacementMediaType) -> list[str]:
+def list_placement_site_entries(media_type: PlacementMediaType, *, include_disabled: bool = False) -> list[PlacementSite]:
     raw_sites = load_placement_sites_catalog().get("media_types", {}).get(media_type, [])
-    return [site.strip().lower() for site in raw_sites if isinstance(site, str) and site.strip()]
+    sites: list[PlacementSite] = []
+    for raw_site in raw_sites:
+        if isinstance(raw_site, str):
+            host = raw_site.strip().lower()
+            if host:
+                sites.append(PlacementSite(host=host))
+            continue
+        if not isinstance(raw_site, dict):
+            continue
+        host = str(raw_site.get("host", "")).strip().lower()
+        if not host:
+            continue
+        enabled = bool(raw_site.get("enabled", True))
+        if enabled or include_disabled:
+            sites.append(
+                PlacementSite(
+                    host=host,
+                    enabled=enabled,
+                    disabled_reason=str(raw_site.get("disabled_reason", "")),
+                )
+            )
+    return sites
+
+
+def list_placement_sites(media_type: PlacementMediaType, *, include_disabled: bool = False) -> list[str]:
+    return [site.host for site in list_placement_site_entries(media_type, include_disabled=include_disabled)]
 
 
 def safe_https_url_for_host(host_or_url: str) -> str:
@@ -56,8 +81,8 @@ def safe_https_url_for_host(host_or_url: str) -> str:
 def placement_site_urls(media_type: PlacementMediaType) -> list[str]:
     urls: list[str] = []
     seen_hosts: set[str] = set()
-    for site in list_placement_sites(media_type):
-        url = safe_https_url_for_host(site)
+    for site in list_placement_site_entries(media_type):
+        url = safe_https_url_for_host(site.host)
         host = normalize_host(url)
         if url and host and host not in seen_hosts:
             urls.append(url)

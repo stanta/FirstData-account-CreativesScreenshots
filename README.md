@@ -19,6 +19,7 @@
 - Playwright/Chromium генератор: открывает страницу, вставляет статичный баннер, назначает click URL с UTM, эмулирует клик, получает landing page и собирает итоговое изображение, где нижние 20% заняты landing page.
 - Нет сохранения истории задач; состояние диалога и per-user locks только в памяти процесса.
 - Временные файлы удаляются после отправки результата, отмены или ошибки.
+- После успешной вставки креатива дополнительно сохраняется промежуточный PNG в `reports_ad/tmp`: это снимок рекламной страницы уже с вставленным креативом, но еще до клика по landing URL. Он не отправляется пользователю вместо итогового proof.
 
 ## Menu selection dependency note
 
@@ -74,6 +75,7 @@ docker run --rm \
   --env-file .env \
   --shm-size=1gb \
   --tmpfs /tmp/reports-ad:size=268435456,mode=1777 \
+  -v "$(pwd)/tmp:/app/tmp" \
   reports-ad:local
 ```
 
@@ -106,25 +108,27 @@ docker compose down
 
 ## Переменные окружения
 
-| Переменная                                  | Значение по умолчанию | Назначение                                                         |
-| ------------------------------------------- | --------------------: | ------------------------------------------------------------------ |
-| `REPORTS_AD_TELEGRAM_TOKEN`                 |                   нет | обязательный токен Telegram bot API                                |
-| `REPORTS_AD_HEADLESS`                       |                   `1` | запуск Chromium без UI                                             |
-| `REPORTS_AD_ALLOW_LOCAL_URLS`               |                   `0` | разрешить `localhost`/private IP только для локальных smoke-тестов |
-| `REPORTS_AD_ALLOW_LOCAL_CREATIVE_PATH`      |                   `0` | разрешить ввод локального пути вместо Telegram upload              |
-| `REPORTS_AD_VIEWPORT_WIDTH`                 |                `1365` | ширина viewport/final screenshot                                   |
-| `REPORTS_AD_VIEWPORT_HEIGHT`                |                 `768` | высота viewport/final screenshot                                   |
-| `REPORTS_AD_MAX_CREATIVE_BYTES`             |            `10485760` | максимальный размер креатива                                       |
-| `REPORTS_AD_MAX_CREATIVE_PIXELS`            |            `20000000` | максимальное число пикселей входного креатива                      |
-| `REPORTS_AD_REQUEST_TIMEOUT_SECONDS`        |                  `90` | общий timeout генерации для одного запроса                         |
-| `REPORTS_AD_PAGE_LOAD_TIMEOUT_MS`           |               `30000` | timeout загрузки страницы в Playwright                             |
-| `REPORTS_AD_CLICK_TIMEOUT_MS`               |                `7000` | timeout ожидания popup/click flow                                  |
-| `REPORTS_AD_SCREENSHOT_TIMEOUT_MS`          |               `15000` | timeout создания screenshot                                        |
-| `REPORTS_AD_TIMEOUT_DIAGNOSTICS`            |                   `1` | писать DNS/TCP/TLS diagnostics при timeout загрузки ad page        |
-| `REPORTS_AD_TIMEOUT_DIAGNOSTICS_TIMEOUT_MS` |                `5000` | timeout каждого DNS/TCP/TLS diagnostic check                       |
-| `REPORTS_AD_LOCALE`                         |               `ru-RU` | locale browser context                                             |
-| `REPORTS_AD_TIMEZONE`                       |       `Europe/Moscow` | timezone browser context                                           |
-| `REPORTS_AD_TEMP_ROOT`                      |                   нет | корневая директория временных файлов; в Docker используется tmpfs  |
+| Переменная                                  | Значение по умолчанию | Назначение                                                                                                                 |
+| ------------------------------------------- | --------------------: | -------------------------------------------------------------------------------------------------------------------------- |
+| `REPORTS_AD_TELEGRAM_TOKEN`                 |                   нет | обязательный токен Telegram bot API                                                                                        |
+| `REPORTS_AD_HEADLESS`                       |                   `1` | запуск Chromium без UI                                                                                                     |
+| `REPORTS_AD_ALLOW_LOCAL_URLS`               |                   `0` | разрешить `localhost`/private IP только для локальных smoke-тестов                                                         |
+| `REPORTS_AD_ALLOW_LOCAL_CREATIVE_PATH`      |                   `0` | разрешить ввод локального пути вместо Telegram upload                                                                      |
+| `REPORTS_AD_VIEWPORT_WIDTH`                 |                `1365` | ширина viewport/final screenshot                                                                                           |
+| `REPORTS_AD_VIEWPORT_HEIGHT`                |                 `768` | высота viewport/final screenshot                                                                                           |
+| `REPORTS_AD_MAX_CREATIVE_BYTES`             |            `10485760` | максимальный размер креатива                                                                                               |
+| `REPORTS_AD_MAX_CREATIVE_PIXELS`            |            `20000000` | максимальное число пикселей входного креатива                                                                              |
+| `REPORTS_AD_REQUEST_TIMEOUT_SECONDS`        |                 `300` | общий timeout генерации для одного запроса; увеличен, чтобы fallback-цепочка успевала завершиться                          |
+| `REPORTS_AD_PAGE_LOAD_TIMEOUT_MS`           |               `12000` | timeout загрузки каждой advertising/fallback площадки в Playwright; снижен, чтобы плохие площадки не занимали по 30 секунд |
+| `REPORTS_AD_CLICK_TIMEOUT_MS`               |                `7000` | timeout ожидания popup/click flow                                                                                          |
+| `REPORTS_AD_SCREENSHOT_TIMEOUT_MS`          |               `15000` | timeout создания screenshot                                                                                                |
+| `REPORTS_AD_TIMEOUT_DIAGNOSTICS`            |                   `1` | писать DNS/TCP/TLS diagnostics при timeout загрузки ad page                                                                |
+| `REPORTS_AD_TIMEOUT_DIAGNOSTICS_TIMEOUT_MS` |                `5000` | timeout каждого DNS/TCP/TLS diagnostic check                                                                               |
+| `REPORTS_AD_LOCALE`                         |               `ru-RU` | locale browser context                                                                                                     |
+| `REPORTS_AD_TIMEZONE`                       |       `Europe/Moscow` | timezone browser context                                                                                                   |
+| `REPORTS_AD_TEMP_ROOT`                      |                   нет | корневая директория временных файлов; в Docker используется tmpfs                                                          |
+
+`REPORTS_AD_REQUEST_TIMEOUT_SECONDS=300` и `REPORTS_AD_PAGE_LOAD_TIMEOUT_MS=12000` являются согласованной парой: общий timeout достаточно длинный для перебора fallback-площадок, а timeout одного кандидата ограничивает зависание плохих площадок. Площадки, которые по Docker logs не дают пригодную загрузку в пределах 30 секунд, исключаются из активной fallback-итерации в каталоге, но остаются в JSON с `enabled: false` и `disabled_reason` для traceability.
 
 ## Диагностика timeout/no-result
 
@@ -133,8 +137,9 @@ docker compose down
 Ключевые фазы:
 
 - `ad_page_load` — загрузка рекламной страницы. Для ad-heavy страниц используется tolerant strategy: Chromium сначала ждет `commit`, затем bounded wait for `domcontentloaded` и `body`. Если `commit` уже произошел, но `domcontentloaded`/`body` зависли, generator проверяет безопасный DOM probe (`document.readyState`, title, наличие `html`/`body`, длину HTML) и продолжает только если есть inspectable `documentElement`; `networkidle` не используется, потому что рекламные трекеры, long polling и lazy-load могут держать сеть активной до timeout.
-- `ad_page_fallback_candidate` — попытка загрузить исходную advertising page или predefined fallback-площадку. Логируются только media type, индекс/количество кандидата, host, результат, длительность и безопасно усеченная причина ошибки; полные URL/query/UTM не пишутся.
+- `ad_page_fallback_candidate` — попытка загрузить исходную advertising page или predefined fallback-площадку. Логируются только media type, индекс/количество кандидата, host, результат, длительность и безопасно усеченная причина ошибки; полные URL/query/UTM не пишутся. Активная итерация пропускает hosts с `enabled: false`.
 - `creative_insert` — поиск selector/template и вставка креатива.
+- `creative_insert_screenshot` — сохранение промежуточного screenshot с уже вставленным креативом в `reports_ad/tmp` до клика по landing page. Имя файла строится как `creative-stem__host__YYYYMMDD-HHMMSS.png`, где используются только санитизированные stem исходного файла креатива и host площадки; URL, UTM, Telegram IDs и локальные пути в имя не попадают. Если этот screenshot не удается сохранить из-за timeout или ошибки записи, генерация завершается понятной ошибкой; частичный итоговый proof не отправляется.
 - `landing_click` / `landing_fallback_open` — клик по баннеру, ожидание popup/new page и fallback-открытие landing URL в контролируемой странице.
 - `ad_screenshot` / `landing_screenshot` — создание screenshot рекламной страницы и landing page.
 - `image_compose` и `proof_telegram_send_*` — сборка итогового PNG и отправка в Telegram.
@@ -230,9 +235,23 @@ Use these changes as operational experiments, not default code changes: the corr
 
 Если исходная/current advertising page не открывается на фазе загрузки страницы (`commit`/bounded DOM/body), generator сначала фиксирует отказ по host, затем перебирает predefined fallback-площадки из `reports_ad/reports_ad/data/placement_sites.json`. Список мигрирован из `reports_ad/docs/examples/FD -- Примеры скриншотов/площадки.txt` и разделен по media type: `banner` и `video`. Runtime определяет media type по выбранному spec: source/video/in-stream/MP4 specs используют `video`, а статичные PNG/JPEG/image specs и все неясные случаи MVP используют documented default `banner`. Для каждого hostname строится только безопасный root HTTPS URL вида `https://host/`; пути, query, UTM, пользовательские URL и локальные файлы в JSON не сохраняются.
 
+Площадки, которые в Docker/Chromium logs не загружаются в пределах 30 секунд, сохранены в JSON как disabled metadata и не участвуют в активной fallback-цепочке. Сейчас из `banner` fallback исключены `dzen.ru` и `deti-online.com`; `dzen.ru` также исключен из `video` fallback, а `deti-online.com` помечен disabled для `video`, чтобы не тратить общий timeout на известные commit/TLS/SSO-зависания. Исторические entries не удалены: у каждого disabled host есть `disabled_reason`.
+
+Дополнительных Chromium smoke/checks для landing/target host не добавлено: landing URL по-прежнему используется только в стандартной фазе click/fallback-open текущей генерации.
+
 Fallback применяется только к connectivity/page-download/page-load этапу до вставки креатива. Ошибки selector/template insertion остаются фазой `creative_insert` и не запускают перебор площадок. Если все кандидаты не открылись, пользователь получает русское сообщение о том, что все fallback-площадки недоступны, а в логах остаются только sanitized причины по host.
 
 Статус проверки площадок сохранен в catalog metadata. Проверка выполнялась из workspace через `reports_ad/.venv/bin/python` с HTML-sample запросами. Ограничения: `dzen.ru`, `m.dzen.ru`, `yandex.ru` редиректили на Yandex Passport/SSO; `kniga-online.com` вернул HTTP 403; `m.video.yandex.ru` и `m.images.yandex.ru` дали TLS hostname mismatch; `drug.vokrug` не резолвился DNS. Поэтому selectors с confidence не `observed_sample` являются fallback heuristics, а не verified production selectors.
+
+## Intermediate artifacts in `reports_ad/tmp`
+
+Каждая успешная генерация после `creative_insert` сохраняет дополнительный artifact в project-level `reports_ad/tmp` или, в Docker Compose, в mounted `/app/tmp` → `./tmp`. Это нужно для операторской проверки, что креатив был вставлен до клика и композиции landing page. Artifact не заменяет итоговый screenshot и не отправляется в Telegram пользователю; в Telegram уходит только финальный proof image.
+
+Безопасность имени файла:
+
+- включает только stem исходного имени креатива, host выбранной площадки и UTC timestamp вида `YYYYMMDD-HHMMSS`;
+- не включает полный advertising URL, landing URL, UTM, Telegram user/chat IDs, token или локальный путь upload-файла;
+- небезопасные символы заменяются дефисами.
 
 ## Manual placement syntax for internal validation helpers
 

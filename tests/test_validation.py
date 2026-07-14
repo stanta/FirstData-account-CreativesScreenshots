@@ -25,7 +25,7 @@ from reports_ad.bot import (
     spec_menu_keyboard,
     spec_menu_prompt,
 )
-from reports_ad.catalog import choose_placement_for_url, get_site_placement, get_spec, infer_media_type_from_spec, list_placement_sites, list_runtime_specs, placement_site_urls
+from reports_ad.catalog import choose_placement_for_url, get_site_placement, get_spec, infer_media_type_from_spec, list_placement_site_entries, list_placement_sites, list_runtime_specs, placement_site_urls
 from reports_ad.config import BotConfig
 from reports_ad.models import CreativeInfo, Placement, ProofResult
 from reports_ad.validation import (
@@ -99,6 +99,16 @@ def test_catalog_loads_runtime_png_jpeg_specs() -> None:
 
 def test_placement_sites_json_loads_by_media_type() -> None:
     assert list_placement_sites("video") == [
+        "yandex.ru",
+        "kniga-online.com",
+        "m.dzen.ru",
+        "m.knigavuhe.org",
+        "amd.online",
+        "ya.ru",
+        "ok.ru",
+        "www.woman.ru",
+    ]
+    assert list_placement_sites("video", include_disabled=True) == [
         "dzen.ru",
         "yandex.ru",
         "deti-online.com",
@@ -111,7 +121,6 @@ def test_placement_sites_json_loads_by_media_type() -> None:
         "www.woman.ru",
     ]
     assert list_placement_sites("banner") == [
-        "dzen.ru",
         "game.yandex.ru",
         "m.video.yandex.ru",
         "m.images.yandex.ru",
@@ -122,7 +131,38 @@ def test_placement_sites_json_loads_by_media_type() -> None:
         "images.yandex.ru",
         "m.pogoda.yandex.ru",
     ]
-    assert placement_site_urls("banner")[0] == "https://dzen.ru/"
+    assert list_placement_sites("banner", include_disabled=True) == [
+        "dzen.ru",
+        "deti-online.com",
+        "game.yandex.ru",
+        "m.video.yandex.ru",
+        "m.images.yandex.ru",
+        "yandex.ru",
+        "drug.vokrug",
+        "pogoda.yandex.ru",
+        "ok.ru",
+        "images.yandex.ru",
+        "m.pogoda.yandex.ru",
+    ]
+    assert placement_site_urls("banner")[0] == "https://game.yandex.ru/"
+    assert "https://dzen.ru/" not in placement_site_urls("banner")
+    assert "https://deti-online.com/" not in placement_site_urls("banner")
+
+
+def test_disabled_placement_site_entries_keep_traceable_metadata() -> None:
+    entries = list_placement_site_entries("banner", include_disabled=True)
+    disabled = {entry.host: entry for entry in entries if not entry.enabled}
+
+    assert {"dzen.ru", "deti-online.com"}.issubset(disabled)
+    assert "30 second" in disabled["dzen.ru"].disabled_reason.lower()
+    assert "historical source entry retained" in disabled["deti-online.com"].disabled_reason.lower()
+
+
+def test_bot_config_uses_extended_overall_timeout_and_shorter_candidate_timeout() -> None:
+    config = BotConfig(telegram_token="test")
+
+    assert config.request_timeout_seconds == 300
+    assert config.page_load_timeout_ms == 12_000
 
 
 def test_validate_creative_against_selected_spec_accepts_exact_dimensions(tmp_path: Path) -> None:

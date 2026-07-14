@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import base64
 import logging
+import re
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 from urllib.parse import urlparse
@@ -177,6 +179,54 @@ async def generate_proof(request: ProofRequest) -> ProofResult:
                 timings["creative_inserted"] = _elapsed_ms(started)
 
                 phase_started = time.monotonic()
+                intermediate_screenshot_path = intermediate_creative_screenshot_path(
+                    creative_path=request.creative.path,
+                    ad_page_url=selected_candidate.url,
+                )
+                _log_phase(
+                    "creative_insert_screenshot",
+                    "start",
+                    phase_started,
+                    **log_context,
+                    timeout_ms=request.screenshot_timeout_ms,
+                    artifact_path=str(intermediate_screenshot_path),
+                )
+                try:
+                    intermediate_screenshot_path.parent.mkdir(parents=True, exist_ok=True)
+                    await page.screenshot(path=str(intermediate_screenshot_path), timeout=request.screenshot_timeout_ms)
+                except PlaywrightTimeoutError as exc:
+                    _log_phase(
+                        "creative_insert_screenshot",
+                        "failure",
+                        phase_started,
+                        **log_context,
+                        timeout_ms=request.screenshot_timeout_ms,
+                        artifact_path=str(intermediate_screenshot_path),
+                        exception=exc,
+                    )
+                    raise ProofTimeoutError("creative_insert_screenshot", request.screenshot_timeout_ms, "Истекло время сохранения промежуточного скриншота с креативом.") from exc
+                except Exception as exc:
+                    _log_phase(
+                        "creative_insert_screenshot",
+                        "failure",
+                        phase_started,
+                        **log_context,
+                        timeout_ms=request.screenshot_timeout_ms,
+                        artifact_path=str(intermediate_screenshot_path),
+                        exception=exc,
+                    )
+                    raise ScreenshotGenerationError("Не удалось сохранить промежуточный скриншот с креативом.") from exc
+                _log_phase(
+                    "creative_insert_screenshot",
+                    "success",
+                    phase_started,
+                    **log_context,
+                    timeout_ms=request.screenshot_timeout_ms,
+                    artifact_path=str(intermediate_screenshot_path),
+                )
+                timings["creative_insert_screenshot_saved"] = _elapsed_ms(started)
+
+                phase_started = time.monotonic()
                 _log_phase("landing_click", "start", phase_started, **log_context, timeout_ms=request.click_timeout_ms)
                 try:
                     landing_page, landing_fallback_used = await _click_and_get_landing_page(
@@ -236,6 +286,7 @@ async def generate_proof(request: ProofRequest) -> ProofResult:
             height=height,
             effective_click_url=effective_click_url,
             request_id=request.request_id,
+            intermediate_screenshot_path=intermediate_screenshot_path,
             landing_fallback_used=landing_fallback_used,
             ad_page_fallback_used=selected_candidate.is_fallback,
             fallback_media_type=selected_candidate.media_type,
@@ -308,6 +359,24 @@ def _cover_resize(image: Image.Image, width: int, height: int) -> Image.Image:
 def _creative_data_url(path: Path, mime_type: str) -> str:
     encoded = base64.b64encode(path.read_bytes()).decode("ascii")
     return f"data:{mime_type};base64,{encoded}"
+
+
+def intermediate_creative_screenshot_path(*, creative_path: Path, ad_page_url: str, created_at: datetime | None = None) -> Path:
+    created = created_at or datetime.now(timezone.utc)
+    timestamp = created.strftime("%Y%m%d-%H%M%S")
+    creative_stem = _safe_filename_part(Path(creative_path).stem or "creative")
+    host = _safe_filename_part(_safe_host(ad_page_url) or "unknown-host")
+    return _project_tmp_dir() / f"{creative_stem}__{host}__{timestamp}.png"
+
+
+def _project_tmp_dir() -> Path:
+    return Path(__file__).resolve().parents[1] / "tmp"
+
+
+def _safe_filename_part(value: str, *, max_length: int = 80) -> str:
+    normalized = re.sub(r"[^A-Za-z0-9._-]+", "-", value.strip())
+    normalized = normalized.strip("._-")
+    return (normalized or "artifact")[:max_length]
 
 
 async def _insert_creative(

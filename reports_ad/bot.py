@@ -305,7 +305,7 @@ async def _generate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
     async with lock:
         await update.effective_message.reply_text(
-            "Генерирую proof-скриншот. Это может занять до 1–2 минут.",
+            "Генерирую proof-скриншот. Это может занять до 5 минут, если включается fallback-цепочка площадок.",
             reply_markup=ReplyKeyboardRemove(),
         )
         request_id = context.user_data.get("request_id", uuid.uuid4().hex[:12])
@@ -339,6 +339,14 @@ async def _generate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             logger.info("proof_telegram_send_started request_id=%s user=%s chat=%s elapsed_ms=%s", request_id, user_hash, chat_hash, _loop_elapsed_ms(send_started))
             with result.output_path.open("rb") as image_file:
                 await update.effective_message.reply_photo(photo=image_file, caption="Proof-скриншот готов.")
+            if result.intermediate_screenshot_path:
+                logger.info(
+                    "proof_intermediate_screenshot_saved request_id=%s user=%s chat=%s artifact_path=%s",
+                    request_id,
+                    user_hash,
+                    chat_hash,
+                    result.intermediate_screenshot_path,
+                )
             logger.info("proof_telegram_send_done request_id=%s user=%s chat=%s elapsed_ms=%s", request_id, user_hash, chat_hash, _loop_elapsed_ms(send_started))
             logger.info("proof_generation_done request_id=%s user=%s chat=%s elapsed_ms=%s", request_id, user_hash, chat_hash, _loop_elapsed_ms(started))
         except asyncio.TimeoutError as exc:
