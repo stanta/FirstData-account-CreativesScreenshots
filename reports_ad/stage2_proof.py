@@ -8,6 +8,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
+from .config import BotConfig
 from .gemma_client import GemmaBBoxClient, build_gemma_client_from_config
 from .models import BoundingBox, GeneratedProofArtifacts, ProofRequest, ProofResult
 from .proof import ScreenshotGenerationError
@@ -16,12 +17,12 @@ from .validation import ValidationError, merge_url_with_utm, validate_bbox_withi
 logger = logging.getLogger(__name__)
 
 
-async def generate_stage2_proof(request: ProofRequest, *, gemma_client: GemmaBBoxClient | None = None, config: object | None = None) -> ProofResult:
+async def generate_stage2_proof(request: ProofRequest, *, gemma_client: GemmaBBoxClient | None = None, config: BotConfig | None = None) -> ProofResult:
     """Generate a proof image from a user-uploaded screenshot without browser loading."""
 
     started = time.monotonic()
     timings: dict[str, int] = {}
-    client = gemma_client or build_gemma_client_from_config(config)  # type: ignore[arg-type]
+    client = gemma_client or build_gemma_client_from_config(config)
     output_path = Path(request.output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     effective_click_url = merge_url_with_utm(request.landing_url, request.utm_params, allow_local=request.allow_local_urls)

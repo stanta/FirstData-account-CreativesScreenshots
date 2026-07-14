@@ -141,6 +141,8 @@ docker compose down
 
 Stage 2 LLM/OCR public configuration uses `REPORTS_AD_OCR_LLM_*` names by analogy with `validator-ai` `OCR_LLM_*`: `BASE_URL`, `MODEL`, `TIMEOUT_SECONDS`, `HEADER_AUTHORISATION`, `USER`, `PASSWORD` and optional `API_KEY`. This naming is intentionally OCR-style even when the actual OpenAI-compatible vision model is Gemma. Legacy `REPORTS_AD_GEMMA_*` names are not read by the runtime.
 
+Начиная с bugfix 2026-07-14, Stage 2 screenshot-only flow получает runtime config напрямую из Telegram runtime path. Если OCR runtime не инициализирован или не заполнен `REPORTS_AD_OCR_LLM_BASE_URL`, бот возвращает явную безопасную ошибку конфигурации вместо `AttributeError`.
+
 ## Диагностика timeout/no-result
 
 Генерация proof-скриншота пишет структурированные runtime-логи по фазам без Telegram token, полных URL с UTM, локальных временных путей и содержимого upload-файлов. В логах используются `request_id`, хеши пользователя/чата, host рекламной страницы и landing page, сеть/spec, размеры, viewport, placement, имя фазы, статус, `elapsed_ms`, timeout и безопасно усеченные exception class/message.

@@ -3,9 +3,10 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
+from reports_ad.bot import build_application
 from reports_ad.config import BotConfig
 from reports_ad.gemma_client import build_gemma_client_from_config
-from reports_ad.models import BBoxDetectionResult, BoundingBox, CreativeInfo, Placement, ProofRequest, SourceScreenshotInfo
+from reports_ad.models import BBoxDetectionResult, BoundingBox, CreativeInfo, Placement, ProofRequest, ProofResult, SourceScreenshotInfo
 from reports_ad.proof import compose_final_image
 from reports_ad.stage2_proof import compose_stage2_image, fallback_landing_bbox, generate_stage2_proof
 from reports_ad.catalog import get_spec
@@ -94,6 +95,18 @@ def test_gemma_client_builder_uses_ocr_config_fields() -> None:
     assert client._confidence_threshold == 0.6
 
 
+def test_gemma_client_builder_rejects_missing_runtime_config() -> None:
+    with pytest.raises(ValidationError, match="не инициализирована"):
+        build_gemma_client_from_config(None)
+
+
+def test_gemma_client_builder_requires_base_url() -> None:
+    config = BotConfig(telegram_token="test", ocr_llm_base_url="", ocr_llm_model="cyankiwi/gemma-4-26B-A4B-it-AWQ-4bit")
+
+    with pytest.raises(ValidationError, match="REPORTS_AD_OCR_LLM_BASE_URL"):
+        build_gemma_client_from_config(config)
+
+
 @pytest.mark.asyncio
 async def test_stage2_generate_uses_mocked_gemma_and_fallback_landing(tmp_path: Path) -> None:
     spec = get_spec("yandex-graphic-banners-300x250-image")
@@ -132,6 +145,57 @@ async def test_stage2_generate_uses_mocked_gemma_and_fallback_landing(tmp_path: 
 
 
 @pytest.mark.asyncio
+async def test_build_application_injects_runtime_config_into_stage2_generator(tmp_path: Path) -> None:
+    spec = get_spec("yandex-graphic-banners-300x250-image")
+    assert spec is not None
+    source_path = tmp_path / "source.png"
+    creative_path = tmp_path / "creative.png"
+    output_path = tmp_path / "final.png"
+    Image.new("RGB", (400, 300), "white").save(source_path)
+    Image.new("RGB", (300, 250), "blue").save(creative_path)
+    config = BotConfig(
+        telegram_token="test",
+        temp_root=tmp_path,
+        ocr_llm_base_url="http://gemma.firstdata.io/v1",
+        ocr_llm_model="cyankiwi/gemma-4-26B-A4B-it-AWQ-4bit",
+    )
+    request = ProofRequest(
+        request_id="req-stage2-config",
+        network_display_name="Яндекс",
+        network_slug="yandex_graphic_banners",
+        spec=spec,
+        banner_type=spec.display_name,
+        source_screenshot=SourceScreenshotInfo(path=source_path, mime_type="image/png", width=400, height=300, size_bytes=source_path.stat().st_size),
+        creative=CreativeInfo(path=creative_path, mime_type="image/png", width=300, height=250, size_bytes=creative_path.stat().st_size),
+        landing_url="https://example.com/landing",
+        utm_params={"utm_source": "test"},
+        placement=Placement(mode="template", value="screenshot-detected"),
+        output_path=output_path,
+    )
+    captured: dict[str, object] = {}
+
+    async def fake_stage2_generator(stage2_request: ProofRequest, *, config: BotConfig | None = None):
+        captured["request"] = stage2_request
+        captured["config"] = config
+        output_path.write_bytes(b"fake-png")
+        return ProofResult(
+            output_path=output_path,
+            width=400,
+            height=300,
+            effective_click_url="https://example.com/landing?utm_source=test",
+            request_id=stage2_request.request_id,
+        )
+
+    application = build_application(config, proof_generator=fake_stage2_generator)
+    configured_generator = application.bot_data["proof_generator"]
+
+    await configured_generator(request)
+
+    assert captured["request"] == request
+    assert captured["config"] is config
+
+
+@pytest.mark.asyncio
 async def test_stage2_generate_invalid_banner_bbox_asks_for_better_screenshot(tmp_path: Path) -> None:
     spec = get_spec("yandex-graphic-banners-300x250-image")
     assert spec is not None
@@ -166,3 +230,30 @@ async def test_stage2_generate_invalid_banner_bbox_asks_for_better_screenshot(tm
         assert "Загрузите более качественный скриншот" in exc.safe_message
     else:
         raise AssertionError("Expected ValidationError")
+
+
+@pytest.mark.asyncio
+async def test_stage2_generate_requires_ocr_config_when_client_not_injected(tmp_path: Path) -> None:
+    spec = get_spec("yandex-graphic-banners-300x250-image")
+    assert spec is not None
+    source_path = tmp_path / "source.png"
+    creative_path = tmp_path / "creative.png"
+    Image.new("RGB", (400, 300), "white").save(source_path)
+    Image.new("RGB", (300, 250), "blue").save(creative_path)
+    request = ProofRequest(
+        request_id="req-stage2-misconfig",
+        network_display_name="Яндекс",
+        network_slug="yandex_graphic_banners",
+        spec=spec,
+        banner_type=spec.display_name,
+        source_screenshot=SourceScreenshotInfo(path=source_path, mime_type="image/png", width=400, height=300, size_bytes=source_path.stat().st_size),
+        creative=CreativeInfo(path=creative_path, mime_type="image/png", width=300, height=250, size_bytes=creative_path.stat().st_size),
+        landing_url="https://example.com/landing",
+        utm_params={"utm_source": "test"},
+        placement=Placement(mode="template", value="screenshot-detected"),
+        output_path=tmp_path / "final.png",
+    )
+    config = BotConfig(telegram_token="test", ocr_llm_base_url="")
+
+    with pytest.raises(ValidationError, match="REPORTS_AD_OCR_LLM_BASE_URL"):
+        await generate_stage2_proof(request, config=config)

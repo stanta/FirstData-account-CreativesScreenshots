@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import inspect
 import logging
 import tempfile
 import uuid
@@ -60,6 +61,7 @@ REVIEW_MENU_ACTIONS = {
 }
 
 ProofGenerator = Callable[[ProofRequest], Awaitable[ProofResult]]
+RawProofGenerator = Callable[..., Awaitable[ProofResult]]
 
 NETWORK_MENU_PROMPT = "Выберите рекламную сеть кнопкой меню telegram_menu:"
 SPEC_MENU_PROMPT = "Теперь выберите тип баннера/spec кнопкой меню telegram_menu:"
@@ -74,11 +76,11 @@ class ReportsAdMenuMessage(BaseMessage):
         return ""
 
 
-def build_application(config: BotConfig | None = None, proof_generator: ProofGenerator = generate_stage2_proof) -> Application:
+def build_application(config: BotConfig | None = None, proof_generator: RawProofGenerator = generate_stage2_proof) -> Application:
     runtime_config = config or BotConfig.from_env()
     application = ApplicationBuilder().token(runtime_config.telegram_token).build()
     application.bot_data["config"] = runtime_config
-    application.bot_data["proof_generator"] = proof_generator
+    application.bot_data["proof_generator"] = _configure_proof_generator(proof_generator, runtime_config)
     application.bot_data["user_locks"] = {}
 
     conversation = ConversationHandler(
@@ -667,6 +669,21 @@ async def _cleanup_state(user_data: dict[str, Any]) -> None:
 
 def _config(context: ContextTypes.DEFAULT_TYPE) -> BotConfig:
     return context.bot_data["config"]
+
+
+def _configure_proof_generator(proof_generator: RawProofGenerator, config: BotConfig) -> ProofGenerator:
+    try:
+        parameters = inspect.signature(proof_generator).parameters
+    except (TypeError, ValueError):
+        return proof_generator  # type: ignore[return-value]
+
+    if "config" not in parameters:
+        return proof_generator  # type: ignore[return-value]
+
+    async def configured_proof_generator(request: ProofRequest) -> ProofResult:
+        return await proof_generator(request, config=config)
+
+    return configured_proof_generator
 
 
 def _user_lock(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> asyncio.Lock:

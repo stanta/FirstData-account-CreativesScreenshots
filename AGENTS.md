@@ -219,6 +219,14 @@ python -m playwright install chromium
 
 Для `reports_ad` добавлены минимальные production-practical container assets под Telegram polling bot и headless Playwright Chromium.
 
+---
+
+## Ход проекта — 2026-07-14 — Stage 2 OCR config propagation bugfix
+
+- Исправлен production bug в screenshot-only Stage 2 flow: runtime `BotConfig` теперь явно пробрасывается из Telegram runtime path в Stage 2 proof generator, поэтому `build_gemma_client_from_config(...)` больше не получает `None` при штатном запуске через бота.
+- Для реальной OCR misconfiguration добавлена явная безопасная ошибка без секретов: при отсутствии `REPORTS_AD_OCR_LLM_BASE_URL` или неинициализированном runtime config пользователь получает понятное сообщение вместо `AttributeError`.
+- Добавлены регрессионные тесты на runtime-path injection config, создание OCR клиента из config и безопасное поведение при отсутствующей обязательной OCR-конфигурации.
+
 - Добавлен `Dockerfile`: runtime переведен на базовый образ `mcr.microsoft.com/playwright/python:v1.61.0-noble`, чтобы Chromium и Linux browser dependencies уже были предустановлены в image и не требовали отдельного интерактивного setup при старте контейнера.
 - Добавлен `docker-compose.yml`: сервис `reports-ad-bot` с `restart: unless-stopped`, `init: true`, `shm_size: 1gb`, `tmpfs` для временных файлов и startup через стандартный `python -m reports_ad`.
 - Добавлен `.dockerignore` для уменьшения build context без включения `.env`, тестов и docs.

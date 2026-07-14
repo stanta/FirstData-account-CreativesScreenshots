@@ -9,7 +9,9 @@ from typing import Any, Protocol
 
 import httpx
 
+from .config import BotConfig
 from .models import BBoxDetectionResult, BoundingBox, CreativeSpec, SourceScreenshotInfo
+from .validation import ValidationError
 
 logger = logging.getLogger(__name__)
 
@@ -123,15 +125,29 @@ class HeaderAuthGemmaClient:
             return response.json()
 
 
-def build_gemma_client_from_config(config: Any) -> HeaderAuthGemmaClient:
+def build_gemma_client_from_config(config: BotConfig | None) -> HeaderAuthGemmaClient:
+    runtime_config = _require_ocr_runtime_config(config)
     return HeaderAuthGemmaClient(
-        base_url=config.ocr_llm_base_url,
-        model=config.ocr_llm_model,
-        authorization_header=config.ocr_llm_authorization_header,
-        timeout_seconds=config.ocr_llm_timeout_seconds,
-        max_retries=config.ocr_llm_max_retries,
-        confidence_threshold=config.ocr_llm_confidence_threshold,
+        base_url=runtime_config.ocr_llm_base_url,
+        model=runtime_config.ocr_llm_model,
+        authorization_header=runtime_config.ocr_llm_authorization_header,
+        timeout_seconds=runtime_config.ocr_llm_timeout_seconds,
+        max_retries=runtime_config.ocr_llm_max_retries,
+        confidence_threshold=runtime_config.ocr_llm_confidence_threshold,
     )
+
+
+def _require_ocr_runtime_config(config: BotConfig | None) -> BotConfig:
+    if config is None:
+        raise ValidationError("Конфигурация Stage 2 OCR не инициализирована. Перезапустите бота и повторите попытку.")
+
+    if not config.ocr_llm_base_url.strip():
+        raise ValidationError("Stage 2 OCR не настроен: заполните REPORTS_AD_OCR_LLM_BASE_URL и перезапустите бота.")
+
+    if not config.ocr_llm_model.strip():
+        raise ValidationError("Stage 2 OCR не настроен: заполните REPORTS_AD_OCR_LLM_MODEL и перезапустите бота.")
+
+    return config
 
 
 def _banner_prompt(*, screenshot: SourceScreenshotInfo, spec: CreativeSpec) -> str:
