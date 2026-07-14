@@ -20,20 +20,11 @@ from telegram.ext import (
 )
 from telegram_menu import BaseMessage
 
-from .catalog import (
-    catalog_summary,
-    choose_placement_for_url,
-    get_network,
-    get_site_placement,
-    get_spec,
-    infer_media_type_from_spec,
-    list_networks,
-    list_runtime_specs,
-    specs_summary,
-)
+from .catalog import catalog_summary, get_network, get_spec, infer_media_type_from_spec, list_networks, list_runtime_specs, specs_summary
 from .config import BotConfig
-from .models import CreativeInfo, CreativeSpec, ProofRequest, ProofResult
-from .proof import ScreenshotGenerationError, generate_proof
+from .models import CreativeInfo, CreativeSpec, Placement, ProofRequest, ProofResult, SourceScreenshotInfo
+from .proof import ScreenshotGenerationError
+from .stage2_proof import generate_stage2_proof
 from .validation import (
     ValidationError,
     merge_url_with_utm,
@@ -41,18 +32,19 @@ from .validation import (
     parse_utm_params,
     validate_creative_file,
     validate_network_slug,
+    validate_screenshot_file,
     validate_spec_slug,
 )
 
 logger = logging.getLogger(__name__)
 
-NETWORK, BANNER_TYPE, CREATIVE, AD_PAGE_URL, LANDING_URL, UTM, REVIEW = range(7)
+NETWORK, BANNER_TYPE, SCREENSHOT, CREATIVE, LANDING_URL, UTM, REVIEW = range(7)
 EDIT_TARGETS = {
     "network": NETWORK,
     "spec": BANNER_TYPE,
     "banner": BANNER_TYPE,
-    "ad_url": AD_PAGE_URL,
-    "page": AD_PAGE_URL,
+    "screenshot": SCREENSHOT,
+    "screen": SCREENSHOT,
     "creative": CREATIVE,
     "landing": LANDING_URL,
     "utm": UTM,
@@ -60,8 +52,8 @@ EDIT_TARGETS = {
 REVIEW_MENU_ACTIONS = {
     "Изменить рекламную сеть": "network",
     "Изменить тип баннера": "spec",
+    "Изменить скриншот площадки": "screenshot",
     "Изменить креатив": "creative",
-    "Изменить URL рекламной страницы": "ad_url",
     "Изменить landing URL": "landing",
     "Изменить UTM-строку": "utm",
     "Запустить": "generate",
@@ -82,7 +74,7 @@ class ReportsAdMenuMessage(BaseMessage):
         return ""
 
 
-def build_application(config: BotConfig | None = None, proof_generator: ProofGenerator = generate_proof) -> Application:
+def build_application(config: BotConfig | None = None, proof_generator: ProofGenerator = generate_stage2_proof) -> Application:
     runtime_config = config or BotConfig.from_env()
     application = ApplicationBuilder().token(runtime_config.telegram_token).build()
     application.bot_data["config"] = runtime_config
@@ -94,7 +86,7 @@ def build_application(config: BotConfig | None = None, proof_generator: ProofGen
         states={
             NETWORK: [MessageHandler(filters.TEXT & ~filters.COMMAND, collect_network)],
             BANNER_TYPE: [MessageHandler(filters.TEXT & ~filters.COMMAND, collect_banner_type)],
-            AD_PAGE_URL: [MessageHandler(filters.TEXT & ~filters.COMMAND, collect_ad_page_url)],
+            SCREENSHOT: [MessageHandler((filters.PHOTO | filters.Document.IMAGE | filters.TEXT) & ~filters.COMMAND, collect_screenshot)],
             CREATIVE: [MessageHandler((filters.PHOTO | filters.Document.IMAGE | filters.TEXT) & ~filters.COMMAND, collect_creative)],
             LANDING_URL: [MessageHandler(filters.TEXT & ~filters.COMMAND, collect_landing_url)],
             UTM: [MessageHandler(filters.TEXT & ~filters.COMMAND, collect_utm)],
@@ -113,8 +105,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data["request_id"] = uuid.uuid4().hex[:12]
     await update.effective_message.reply_text(
         "Я сформирую proof-скриншот рекламного размещения.\n\n"
-        "Выберите: рекламную сеть → тип баннера → PNG/JPEG-креатив → URL рекламной страницы → landing URL → UTM → review/edit → старт.\n"
-        "MVP принимает только PNG/JPEG, даже если исходный каталог содержит GIF/video/HTML5.\n\n"
+        "Выберите: рекламную сеть → тип баннера → готовый PNG/JPEG-скриншот площадки с рекламой → PNG/JPEG-креатив → landing URL → UTM → review/edit → старт.\n"
+        "Сайты площадки и landing не открываются: замена выполняется по загруженному скриншоту средствами Pillow.\n\n"
         f"{NETWORK_MENU_PROMPT}\n"
         f"{catalog_summary()}\n\n"
         "Команда /cancel отменяет текущую заявку.",
@@ -184,43 +176,33 @@ async def collect_banner_type(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     context.user_data["spec"] = spec
     context.user_data["banner_type"] = spec.display_name
+    context.user_data.pop("source_screenshot", None)
     context.user_data.pop("creative", None)
-    if "ad_page_url" in context.user_data:
-        context.user_data["placement"] = choose_placement_for_url(context.user_data["ad_page_url"], spec)
     if "landing_url" in context.user_data or "utm_params" in context.user_data:
         _clear_from(context.user_data, "landing_url")
     await update.effective_message.reply_text(
         f"Тип баннера выбран: {spec.display_name}\n"
-        f"{creative_upload_prompt(spec)}",
+        "Отправьте готовый скриншот площадки с уже размещенной рекламой. Поддерживаются PNG/JPEG до 10 МБ.",
         reply_markup=ReplyKeyboardRemove(),
     )
-    return CREATIVE
+    return SCREENSHOT
 
 
-async def collect_ad_page_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def collect_screenshot(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     config = _config(context)
+    message = update.effective_message
     try:
-        ad_page_url = normalize_public_url(update.effective_message.text, allow_local=config.allow_local_urls)
+        screenshot_info = await _save_and_validate_screenshot(message, context, config)
     except ValidationError as exc:
-        await update.effective_message.reply_text(exc.safe_message)
-        return AD_PAGE_URL
+        await message.reply_text(f"Скриншот не подходит: {exc.safe_message}\nОтправьте PNG/JPEG-скриншот площадки до 10 МБ еще раз.")
+        return SCREENSHOT
 
-    spec: CreativeSpec = context.user_data["spec"]
-    placement = choose_placement_for_url(ad_page_url, spec)
-    context.user_data["ad_page_url"] = ad_page_url
-    context.user_data["placement"] = placement
-    site = get_site_placement(ad_page_url)
-    placement_note = f"Автоматически выбран placement: {placement.label}."
-    if site:
-        placement_note += f" Площадка: {site.host}; статус селектора: {site.selector_confidence}."
-    else:
-        placement_note += " Площадка не найдена в списке; использован dimension-based fallback."
-
-    if "landing_url" in context.user_data and "utm_params" in context.user_data:
-        await _reply_review(update.effective_message, context.user_data, prefix=placement_note)
-        return REVIEW
-    await update.effective_message.reply_text(f"{placement_note}\nВведите landing URL, куда должен вести клик по баннеру.")
-    return LANDING_URL
+    context.user_data["source_screenshot"] = screenshot_info
+    await message.reply_text(
+        f"Скриншот принят: {screenshot_info.mime_type}, {screenshot_info.width}×{screenshot_info.height}, {screenshot_info.size_bytes} байт.\n"
+        f"{creative_upload_prompt(context.user_data['spec'])}"
+    )
+    return CREATIVE
 
 
 async def collect_creative(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -233,14 +215,11 @@ async def collect_creative(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return CREATIVE
 
     context.user_data["creative"] = creative_info
-    if "ad_page_url" in context.user_data and "landing_url" in context.user_data and "utm_params" in context.user_data:
+    if "source_screenshot" in context.user_data and "landing_url" in context.user_data and "utm_params" in context.user_data:
         await _reply_review(message, context.user_data)
         return REVIEW
-    if "ad_page_url" in context.user_data:
-        await message.reply_text("Креатив принят. Введите landing URL, куда должен вести клик по баннеру.")
-        return LANDING_URL
-    await message.reply_text("Креатив принят. Введите URL рекламной страницы, где нужно разместить рекламу.")
-    return AD_PAGE_URL
+    await message.reply_text("Креатив принят. Введите landing URL, который нужно показать в нижней области proof-скриншота.")
+    return LANDING_URL
 
 
 async def collect_landing_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -285,7 +264,7 @@ async def review_or_generate(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if action == "unknown_edit":
         await update.effective_message.reply_text(
             "Неизвестное поле для редактирования. Выберите действие кнопкой меню или используйте fallback: "
-            "edit network, edit spec, edit ad_url, edit creative, edit landing, edit utm.",
+            "edit network, edit spec, edit screenshot, edit creative, edit landing, edit utm.",
             reply_markup=review_menu_keyboard(),
         )
         return REVIEW
@@ -318,18 +297,16 @@ async def _generate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             output_path = _ensure_temp_dir(context.user_data, config) / "proof-result.png"
             request = _build_proof_request(context.user_data, config, output_path)
             logger.info(
-                "proof_generation_request_built request_id=%s user=%s chat=%s ad_host=%s landing_host=%s network=%s spec=%s dimensions=%s viewport=%sx%s placement=%s timeout_seconds=%s",
+                "proof_generation_request_built request_id=%s user=%s chat=%s landing_host=%s network=%s spec=%s dimensions=%s screenshot=%sx%s timeout_seconds=%s",
                 request_id,
                 user_hash,
                 chat_hash,
-                _safe_host(request.ad_page_url),
                 _safe_host(request.landing_url),
                 request.network_slug,
                 request.spec.slug,
                 request.spec.dimensions_label,
-                request.viewport_width,
-                request.viewport_height,
-                request.placement.label,
+                request.source_screenshot.width,
+                request.source_screenshot.height,
                 config.request_timeout_seconds,
             )
             proof_generator: ProofGenerator = context.bot_data["proof_generator"]
@@ -339,6 +316,8 @@ async def _generate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             logger.info("proof_telegram_send_started request_id=%s user=%s chat=%s elapsed_ms=%s", request_id, user_hash, chat_hash, _loop_elapsed_ms(send_started))
             with result.output_path.open("rb") as image_file:
                 await update.effective_message.reply_photo(photo=image_file, caption="Proof-скриншот готов.")
+            with result.output_path.open("rb") as image_file:
+                await update.effective_message.reply_document(document=image_file, filename=result.output_path.name, caption="Proof-скриншот как документ без сжатия.")
             if result.intermediate_screenshot_path:
                 logger.info(
                     "proof_intermediate_screenshot_saved request_id=%s user=%s chat=%s artifact_path=%s",
@@ -430,18 +409,62 @@ async def _save_and_validate_creative(message: Any, context: ContextTypes.DEFAUL
     raise ValidationError("Загрузите PNG/JPEG-файл как фото или документ.")
 
 
+async def _save_and_validate_screenshot(message: Any, context: ContextTypes.DEFAULT_TYPE, config: BotConfig) -> SourceScreenshotInfo:
+    temp_dir = _ensure_temp_dir(context.user_data, config)
+    max_bytes = config.max_screenshot_bytes
+
+    if message.document:
+        document = message.document
+        if document.file_size and document.file_size > max_bytes:
+            raise ValidationError("Скриншот превышает допустимый размер 10 МБ.")
+        suffix = Path(document.file_name or "source-screenshot.jpg").suffix.lower() or ".jpg"
+        destination = temp_dir / f"source-screenshot{suffix}"
+        tg_file = await document.get_file()
+        await tg_file.download_to_drive(custom_path=destination)
+        return validate_screenshot_file(
+            destination,
+            declared_mime_type=document.mime_type,
+            max_bytes=max_bytes,
+            max_pixels=config.max_screenshot_pixels,
+        )
+
+    if message.photo:
+        photo = message.photo[-1]
+        if photo.file_size and photo.file_size > max_bytes:
+            raise ValidationError("Скриншот превышает допустимый размер 10 МБ.")
+        destination = temp_dir / "source-screenshot.jpg"
+        tg_file = await photo.get_file()
+        await tg_file.download_to_drive(custom_path=destination)
+        return validate_screenshot_file(
+            destination,
+            declared_mime_type="image/jpeg",
+            max_bytes=max_bytes,
+            max_pixels=config.max_screenshot_pixels,
+        )
+
+    if message.text and config.allow_local_creative_path:
+        return validate_screenshot_file(
+            Path(message.text.strip()),
+            declared_mime_type=None,
+            max_bytes=max_bytes,
+            max_pixels=config.max_screenshot_pixels,
+        )
+
+    raise ValidationError("Загрузите PNG/JPEG-скриншот как фото или документ.")
+
+
 def _build_proof_request(user_data: dict[str, Any], config: BotConfig, output_path: Path) -> ProofRequest:
     return ProofRequest(
         request_id=user_data["request_id"],
-        ad_page_url=user_data["ad_page_url"],
         network_slug=user_data["network_slug"],
         network_display_name=user_data["network_display_name"],
         spec=user_data["spec"],
         banner_type=user_data["banner_type"],
+        source_screenshot=user_data["source_screenshot"],
         creative=user_data["creative"],
         landing_url=user_data["landing_url"],
         utm_params=user_data["utm_params"],
-        placement=user_data["placement"],
+        placement=user_data.get("placement", Placement(mode="template", value="screenshot-detected")),
         output_path=output_path,
         viewport_width=config.viewport_width,
         viewport_height=config.viewport_height,
@@ -465,6 +488,7 @@ def _ensure_temp_dir(user_data: dict[str, Any], config: BotConfig) -> Path:
 
 def _review_text(user_data: dict[str, Any]) -> str:
     creative: CreativeInfo = user_data["creative"]
+    screenshot: SourceScreenshotInfo = user_data["source_screenshot"]
     spec: CreativeSpec = user_data["spec"]
     utm_keys = ", ".join(sorted(user_data["utm_params"].keys()))
     fallback_media_type = infer_media_type_from_spec(spec)
@@ -473,9 +497,9 @@ def _review_text(user_data: dict[str, Any]) -> str:
         f"• сеть: {user_data['network_display_name']} ({user_data['network_slug']})\n"
         f"• тип баннера: {spec.display_name}\n"
         f"• размер spec: {spec.dimensions_label}; лимит: {spec.max_file_size_bytes} байт\n"
-        f"• страница размещения: {user_data['ad_page_url']}\n"
-        f"• fallback-площадки: {fallback_media_type}\n"
-        f"• placement: {user_data['placement'].label}\n"
+        f"• скриншот площадки: {screenshot.mime_type}, {screenshot.width}×{screenshot.height}, {screenshot.size_bytes} байт\n"
+        f"• режим: screenshot-only/Pillow; сайты площадки и landing не открываются\n"
+        f"• media-type каталога: {fallback_media_type}\n"
         f"• креатив: {creative.mime_type}, {creative.width}×{creative.height}, {creative.size_bytes} байт\n"
         f"• landing: {user_data['landing_url']}\n"
         f"• UTM-ключи: {utm_keys}\n\n"
@@ -582,8 +606,8 @@ def _clear_for_edit(user_data: dict[str, Any], target: str) -> None:
         _clear_from(user_data, "network_slug")
     elif target in {"spec", "banner"}:
         _clear_from(user_data, "spec")
-    elif target in {"ad_url", "page"}:
-        _clear_from(user_data, "ad_page_url", keep_creative=True)
+    elif target in {"screenshot", "screen"}:
+        _clear_from(user_data, "source_screenshot")
     elif target == "creative":
         user_data.pop("creative", None)
     elif target == "landing":
@@ -593,7 +617,7 @@ def _clear_for_edit(user_data: dict[str, Any], target: str) -> None:
 
 
 def _clear_from(user_data: dict[str, Any], key: str, *, keep_creative: bool = False) -> None:
-    order = ["network_slug", "network_display_name", "spec", "banner_type", "ad_page_url", "placement", "creative", "landing_url", "utm_params"]
+    order = ["network_slug", "network_display_name", "spec", "banner_type", "source_screenshot", "placement", "creative", "landing_url", "utm_params"]
     if key not in order:
         return
     for candidate in order[order.index(key) :]:
@@ -610,8 +634,8 @@ def _edit_prompt(target: str, user_data: dict[str, Any]) -> str:
         if not network_slug:
             return f"Сначала выберите рекламную сеть.\n{NETWORK_MENU_PROMPT}\n{catalog_summary()}"
         return spec_menu_prompt(network_slug)
-    if target in {"ad_url", "page"}:
-        return "Введите URL рекламной страницы. Placement будет выбран заново по площадке и размеру spec."
+    if target in {"screenshot", "screen"}:
+        return "Отправьте новый готовый PNG/JPEG-скриншот площадки с уже размещенной рекламой до 10 МБ."
     if target == "creative":
         spec = user_data.get("spec")
         if isinstance(spec, CreativeSpec):

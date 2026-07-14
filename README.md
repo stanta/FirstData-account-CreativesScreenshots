@@ -108,27 +108,38 @@ docker compose down
 
 ## Переменные окружения
 
-| Переменная                                  | Значение по умолчанию | Назначение                                                                                                                 |
-| ------------------------------------------- | --------------------: | -------------------------------------------------------------------------------------------------------------------------- |
-| `REPORTS_AD_TELEGRAM_TOKEN`                 |                   нет | обязательный токен Telegram bot API                                                                                        |
-| `REPORTS_AD_HEADLESS`                       |                   `1` | запуск Chromium без UI                                                                                                     |
-| `REPORTS_AD_ALLOW_LOCAL_URLS`               |                   `0` | разрешить `localhost`/private IP только для локальных smoke-тестов                                                         |
-| `REPORTS_AD_ALLOW_LOCAL_CREATIVE_PATH`      |                   `0` | разрешить ввод локального пути вместо Telegram upload                                                                      |
-| `REPORTS_AD_VIEWPORT_WIDTH`                 |                `1365` | ширина viewport/final screenshot                                                                                           |
-| `REPORTS_AD_VIEWPORT_HEIGHT`                |                 `768` | высота viewport/final screenshot                                                                                           |
-| `REPORTS_AD_MAX_CREATIVE_BYTES`             |            `10485760` | максимальный размер креатива                                                                                               |
-| `REPORTS_AD_MAX_CREATIVE_PIXELS`            |            `20000000` | максимальное число пикселей входного креатива                                                                              |
-| `REPORTS_AD_REQUEST_TIMEOUT_SECONDS`        |                 `300` | общий timeout генерации для одного запроса; увеличен, чтобы fallback-цепочка успевала завершиться                          |
-| `REPORTS_AD_PAGE_LOAD_TIMEOUT_MS`           |               `12000` | timeout загрузки каждой advertising/fallback площадки в Playwright; снижен, чтобы плохие площадки не занимали по 30 секунд |
-| `REPORTS_AD_CLICK_TIMEOUT_MS`               |                `7000` | timeout ожидания popup/click flow                                                                                          |
-| `REPORTS_AD_SCREENSHOT_TIMEOUT_MS`          |               `15000` | timeout создания screenshot                                                                                                |
-| `REPORTS_AD_TIMEOUT_DIAGNOSTICS`            |                   `1` | писать DNS/TCP/TLS diagnostics при timeout загрузки ad page                                                                |
-| `REPORTS_AD_TIMEOUT_DIAGNOSTICS_TIMEOUT_MS` |                `5000` | timeout каждого DNS/TCP/TLS diagnostic check                                                                               |
-| `REPORTS_AD_LOCALE`                         |               `ru-RU` | locale browser context                                                                                                     |
-| `REPORTS_AD_TIMEZONE`                       |       `Europe/Moscow` | timezone browser context                                                                                                   |
-| `REPORTS_AD_TEMP_ROOT`                      |                   нет | корневая директория временных файлов; в Docker используется tmpfs                                                          |
+| Переменная                                  |                  Значение по умолчанию | Назначение                                                                                                                 |
+| ------------------------------------------- | -------------------------------------: | -------------------------------------------------------------------------------------------------------------------------- |
+| `REPORTS_AD_TELEGRAM_TOKEN`                 |                                    нет | обязательный токен Telegram bot API                                                                                        |
+| `REPORTS_AD_HEADLESS`                       |                                    `1` | запуск Chromium без UI                                                                                                     |
+| `REPORTS_AD_ALLOW_LOCAL_URLS`               |                                    `0` | разрешить `localhost`/private IP только для локальных smoke-тестов                                                         |
+| `REPORTS_AD_ALLOW_LOCAL_CREATIVE_PATH`      |                                    `0` | разрешить ввод локального пути вместо Telegram upload                                                                      |
+| `REPORTS_AD_VIEWPORT_WIDTH`                 |                                 `1365` | ширина viewport/final screenshot                                                                                           |
+| `REPORTS_AD_VIEWPORT_HEIGHT`                |                                  `768` | высота viewport/final screenshot                                                                                           |
+| `REPORTS_AD_MAX_CREATIVE_BYTES`             |                             `10485760` | максимальный размер креатива                                                                                               |
+| `REPORTS_AD_MAX_CREATIVE_PIXELS`            |                             `20000000` | максимальное число пикселей входного креатива                                                                              |
+| `REPORTS_AD_REQUEST_TIMEOUT_SECONDS`        |                                  `300` | общий timeout генерации для одного запроса; увеличен, чтобы fallback-цепочка успевала завершиться                          |
+| `REPORTS_AD_PAGE_LOAD_TIMEOUT_MS`           |                                `12000` | timeout загрузки каждой advertising/fallback площадки в Playwright; снижен, чтобы плохие площадки не занимали по 30 секунд |
+| `REPORTS_AD_CLICK_TIMEOUT_MS`               |                                 `7000` | timeout ожидания popup/click flow                                                                                          |
+| `REPORTS_AD_SCREENSHOT_TIMEOUT_MS`          |                                `15000` | timeout создания screenshot                                                                                                |
+| `REPORTS_AD_TIMEOUT_DIAGNOSTICS`            |                                    `1` | писать DNS/TCP/TLS diagnostics при timeout загрузки ad page                                                                |
+| `REPORTS_AD_TIMEOUT_DIAGNOSTICS_TIMEOUT_MS` |                                 `5000` | timeout каждого DNS/TCP/TLS diagnostic check                                                                               |
+| `REPORTS_AD_LOCALE`                         |                                `ru-RU` | locale browser context                                                                                                     |
+| `REPORTS_AD_TIMEZONE`                       |                        `Europe/Moscow` | timezone browser context                                                                                                   |
+| `REPORTS_AD_TEMP_ROOT`                      |                                    нет | корневая директория временных файлов; в Docker используется tmpfs                                                          |
+| `REPORTS_AD_OCR_LLM_BASE_URL`               |                                    нет | OpenAI-compatible base URL для Stage 2 OCR/vision модели                                                                   |
+| `REPORTS_AD_OCR_LLM_MODEL`                  | `cyankiwi/gemma-4-26B-A4B-it-AWQ-4bit` | имя OCR/vision модели; фактическая модель может быть Gemma                                                                 |
+| `REPORTS_AD_OCR_LLM_TIMEOUT_SECONDS`        |                                   `20` | timeout OCR LLM request                                                                                                    |
+| `REPORTS_AD_OCR_LLM_MAX_RETRIES`            |                                    `5` | количество попыток OCR LLM request / JSON parsing                                                                          |
+| `REPORTS_AD_OCR_LLM_CONFIDENCE_THRESHOLD`   |                                 `0.45` | минимальная confidence для принятия bbox                                                                                   |
+| `REPORTS_AD_OCR_LLM_HEADER_AUTHORISATION`   |                                    нет | опциональный raw Authorization header; имеет приоритет над user/password                                                   |
+| `REPORTS_AD_OCR_LLM_USER`                   |                                    нет | опциональный basic-auth username для OCR LLM                                                                               |
+| `REPORTS_AD_OCR_LLM_PASSWORD`               |                                    нет | опциональный basic-auth password для OCR LLM                                                                               |
+| `REPORTS_AD_OCR_LLM_API_KEY`                |                                    нет | зарезервировано для Gemini-style OCR config parity; текущий OpenAI-compatible клиент его не использует                     |
 
 `REPORTS_AD_REQUEST_TIMEOUT_SECONDS=300` и `REPORTS_AD_PAGE_LOAD_TIMEOUT_MS=12000` являются согласованной парой: общий timeout достаточно длинный для перебора fallback-площадок, а timeout одного кандидата ограничивает зависание плохих площадок. Площадки, которые по Docker logs не дают пригодную загрузку в пределах 30 секунд, исключаются из активной fallback-итерации в каталоге, но остаются в JSON с `enabled: false` и `disabled_reason` для traceability.
+
+Stage 2 LLM/OCR public configuration uses `REPORTS_AD_OCR_LLM_*` names by analogy with `validator-ai` `OCR_LLM_*`: `BASE_URL`, `MODEL`, `TIMEOUT_SECONDS`, `HEADER_AUTHORISATION`, `USER`, `PASSWORD` and optional `API_KEY`. This naming is intentionally OCR-style even when the actual OpenAI-compatible vision model is Gemma. Legacy `REPORTS_AD_GEMMA_*` names are not read by the runtime.
 
 ## Диагностика timeout/no-result
 
@@ -224,6 +235,8 @@ networks:
 Use these changes as operational experiments, not default code changes: the correct DNS, proxy, and MTU values depend on the server/VPN/cloud network. After each change, re-run `reports-ad-diagnostics` and a Chromium smoke check from the same running container.
 
 ## Catalog and placement behavior
+
+Stage 2 не использует live browser/Playwright для production flow: каталог нужен для выбора рекламной сети/spec, подсказок размеров и контекста OCR/vision LLM. Сайты площадки и landing URL не скачиваются и не проверяются; landing URL используется только как строка, объединенная с UTM и нарисованная в нижней области proof.
 
 Каталог содержит 96 source specs из `creative_specs.json` и 19 рекламных сетей/platform groups. Runtime-фильтр бота показывает в `telegram_menu` только specs, которые можно принять как статичный PNG/JPEG с фиксированными размерами. Если source spec допускает GIF, PSD, ZIP, MP4 или HTML5, эти данные сохранены в catalog metadata, но Telegram runtime MVP их не принимает.
 

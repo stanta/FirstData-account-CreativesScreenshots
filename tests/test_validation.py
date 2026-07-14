@@ -4,12 +4,12 @@ import pytest
 from PIL import Image
 
 from reports_ad.bot import (
-    AD_PAGE_URL,
     CREATIVE,
     EDIT_TARGETS,
     REVIEW,
     REVIEW_MENU_ACTIONS,
     REVIEW_MENU_PROMPT,
+    SCREENSHOT,
     SPEC_MENU_PROMPT,
     TELEGRAM_KEYBOARD_BUTTON_TEXT_LIMIT,
     _menu_label,
@@ -36,6 +36,7 @@ from reports_ad.validation import (
     parse_utm_params,
     validate_creative_file,
     validate_creative_against_spec,
+    validate_screenshot_file,
 )
 
 
@@ -88,6 +89,28 @@ def test_validate_creative_file_rejects_wrong_declared_mime(tmp_path: Path) -> N
     Image.new("RGB", (320, 100), "red").save(image_path)
     with pytest.raises(ValidationError):
         validate_creative_file(image_path, declared_mime_type="image/jpeg")
+
+
+def test_validate_screenshot_file_accepts_png_and_jpeg(tmp_path: Path) -> None:
+    png_path = tmp_path / "placement.png"
+    jpeg_path = tmp_path / "placement.jpeg"
+    Image.new("RGB", (640, 480), "white").save(png_path)
+    Image.new("RGB", (640, 480), "white").save(jpeg_path)
+
+    assert validate_screenshot_file(png_path, declared_mime_type="image/png").mime_type == "image/png"
+    assert validate_screenshot_file(jpeg_path, declared_mime_type="image/jpeg").mime_type == "image/jpeg"
+
+
+def test_validate_screenshot_file_rejects_oversized_or_unreadable(tmp_path: Path) -> None:
+    image_path = tmp_path / "placement.png"
+    Image.new("RGB", (20, 20), "white").save(image_path)
+    with pytest.raises(ValidationError):
+        validate_screenshot_file(image_path, max_bytes=1)
+
+    broken_path = tmp_path / "broken.png"
+    broken_path.write_bytes(b"not an image")
+    with pytest.raises(ValidationError):
+        validate_screenshot_file(broken_path)
 
 
 def test_catalog_loads_runtime_png_jpeg_specs() -> None:
@@ -165,7 +188,26 @@ def test_bot_config_uses_extended_overall_timeout_and_shorter_candidate_timeout(
     assert config.page_load_timeout_ms == 12_000
 
 
-def test_validate_creative_against_selected_spec_accepts_exact_dimensions(tmp_path: Path) -> None:
+def test_bot_config_reads_ocr_llm_env_names(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("REPORTS_AD_TELEGRAM_TOKEN", "test-token")
+    monkeypatch.setenv("REPORTS_AD_OCR_LLM_BASE_URL", "http://gemma.firstdata.io/v1/")
+    monkeypatch.setenv("REPORTS_AD_OCR_LLM_MODEL", "cyankiwi/gemma-4-26B-A4B-it-AWQ-4bit")
+    monkeypatch.setenv("REPORTS_AD_OCR_LLM_HEADER_AUTHORISATION", "Basic placeholder")
+    monkeypatch.setenv("REPORTS_AD_OCR_LLM_TIMEOUT_SECONDS", "20")
+    monkeypatch.setenv("REPORTS_AD_OCR_LLM_MAX_RETRIES", "3")
+    monkeypatch.setenv("REPORTS_AD_OCR_LLM_CONFIDENCE_THRESHOLD", "0.6")
+
+    config = BotConfig.from_env()
+
+    assert config.ocr_llm_base_url == "http://gemma.firstdata.io/v1"
+    assert config.ocr_llm_model == "cyankiwi/gemma-4-26B-A4B-it-AWQ-4bit"
+    assert config.ocr_llm_authorization_header == "Basic placeholder"
+    assert config.ocr_llm_timeout_seconds == 20
+    assert config.ocr_llm_max_retries == 3
+    assert config.ocr_llm_confidence_threshold == 0.6
+
+
+def test_validate_creative_against_selected_spec_accepts_runtime_png(tmp_path: Path) -> None:
     spec = get_spec("yandex-graphic-banners-300x250-image")
     assert spec is not None
     image_path = tmp_path / "creative.png"
@@ -181,13 +223,14 @@ def test_media_type_inference_defaults_static_png_jpeg_specs_to_banner() -> None
     assert infer_media_type_from_spec(spec) == "banner"
 
 
-def test_validate_creative_against_selected_spec_rejects_wrong_dimensions(tmp_path: Path) -> None:
+def test_validate_creative_against_selected_spec_allows_non_matching_dimensions_for_stage2_stretch(tmp_path: Path) -> None:
     spec = get_spec("yandex-graphic-banners-300x250-image")
     assert spec is not None
     image_path = tmp_path / "creative.png"
     Image.new("RGB", (320, 250), "red").save(image_path)
-    with pytest.raises(ValidationError):
-        validate_creative_file(image_path, declared_mime_type="image/png", spec=spec)
+    info = validate_creative_file(image_path, declared_mime_type="image/png", spec=spec)
+    assert info.width == 320
+    assert info.height == 250
 
 
 def test_site_placement_prefers_observed_selector_when_available() -> None:
@@ -237,7 +280,8 @@ def test_review_text_uses_russian_menu_prompt_without_old_instruction(tmp_path: 
 
     assert text.startswith("Проверьте заявку перед запуском:")
     assert REVIEW_MENU_PROMPT in text
-    assert "fallback-площадки: banner" in text
+    assert "screenshot-only/Pillow" in text
+    assert "скриншот площадки:" in text
     assert "Ответьте `yes`" not in text
     assert "edit network" not in text
 
@@ -258,11 +302,11 @@ def test_review_menu_action_maps_all_russian_labels_and_legacy_fallbacks() -> No
     assert review_menu_action("yes") == "generate"
     assert review_menu_action("edit network") == "network"
     assert review_menu_action("edit spec") == "spec"
+    assert review_menu_action("edit screenshot") == "screenshot"
     assert review_menu_action("edit creative") == "creative"
-    assert review_menu_action("edit ad_url") == "ad_url"
     assert review_menu_action("edit landing") == "landing"
     assert review_menu_action("edit utm") == "utm"
-    assert {action for action in REVIEW_MENU_ACTIONS.values() if action != "generate"} == set(EDIT_TARGETS) - {"banner", "page"}
+    assert {action for action in REVIEW_MENU_ACTIONS.values() if action != "generate"} == set(EDIT_TARGETS) - {"banner", "screen"}
 
 
 @pytest.mark.asyncio
@@ -286,6 +330,7 @@ async def test_review_launch_menu_label_starts_generation_like_yes(tmp_path: Pat
     assert captured_requests
     assert message.replies[0]["reply_markup"].__class__.__name__ == "ReplyKeyboardRemove"
     assert message.photos[-1]["caption"] == "Proof-скриншот готов."
+    assert message.documents[-1]["caption"] == "Proof-скриншот как документ без сжатия."
     assert context.user_data == {}
 
 
@@ -294,8 +339,8 @@ async def test_review_russian_edit_labels_transition_to_expected_states(tmp_path
     expected_states = {
         "Изменить рекламную сеть": 0,
         "Изменить тип баннера": 1,
+        "Изменить скриншот площадки": SCREENSHOT,
         "Изменить креатив": CREATIVE,
-        "Изменить URL рекламной страницы": AD_PAGE_URL,
         "Изменить landing URL": 4,
         "Изменить UTM-строку": 5,
     }
@@ -335,7 +380,7 @@ async def test_network_selection_immediately_sends_filtered_spec_menu() -> None:
 
 
 @pytest.mark.asyncio
-async def test_network_menu_button_then_spec_menu_button_advances_to_creative_upload_step() -> None:
+async def test_network_menu_button_then_spec_menu_button_advances_to_screenshot_upload_step() -> None:
     context = _FakeContext()
     network_message = _FakeMessage("Яндекс [yandex_graphic_banners] — 12 specs")
 
@@ -352,11 +397,11 @@ async def test_network_menu_button_then_spec_menu_button_advances_to_creative_up
     spec_state = await collect_banner_type(_FakeUpdate(spec_message), context)
 
     assert network_state == 1
-    assert spec_state == CREATIVE
+    assert spec_state == SCREENSHOT
     assert context.user_data["network_slug"] == "yandex_graphic_banners"
     assert context.user_data["spec"].slug == "yandex-graphic-banners-300x250-image"
-    assert "Отправьте PNG/JPEG-креатив" in spec_message.replies[-1]["text"]
-    assert "Ожидаемые размеры: 300×250" in spec_message.replies[-1]["text"]
+    assert "Отправьте готовый скриншот площадки" in spec_message.replies[-1]["text"]
+    assert "до 10 МБ" in spec_message.replies[-1]["text"]
     assert "Введите URL рекламной страницы" not in spec_message.replies[-1]["text"]
 
 
@@ -364,7 +409,7 @@ async def test_network_menu_button_then_spec_menu_button_advances_to_creative_up
 async def test_invalid_creative_stays_in_creative_upload_state_and_asks_reupload(tmp_path: Path) -> None:
     spec = get_spec("yandex-graphic-banners-300x250-image")
     assert spec is not None
-    image_path = tmp_path / "wrong-size.png"
+    image_path = tmp_path / "wrong-type.gif"
     Image.new("RGB", (320, 250), "red").save(image_path)
     message = _FakeMessage(str(image_path))
     context = _FakeContext(BotConfig(telegram_token="test", allow_local_creative_path=True, temp_root=tmp_path))
@@ -379,7 +424,7 @@ async def test_invalid_creative_stays_in_creative_upload_state_and_asks_reupload
 
 
 @pytest.mark.asyncio
-async def test_valid_creative_transitions_to_ad_url_prompt_state(tmp_path: Path) -> None:
+async def test_valid_creative_transitions_to_landing_prompt_state(tmp_path: Path) -> None:
     spec = get_spec("yandex-graphic-banners-300x250-image")
     assert spec is not None
     image_path = tmp_path / "creative.png"
@@ -387,12 +432,15 @@ async def test_valid_creative_transitions_to_ad_url_prompt_state(tmp_path: Path)
     message = _FakeMessage(str(image_path))
     context = _FakeContext(BotConfig(telegram_token="test", allow_local_creative_path=True, temp_root=tmp_path))
     context.user_data["spec"] = spec
+    screenshot_path = tmp_path / "source.png"
+    Image.new("RGB", (800, 600), "white").save(screenshot_path)
+    context.user_data["source_screenshot"] = validate_screenshot_file(screenshot_path)
 
     state = await collect_creative(_FakeUpdate(message), context)
 
-    assert state == AD_PAGE_URL
+    assert state == 4
     assert context.user_data["creative"].width == 300
-    assert message.replies[-1]["text"] == "Креатив принят. Введите URL рекламной страницы, где нужно разместить рекламу."
+    assert message.replies[-1]["text"] == "Креатив принят. Введите landing URL, который нужно показать в нижней области proof-скриншота."
 
 
 def test_menu_label_roundtrip_preserves_slug_for_validation() -> None:
@@ -415,12 +463,16 @@ class _FakeMessage:
         self.photo = []
         self.replies: list[dict] = []
         self.photos: list[dict] = []
+        self.documents: list[dict] = []
 
     async def reply_text(self, text: str, reply_markup=None) -> None:
         self.replies.append({"text": text, "reply_markup": reply_markup})
 
     async def reply_photo(self, photo, caption: str | None = None) -> None:
         self.photos.append({"photo": photo, "caption": caption})
+
+    async def reply_document(self, document, filename: str | None = None, caption: str | None = None) -> None:
+        self.documents.append({"document": document, "filename": filename, "caption": caption})
 
 
 class _FakeUser:
@@ -445,14 +497,18 @@ def _review_user_data(tmp_path: Path) -> dict:
     creative_path = tmp_path / "creative.png"
     if not creative_path.exists():
         Image.new("RGB", (300, 250), "red").save(creative_path)
+    screenshot_path = tmp_path / "source.png"
+    if not screenshot_path.exists():
+        Image.new("RGB", (800, 600), "white").save(screenshot_path)
+    screenshot_info = validate_screenshot_file(screenshot_path)
     return {
         "request_id": "test-request",
         "network_slug": "yandex_graphic_banners",
         "network_display_name": "Яндекс",
         "spec": spec,
         "banner_type": spec.display_name,
-        "ad_page_url": "https://example.com/ad",
         "placement": Placement(mode="template", value="top-banner"),
+        "source_screenshot": screenshot_info,
         "creative": CreativeInfo(path=creative_path, mime_type="image/png", width=300, height=250, size_bytes=creative_path.stat().st_size),
         "landing_url": "https://example.com/landing",
         "utm_params": {"utm_source": "telegram", "utm_medium": "cpc"},

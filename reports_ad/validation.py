@@ -7,11 +7,15 @@ from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 from PIL import Image, UnidentifiedImageError
 
 from .models import (
+    BoundingBox,
     CreativeInfo,
     CreativeSpec,
     Placement,
+    SourceScreenshotInfo,
     SUPPORTED_CREATIVE_EXTENSIONS,
     SUPPORTED_CREATIVE_MIME_TYPES,
+    SUPPORTED_SCREENSHOT_EXTENSIONS,
+    SUPPORTED_SCREENSHOT_MIME_TYPES,
     SUPPORTED_PLACEMENT_TEMPLATES,
 )
 
@@ -168,8 +172,6 @@ def validate_creative_against_spec(creative: CreativeInfo, spec: CreativeSpec) -
         raise ValidationError("Расширение креатива не поддерживается выбранным форматом.")
     if spec.max_file_size_bytes and creative.size_bytes > spec.max_file_size_bytes:
         raise ValidationError(f"Файл превышает лимит выбранного формата: {spec.max_file_size_bytes} байт.")
-    if spec.width and spec.height and (creative.width != spec.width or creative.height != spec.height):
-        raise ValidationError(f"Размер креатива должен быть {spec.width}×{spec.height} пикселей.")
 
 
 def validate_creative_file(
@@ -216,3 +218,55 @@ def validate_creative_file(
     if spec is not None:
         validate_creative_against_spec(creative, spec)
     return creative
+
+
+def validate_screenshot_file(
+    path: Path | str,
+    *,
+    declared_mime_type: str | None = None,
+    max_bytes: int = 10 * 1024 * 1024,
+    max_pixels: int = 30_000_000,
+) -> SourceScreenshotInfo:
+    file_path = Path(path)
+    if not file_path.exists() or not file_path.is_file():
+        raise ValidationError("Файл скриншота не найден.")
+
+    size_bytes = file_path.stat().st_size
+    if size_bytes <= 0:
+        raise ValidationError("Файл скриншота пустой.")
+    if size_bytes > max_bytes:
+        raise ValidationError("Скриншот превышает допустимый размер 10 МБ.")
+    if file_path.suffix.lower() not in SUPPORTED_SCREENSHOT_EXTENSIONS:
+        raise ValidationError("Скриншот должен быть PNG или JPEG.")
+
+    if declared_mime_type and declared_mime_type not in SUPPORTED_SCREENSHOT_MIME_TYPES:
+        raise ValidationError("MIME-тип скриншота не поддерживается.")
+
+    try:
+        with Image.open(file_path) as image:
+            image.verify()
+        with Image.open(file_path) as image:
+            width, height = image.size
+            image_format = (image.format or "").upper()
+    except (UnidentifiedImageError, OSError):
+        raise ValidationError("Pillow не смог открыть скриншот как корректное PNG/JPEG-изображение.") from None
+
+    actual_mime = {"PNG": "image/png", "JPEG": "image/jpeg", "JPG": "image/jpeg"}.get(image_format)
+    if actual_mime not in SUPPORTED_SCREENSHOT_MIME_TYPES:
+        raise ValidationError("Фактический формат скриншота не поддерживается.")
+    if declared_mime_type and actual_mime != declared_mime_type:
+        raise ValidationError("MIME-тип скриншота не совпадает с фактическим форматом изображения.")
+    if width <= 0 or height <= 0 or width * height > max_pixels:
+        raise ValidationError("Размеры скриншота выходят за допустимые ограничения.")
+
+    return SourceScreenshotInfo(path=file_path, mime_type=actual_mime, width=width, height=height, size_bytes=size_bytes)
+
+
+def validate_bbox_within_image(bbox: BoundingBox | None, *, image_width: int, image_height: int, label: str = "область") -> BoundingBox:
+    if bbox is None:
+        raise ValidationError(f"ИИ не смог определить {label}. Загрузите более качественный скриншот.")
+    if bbox.x < 0 or bbox.y < 0 or bbox.width <= 0 or bbox.height <= 0:
+        raise ValidationError(f"ИИ вернул некорректную {label}. Загрузите более качественный скриншот.")
+    if bbox.right > image_width or bbox.bottom > image_height:
+        raise ValidationError(f"ИИ вернул {label} за границами скриншота. Загрузите более качественный скриншот.")
+    return bbox

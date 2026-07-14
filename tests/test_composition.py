@@ -1,8 +1,15 @@
 from pathlib import Path
 
+import pytest
 from PIL import Image
 
+from reports_ad.config import BotConfig
+from reports_ad.gemma_client import build_gemma_client_from_config
+from reports_ad.models import BBoxDetectionResult, BoundingBox, CreativeInfo, Placement, ProofRequest, SourceScreenshotInfo
 from reports_ad.proof import compose_final_image
+from reports_ad.stage2_proof import compose_stage2_image, fallback_landing_bbox, generate_stage2_proof
+from reports_ad.catalog import get_spec
+from reports_ad.validation import ValidationError
 
 
 def test_compose_final_image_uses_landing_bottom_band(tmp_path: Path) -> None:
@@ -27,3 +34,135 @@ def test_compose_final_image_uses_landing_bottom_band(tmp_path: Path) -> None:
         assert result.getpixel((50, 10)) == (0, 0, 255)
         assert result.getpixel((50, 90)) == (0, 128, 0)
 
+
+def test_stage2_compose_stretches_creative_draws_landing_and_ad_mark(tmp_path: Path) -> None:
+    source_path = tmp_path / "source.png"
+    creative_path = tmp_path / "creative.png"
+    output_path = tmp_path / "stage2.png"
+    banner_path = tmp_path / "banner.png"
+    landing_path = tmp_path / "landing.png"
+    Image.new("RGB", (400, 300), "white").save(source_path)
+    Image.new("RGBA", (20, 20), (255, 0, 0, 180)).save(creative_path)
+
+    width, height = compose_stage2_image(
+        source_screenshot_path=source_path,
+        creative_path=creative_path,
+        effective_click_url="https://example.com/landing?utm_source=test&utm_medium=cpc",
+        banner_bbox=BoundingBox(x=50, y=40, width=120, height=80),
+        landing_bbox=fallback_landing_bbox(image_width=400, image_height=300),
+        output_path=output_path,
+        banner_replaced_path=banner_path,
+        landing_area_path=landing_path,
+    )
+
+    assert (width, height) == (400, 300)
+    assert banner_path.exists()
+    assert landing_path.exists()
+    with Image.open(output_path) as result:
+        assert result.getpixel((100, 70)) != (255, 255, 255)
+        assert result.getpixel((62, 53)) != result.getpixel((200, 20))
+        assert result.getpixel((200, 285)) != (255, 255, 255)
+
+
+def test_fallback_landing_bbox_uses_lower_10_to_20_percent() -> None:
+    bbox = fallback_landing_bbox(image_width=1000, image_height=800)
+
+    assert bbox.x == 0
+    assert bbox.width == 1000
+    assert bbox.y == 672
+    assert bbox.height == 128
+
+
+def test_gemma_client_builder_uses_ocr_config_fields() -> None:
+    config = BotConfig(
+        telegram_token="test",
+        ocr_llm_base_url="http://gemma.firstdata.io/v1/",
+        ocr_llm_model="cyankiwi/gemma-4-26B-A4B-it-AWQ-4bit",
+        ocr_llm_authorization_header="Basic placeholder",
+        ocr_llm_timeout_seconds=20,
+        ocr_llm_max_retries=3,
+        ocr_llm_confidence_threshold=0.6,
+    )
+
+    client = build_gemma_client_from_config(config)
+
+    assert client._base_url == "http://gemma.firstdata.io/v1"
+    assert client._model == "cyankiwi/gemma-4-26B-A4B-it-AWQ-4bit"
+    assert client._authorization_header == "Basic placeholder"
+    assert client._timeout_seconds == 20
+    assert client._max_retries == 3
+    assert client._confidence_threshold == 0.6
+
+
+@pytest.mark.asyncio
+async def test_stage2_generate_uses_mocked_gemma_and_fallback_landing(tmp_path: Path) -> None:
+    spec = get_spec("yandex-graphic-banners-300x250-image")
+    assert spec is not None
+    source_path = tmp_path / "source.png"
+    creative_path = tmp_path / "creative.png"
+    Image.new("RGB", (400, 300), "white").save(source_path)
+    Image.new("RGB", (300, 250), "blue").save(creative_path)
+    request = ProofRequest(
+        request_id="req-stage2",
+        network_display_name="Яндекс",
+        network_slug="yandex_graphic_banners",
+        spec=spec,
+        banner_type=spec.display_name,
+        source_screenshot=SourceScreenshotInfo(path=source_path, mime_type="image/png", width=400, height=300, size_bytes=source_path.stat().st_size),
+        creative=CreativeInfo(path=creative_path, mime_type="image/png", width=300, height=250, size_bytes=creative_path.stat().st_size),
+        landing_url="https://example.com/landing",
+        utm_params={"utm_source": "test"},
+        placement=Placement(mode="template", value="screenshot-detected"),
+        output_path=tmp_path / "final.png",
+    )
+
+    class MockGemma:
+        async def detect_banner_bbox(self, **kwargs):
+            return BBoxDetectionResult(bbox=BoundingBox(20, 30, 100, 70), confidence=0.9, source="mock")
+
+        async def detect_landing_bbox(self, **kwargs):
+            return BBoxDetectionResult(bbox=None, confidence=0.0, source="mock")
+
+    result = await generate_stage2_proof(request, gemma_client=MockGemma())
+
+    assert result.output_path.exists()
+    assert result.banner_bbox == BoundingBox(20, 30, 100, 70)
+    assert result.landing_fallback_used is True
+    assert result.landing_bbox == fallback_landing_bbox(image_width=400, image_height=300)
+
+
+@pytest.mark.asyncio
+async def test_stage2_generate_invalid_banner_bbox_asks_for_better_screenshot(tmp_path: Path) -> None:
+    spec = get_spec("yandex-graphic-banners-300x250-image")
+    assert spec is not None
+    source_path = tmp_path / "source.png"
+    creative_path = tmp_path / "creative.png"
+    Image.new("RGB", (400, 300), "white").save(source_path)
+    Image.new("RGB", (300, 250), "blue").save(creative_path)
+    request = ProofRequest(
+        request_id="req-stage2",
+        network_display_name="Яндекс",
+        network_slug="yandex_graphic_banners",
+        spec=spec,
+        banner_type=spec.display_name,
+        source_screenshot=SourceScreenshotInfo(path=source_path, mime_type="image/png", width=400, height=300, size_bytes=source_path.stat().st_size),
+        creative=CreativeInfo(path=creative_path, mime_type="image/png", width=300, height=250, size_bytes=creative_path.stat().st_size),
+        landing_url="https://example.com/landing",
+        utm_params={"utm_source": "test"},
+        placement=Placement(mode="template", value="screenshot-detected"),
+        output_path=tmp_path / "final.png",
+    )
+
+    class MockGemma:
+        async def detect_banner_bbox(self, **kwargs):
+            return BBoxDetectionResult(bbox=BoundingBox(390, 10, 50, 50), confidence=0.9, source="mock")
+
+        async def detect_landing_bbox(self, **kwargs):
+            return BBoxDetectionResult(bbox=None, confidence=0.0, source="mock")
+
+    try:
+        await generate_stage2_proof(request, gemma_client=MockGemma())
+    except ValidationError as exc:
+        assert "Загрузите более качественный скриншот" in exc.safe_message
+    else:
+        raise AssertionError("Expected ValidationError")

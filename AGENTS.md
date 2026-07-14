@@ -261,6 +261,41 @@ Selectors с `selector_confidence=observed_sample` не являются end-to-
 
 ---
 
+## Ход проекта — 2026-07-14 — Stage 2 screenshot-only flow
+
+Реализован новый Stage 2 flow для `reports_ad`: после выбора рекламной сети и spec бот принимает готовый скриншот площадки с существующей рекламой, затем креатив, landing URL и UTM. Live browser/Playwright для основного flow больше не открывает сайт площадки или landing-сайт.
+
+### Что изменено
+
+- `reports_ad/reports_ad/bot.py`: conversation flow переведен на `network → spec → source screenshot → creative → landing URL → UTM → review → generate`; review screen сохранен с русскими кнопками, добавлена правка `Изменить скриншот площадки`; итоговый proof отправляется как photo и document.
+- `reports_ad/reports_ad/models.py`: добавлены контракты `SourceScreenshotInfo`, `BoundingBox`, `BBoxDetectionResult`, `GeneratedProofArtifacts`; `ProofRequest` теперь несет source screenshot и Stage 2-compatible поля.
+- `reports_ad/reports_ad/validation.py`: добавлена валидация source screenshot PNG/JPEG/readability/max 10 MB и bbox bounds; strict exact creative dimensions снят, потому что Stage 2 должен растягивать/сжимать креатив в bbox.
+- `reports_ad/reports_ad/gemma_client.py`: добавлен mockable OpenAI-compatible OCR/vision client с Basic/header auth по env, timeout 120 секунд, 5 retries, JSON parsing и безопасными логами без credentials/raw secrets; фактическая модель может быть Gemma.
+- `reports_ad/reports_ad/stage2_proof.py`: добавлена Pillow-only композиция: OCR/vision bbox detection, creative resize into bbox, PNG alpha blending, метка «Реклама», fallback lower 10–20% browser/address-line landing area без открытия сайта, сохранение промежуточных artifacts в `reports_ad/tmp`.
+- `reports_ad/.env.example` и `reports_ad/docker-compose.yml`: добавлены OCR-style LLM env vars и limits для screenshot; public naming синхронизирован с `validator-ai` `OCR_LLM_*`.
+- `reports_ad/README.md`: описан screenshot-only flow, OCR LLM configuration, Docker env, tmp artifacts и отсутствие проверки target sites.
+
+### Ограничения/решения
+
+- Маски/скругления/тени исходного рекламного блока сохраняются только best-effort через alpha blending поверх исходного crop; полноценная реконструкция сложных масок оставлена для per-placement templates.
+- Если OCR/vision LLM не находит banner bbox или bbox выходит за границы изображения, пользователь получает просьбу загрузить более качественный скриншот; human-in-the-loop coordinate confirmation не добавлен.
+- Если landing/link area не найдена, рисуется стандартная нижняя область с browser header/address-line и effective landing URL + UTM.
+- Live OCR/vision endpoint не проверялся без credentials; tests используют mock responses.
+
+### Конфигурация LLM/OCR — 2026-07-14 update
+
+- Public env/config naming для Stage 2 модели переименован с `REPORTS_AD_GEMMA_*` на OCR-style `REPORTS_AD_OCR_LLM_*` по аналогии с `validator-ai` `OCR_LLM_*`.
+- Runtime читает только OCR-style names: `REPORTS_AD_OCR_LLM_BASE_URL`, `REPORTS_AD_OCR_LLM_MODEL`, `REPORTS_AD_OCR_LLM_TIMEOUT_SECONDS`, `REPORTS_AD_OCR_LLM_MAX_RETRIES`, `REPORTS_AD_OCR_LLM_CONFIDENCE_THRESHOLD`, `REPORTS_AD_OCR_LLM_HEADER_AUTHORISATION`, `REPORTS_AD_OCR_LLM_USER`, `REPORTS_AD_OCR_LLM_PASSWORD`.
+- `REPORTS_AD_OCR_LLM_API_KEY` добавлен в `.env.example` как parity placeholder для OCR/Gemini-style конфигурации, но текущий OpenAI-compatible Stage 2 client его не использует.
+- Файл `reports_ad/reports_ad/gemma_client.py` оставлен без переименования, чтобы не трогать module imports; публичные env vars и документация используют OCR naming. Фактическая vision model может оставаться Gemma.
+- Реальные секреты из `validator-ai/.env` не переносились в docs/example; используются только безопасные placeholder/example values.
+
+### Проверка
+
+- `reports_ad/.venv/bin/python -m pytest reports_ad/tests/test_validation.py reports_ad/tests/test_composition.py reports_ad/tests/test_diagnostics.py -q` — 55 passed.
+
+---
+
 ## Ход проекта — 2026-07-13 — повторная диагностика Docker external connectivity
 
 ### Санитизированные команды

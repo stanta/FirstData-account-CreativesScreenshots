@@ -7,7 +7,7 @@ from reports_ad.bot import _safe_exception_message as bot_safe_exception_message
 from reports_ad.bot import _safe_host as bot_safe_host
 from reports_ad.catalog import get_spec
 from reports_ad.diagnostics import NetworkDiagnosticResult, safe_exception_message as diagnostic_safe_exception_message, safe_host as diagnostic_safe_host
-from reports_ad.models import CreativeInfo, Placement, ProofRequest, ProofResult
+from reports_ad.models import CreativeInfo, Placement, ProofRequest, ProofResult, SourceScreenshotInfo
 from reports_ad.proof import (
     AD_PAGE_LOAD_TIMEOUT_MESSAGE,
     GENERATION_TIMEOUT_MESSAGE,
@@ -53,6 +53,7 @@ def test_safe_log_context_redacts_full_urls_and_paths(tmp_path: Path) -> None:
     spec = get_spec("yandex-graphic-banners-300x250-image")
     assert spec is not None
     creative_path = tmp_path / "sensitive-user-name" / "creative.png"
+    screenshot_info = SourceScreenshotInfo(path=tmp_path / "source.png", mime_type="image/png", width=800, height=600, size_bytes=1234)
     request = ProofRequest(
         request_id="req-1",
         ad_page_url="https://ads.example/page?utm_source=secret",
@@ -60,6 +61,7 @@ def test_safe_log_context_redacts_full_urls_and_paths(tmp_path: Path) -> None:
         network_display_name="Яндекс",
         spec=spec,
         banner_type=spec.display_name,
+        source_screenshot=screenshot_info,
         creative=CreativeInfo(path=creative_path, mime_type="image/png", width=300, height=250, size_bytes=123),
         landing_url="https://landing.example/path?utm_campaign=secret",
         utm_params={"utm_campaign": "secret"},
@@ -140,6 +142,7 @@ def test_chromium_diagnostics_shape_contains_only_safe_buckets() -> None:
 def test_ad_page_candidates_try_requested_url_then_banner_fallbacks(tmp_path: Path) -> None:
     spec = get_spec("yandex-graphic-banners-300x250-image")
     assert spec is not None
+    screenshot_info = SourceScreenshotInfo(path=tmp_path / "source.png", mime_type="image/png", width=800, height=600, size_bytes=1234)
     request = ProofRequest(
         request_id="req-1",
         ad_page_url="https://example.com/ad?secret=1",
@@ -147,6 +150,7 @@ def test_ad_page_candidates_try_requested_url_then_banner_fallbacks(tmp_path: Pa
         network_display_name="Яндекс",
         spec=spec,
         banner_type=spec.display_name,
+        source_screenshot=screenshot_info,
         creative=CreativeInfo(path=tmp_path / "creative.png", mime_type="image/png", width=300, height=250, size_bytes=123),
         landing_url="https://landing.example/path",
         utm_params={},

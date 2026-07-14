@@ -1,5 +1,5 @@
-FROM mcr.microsoft.com/playwright/python:v1.61.0-noble
-
+#FROM mcr.microsoft.com/playwright/python:v1.61.0-noble
+FROM python:3.14-slim-bookworm
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1

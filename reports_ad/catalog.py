@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from functools import lru_cache
 from importlib.resources import files
+from pathlib import Path
 from urllib.parse import urlparse
 
 from .models import CreativeSpec, Placement, PlacementMediaType, PlacementSite, PlacementTemplate, SitePlacement
@@ -19,6 +20,8 @@ class CatalogError(RuntimeError):
 def load_catalog() -> dict:
     try:
         resource = files("reports_ad").joinpath(CATALOG_RESOURCE)
+        if not resource.is_file():
+            resource = Path(__file__).resolve().parent.joinpath(CATALOG_RESOURCE)
         return json.loads(resource.read_text(encoding="utf-8"))
     except Exception as exc:  # pragma: no cover - defensive startup guard
         raise CatalogError("Не удалось загрузить каталог рекламных форматов.") from exc
@@ -32,6 +35,8 @@ def list_networks() -> list[dict[str, str]]:
 def load_placement_sites_catalog() -> dict:
     try:
         resource = files("reports_ad").joinpath(PLACEMENT_SITES_RESOURCE)
+        if not resource.is_file():
+            resource = Path(__file__).resolve().parent.joinpath(PLACEMENT_SITES_RESOURCE)
         return json.loads(resource.read_text(encoding="utf-8"))
     except Exception as exc:  # pragma: no cover - defensive startup guard
         raise CatalogError("Не удалось загрузить каталог fallback-площадок.") from exc
