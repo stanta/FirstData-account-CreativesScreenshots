@@ -219,6 +219,14 @@ python -m playwright install chromium
 
 Для `reports_ad` добавлены минимальные production-practical container assets под Telegram polling bot и headless Playwright Chromium.
 
+---
+
+## Ход проекта — 2026-07-14 — Stage 2 OCR config propagation bugfix
+
+- Исправлен production bug в screenshot-only Stage 2 flow: runtime `BotConfig` теперь явно пробрасывается из Telegram runtime path в Stage 2 proof generator, поэтому `build_gemma_client_from_config(...)` больше не получает `None` при штатном запуске через бота.
+- Для реальной OCR misconfiguration добавлена явная безопасная ошибка без секретов: при отсутствии `REPORTS_AD_OCR_LLM_BASE_URL` или неинициализированном runtime config пользователь получает понятное сообщение вместо `AttributeError`.
+- Добавлены регрессионные тесты на runtime-path injection config, создание OCR клиента из config и безопасное поведение при отсутствующей обязательной OCR-конфигурации.
+
 - Добавлен `Dockerfile`: runtime переведен на базовый образ `mcr.microsoft.com/playwright/python:v1.61.0-noble`, чтобы Chromium и Linux browser dependencies уже были предустановлены в image и не требовали отдельного интерактивного setup при старте контейнера.
 - Добавлен `docker-compose.yml`: сервис `reports-ad-bot` с `restart: unless-stopped`, `init: true`, `shm_size: 1gb`, `tmpfs` для временных файлов и startup через стандартный `python -m reports_ad`.
 - Добавлен `.dockerignore` для уменьшения build context без включения `.env`, тестов и docs.
@@ -258,6 +266,41 @@ python -m playwright install chromium
 - `m.knigavuhe.org`, `amd.online`, `ya.ru`, `www.woman.ru`, `images.yandex.ru`: страницы доступны, но надежные ad selectors в sample не подтверждены.
 
 Selectors с `selector_confidence=observed_sample` не являются end-to-end verified production selectors: это только HTML-sample observations без интерактивной Playwright-проверки, логина и обхода anti-bot. Остальные placements являются dimension-based fallback heuristics. В catalog metadata это зафиксировано, чтобы не выдавать эвристики за проверенные селекторы.
+
+---
+
+## Ход проекта — 2026-07-14 — Stage 2 screenshot-only flow
+
+Реализован новый Stage 2 flow для `reports_ad`: после выбора рекламной сети и spec бот принимает готовый скриншот площадки с существующей рекламой, затем креатив, landing URL и UTM. Live browser/Playwright для основного flow больше не открывает сайт площадки или landing-сайт.
+
+### Что изменено
+
+- `reports_ad/reports_ad/bot.py`: conversation flow переведен на `network → spec → source screenshot → creative → landing URL → UTM → review → generate`; review screen сохранен с русскими кнопками, добавлена правка `Изменить скриншот площадки`; итоговый proof отправляется как photo и document.
+- `reports_ad/reports_ad/models.py`: добавлены контракты `SourceScreenshotInfo`, `BoundingBox`, `BBoxDetectionResult`, `GeneratedProofArtifacts`; `ProofRequest` теперь несет source screenshot и Stage 2-compatible поля.
+- `reports_ad/reports_ad/validation.py`: добавлена валидация source screenshot PNG/JPEG/readability/max 10 MB и bbox bounds; strict exact creative dimensions снят, потому что Stage 2 должен растягивать/сжимать креатив в bbox.
+- `reports_ad/reports_ad/gemma_client.py`: добавлен mockable OpenAI-compatible OCR/vision client с Basic/header auth по env, timeout 120 секунд, 5 retries, JSON parsing и безопасными логами без credentials/raw secrets; фактическая модель может быть Gemma.
+- `reports_ad/reports_ad/stage2_proof.py`: добавлена Pillow-only композиция: OCR/vision bbox detection, creative resize into bbox, PNG alpha blending, метка «Реклама», fallback lower 10–20% browser/address-line landing area без открытия сайта, сохранение промежуточных artifacts в `reports_ad/tmp`.
+- `reports_ad/.env.example` и `reports_ad/docker-compose.yml`: добавлены OCR-style LLM env vars и limits для screenshot; public naming синхронизирован с `validator-ai` `OCR_LLM_*`.
+- `reports_ad/README.md`: описан screenshot-only flow, OCR LLM configuration, Docker env, tmp artifacts и отсутствие проверки target sites.
+
+### Ограничения/решения
+
+- Маски/скругления/тени исходного рекламного блока сохраняются только best-effort через alpha blending поверх исходного crop; полноценная реконструкция сложных масок оставлена для per-placement templates.
+- Если OCR/vision LLM не находит banner bbox или bbox выходит за границы изображения, пользователь получает просьбу загрузить более качественный скриншот; human-in-the-loop coordinate confirmation не добавлен.
+- Если landing/link area не найдена, рисуется стандартная нижняя область с browser header/address-line и effective landing URL + UTM.
+- Live OCR/vision endpoint не проверялся без credentials; tests используют mock responses.
+
+### Конфигурация LLM/OCR — 2026-07-14 update
+
+- Public env/config naming для Stage 2 модели переименован с `REPORTS_AD_GEMMA_*` на OCR-style `REPORTS_AD_OCR_LLM_*` по аналогии с `validator-ai` `OCR_LLM_*`.
+- Runtime читает только OCR-style names: `REPORTS_AD_OCR_LLM_BASE_URL`, `REPORTS_AD_OCR_LLM_MODEL`, `REPORTS_AD_OCR_LLM_TIMEOUT_SECONDS`, `REPORTS_AD_OCR_LLM_MAX_RETRIES`, `REPORTS_AD_OCR_LLM_CONFIDENCE_THRESHOLD`, `REPORTS_AD_OCR_LLM_HEADER_AUTHORISATION`, `REPORTS_AD_OCR_LLM_USER`, `REPORTS_AD_OCR_LLM_PASSWORD`.
+- `REPORTS_AD_OCR_LLM_API_KEY` добавлен в `.env.example` как parity placeholder для OCR/Gemini-style конфигурации, но текущий OpenAI-compatible Stage 2 client его не использует.
+- Файл `reports_ad/reports_ad/gemma_client.py` оставлен без переименования, чтобы не трогать module imports; публичные env vars и документация используют OCR naming. Фактическая vision model может оставаться Gemma.
+- Реальные секреты из `validator-ai/.env` не переносились в docs/example; используются только безопасные placeholder/example values.
+
+### Проверка
+
+- `reports_ad/.venv/bin/python -m pytest reports_ad/tests/test_validation.py reports_ad/tests/test_composition.py reports_ad/tests/test_diagnostics.py -q` — 55 passed.
 
 ---
 
@@ -454,6 +497,28 @@ Manual diagnostics внутри контейнера: для `dzen.ru` DNS/TCP/T
 
 - Добавлены unit-тесты без внешней сети: загрузка JSON по media type, default `banner` для PNG/JPEG specs, порядок кандидатов, выбор первого успешного fallback после simulated failures и classified all-failed error без утечки query/UTM.
 - Ограничение: fallback открывает root HTTPS host (`https://host/`), а не подбирает конкретную статью/страницу площадки; реальные площадки по-прежнему могут редиректить на SSO, возвращать 403, зависать на TLS/anti-bot или не иметь надежного selector. Для video runtime MVP всё еще не принимает видеофайлы, но media-type branch готов для будущих video specs.
+
+---
+
+## Ход проекта — 2026-07-13 — runtime timeouts, disabled fallback hosts и промежуточный screenshot
+
+Реализованы точечные runtime-изменения по обратной связи пользователя без изменения Telegram menu/review workflow и без добавления Chromium availability checks для landing/target host (`firstdata.io` или аналогичных).
+
+### Что изменено
+
+- Общий timeout генерации увеличен с 90 до 300 секунд в `reports_ad/reports_ad/config.py`, `.env.example` и `docker-compose.yml`, чтобы fallback-цепочка успевала завершиться.
+- Timeout загрузки каждой advertising/fallback площадки снижен с 30000 до 12000 ms в config/Compose/example env, чтобы плохие площадки не расходовали по 30 секунд.
+- В `reports_ad/reports_ad/data/placement_sites.json` исторические entries `dzen.ru` и `deti-online.com` сохранены traceable metadata, но помечены `enabled: false` с `disabled_reason`; активный runtime loader в `reports_ad/reports_ad/catalog.py` пропускает disabled hosts при построении fallback URL list.
+- В `reports_ad/reports_ad/proof.py` добавлено сохранение промежуточного screenshot сразу после успешной вставки креатива и до landing click. Файл пишется в project-level `reports_ad/tmp` с безопасным именем вида `creative-stem__host__YYYYMMDD-HHMMSS.png`; в имени нет URL, UTM, Telegram IDs, token или локального пути upload-файла.
+- В `reports_ad/reports_ad/models.py` `ProofResult` получил `intermediate_screenshot_path`, но Telegram runtime по-прежнему отправляет пользователю только финальный proof screenshot; промежуточный artifact только логируется как операторский файл.
+- В Docker Compose добавлен bind mount `./tmp:/app/tmp`, чтобы промежуточные screenshots из контейнера попадали в project-level `reports_ad/tmp`; добавлен `reports_ad/tmp/.gitkeep`, а PNG artifacts игнорируются через `.gitignore`.
+- Обновлены README и unit-тесты без live internet: проверяется skip disabled hosts, новые timeout defaults, безопасное имя промежуточного screenshot и сохранение intermediate path в `ProofResult`.
+
+### Рationale и ограничения
+
+- Площадки, не загружающиеся в пределах 30 секунд по Docker logs, исключены из активной fallback-итерации, чтобы общий timeout тратился на более перспективные candidates.
+- Сохранение промежуточного screenshot намеренно сделано fail-fast: если Playwright screenshot timeout или запись artifact падает, генерация завершается понятной ошибкой и не отправляет частичный proof.
+- Дополнительная проверка доступности landing/target site не добавлялась: landing host остается частью обычного click/fallback-open flow, чтобы не вводить новый smoke-check для `firstdata.io` и аналогичных URL.
 
 ---
 

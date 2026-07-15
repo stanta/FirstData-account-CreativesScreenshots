@@ -1,4 +1,6 @@
 reports_ad/__pycache__/
 reports_ad.egg-info/
+docs/examples
 tests/__pycache__/
 .env
+tmp/
