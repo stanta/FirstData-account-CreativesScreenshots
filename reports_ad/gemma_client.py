@@ -73,15 +73,22 @@ class HeaderAuthGemmaClient:
                 payload = await self._execute_request(prompt=prompt, image_path=screenshot.path, mime_type=screenshot.mime_type)
                 raw_text = _extract_openai_compatible_text(payload)
                 parsed = _loads_json_object(raw_text)
-                result = _parse_bbox_result(parsed, stage=stage, confidence_threshold=self._confidence_threshold)
+                result = _parse_bbox_result(
+                    parsed,
+                    stage=stage,
+                    confidence_threshold=self._confidence_threshold,
+                    source_image_width=screenshot.width,
+                    source_image_height=screenshot.height,
+                )
                 logger.info(
-                    "ocr_llm_response request_id=%s stage=%s attempt=%s status=ok confidence=%.3f bbox=%s metadata=%s",
+                    "ocr_llm_response request_id=%s stage=%s attempt=%s status=ok confidence=%.3f bbox=%s metadata=%s bbox_meta=%s",
                     request_id,
                     stage,
                     attempt,
                     result.confidence,
                     _safe_bbox(result.bbox),
                     _safe_response_metadata(payload),
+                    _safe_bbox_metadata(result.raw_metadata),
                 )
                 return result
             except (httpx.HTTPError, OSError, ValueError, TypeError, KeyError, GemmaClientError) as exc:
@@ -155,8 +162,10 @@ def _banner_prompt(*, screenshot: SourceScreenshotInfo, spec: CreativeSpec) -> s
         "You are analyzing a placement screenshot for an advertising proof generator. "
         "Find the visible existing ad image area that must be replaced by the uploaded creative. "
         "Use the selected network/spec context and examples implied by this placement type. "
-        "Return ONLY JSON with keys: bbox {x,y,width,height}, confidence 0..1, reason. "
-        f"Coordinates must be integer pixels relative to original screenshot {screenshot.width}x{screenshot.height}. "
+        "Return ONLY JSON with keys: bbox {x,y,width,height}, confidence 0..1, reason, coordinate_space, image_width, image_height. "
+        "Preferred output: coordinate_space='normalized' with bbox values as 0..1 fractions of the full screenshot. "
+        "If you return pixel coordinates from any resized/preview image, set coordinate_space='resized_pixels' and include the exact image_width and image_height used for those coordinates. "
+        f"The original screenshot is {screenshot.width}x{screenshot.height}; never crop the coordinate origin. "
         f"Selected spec: {spec.display_name}, dimensions {spec.dimensions_label}, network {spec.network_display_name}."
     )
 
@@ -166,8 +175,10 @@ def _landing_prompt(*, screenshot: SourceScreenshotInfo, spec: CreativeSpec) -> 
         "You are analyzing a placement proof screenshot. Find the browser/link/landing area template location if it is visible, "
         "usually a lower 10-20 percent area with browser header/address line. "
         "If it is not visible, return bbox null and confidence 0. "
-        "Return ONLY JSON with keys: bbox {x,y,width,height} or null, confidence 0..1, reason. "
-        f"Coordinates must be integer pixels relative to original screenshot {screenshot.width}x{screenshot.height}. "
+        "Return ONLY JSON with keys: bbox {x,y,width,height} or null, confidence 0..1, reason, coordinate_space, image_width, image_height. "
+        "Preferred output: coordinate_space='normalized' with bbox values as 0..1 fractions of the full screenshot. "
+        "If you return pixel coordinates from any resized/preview image, set coordinate_space='resized_pixels' and include the exact image_width and image_height used for those coordinates. "
+        f"The original screenshot is {screenshot.width}x{screenshot.height}; never crop the coordinate origin. "
         f"Selected spec: {spec.display_name}, dimensions {spec.dimensions_label}."
     )
 
@@ -215,22 +226,185 @@ def _loads_json_object(raw_text: str) -> dict[str, object]:
     return payload
 
 
-def _parse_bbox_result(payload: dict[str, object], *, stage: str, confidence_threshold: float) -> BBoxDetectionResult:
+def _parse_bbox_result(
+    payload: dict[str, object],
+    *,
+    stage: str,
+    confidence_threshold: float,
+    source_image_width: int,
+    source_image_height: int,
+) -> BBoxDetectionResult:
     confidence = _normalize_confidence(payload.get("confidence"))
     bbox_payload = payload.get("bbox")
     bbox = None
+    raw_metadata: dict[str, object] = {"reason": str(payload.get("reason", ""))[:160]}
     if isinstance(bbox_payload, dict):
-        bbox = BoundingBox(
-            x=int(bbox_payload["x"]),
-            y=int(bbox_payload["y"]),
-            width=int(bbox_payload["width"]),
-            height=int(bbox_payload["height"]),
+        bbox, bbox_metadata = _coerce_bbox_to_source_pixels(
+            bbox_payload=bbox_payload,
+            payload=payload,
+            source_image_width=source_image_width,
+            source_image_height=source_image_height,
         )
+        raw_metadata.update(bbox_metadata)
     if stage == "banner_bbox" and (bbox is None or confidence < confidence_threshold):
-        return BBoxDetectionResult(bbox=None, confidence=confidence, source="gemma", raw_metadata={"reason": str(payload.get("reason", ""))[:160]})
+        return BBoxDetectionResult(bbox=None, confidence=confidence, source="gemma", raw_metadata=raw_metadata)
     if bbox is not None and confidence < confidence_threshold:
         bbox = None
-    return BBoxDetectionResult(bbox=bbox, confidence=confidence, source="gemma", raw_metadata={"reason": str(payload.get("reason", ""))[:160]})
+    return BBoxDetectionResult(bbox=bbox, confidence=confidence, source="gemma", raw_metadata=raw_metadata)
+
+
+def _coerce_bbox_to_source_pixels(
+    *,
+    bbox_payload: dict[str, object],
+    payload: dict[str, object],
+    source_image_width: int,
+    source_image_height: int,
+) -> tuple[BoundingBox, dict[str, object]]:
+    x = _require_number(bbox_payload, "x")
+    y = _require_number(bbox_payload, "y")
+    width = _require_number(bbox_payload, "width")
+    height = _require_number(bbox_payload, "height")
+
+    coordinate_space = _extract_coordinate_space(payload, bbox_payload)
+    coordinate_image_width, coordinate_image_height = _extract_coordinate_image_size(payload, bbox_payload)
+
+    metadata: dict[str, object] = {
+        "coordinate_space": coordinate_space,
+        "coordinate_image_width": coordinate_image_width,
+        "coordinate_image_height": coordinate_image_height,
+        "scaled_to_source": False,
+    }
+
+    if coordinate_space == "normalized" or _looks_normalized(x=x, y=y, width=width, height=height):
+        bbox = _bbox_from_normalized(
+            x=x,
+            y=y,
+            width=width,
+            height=height,
+            source_image_width=source_image_width,
+            source_image_height=source_image_height,
+        )
+        metadata["coordinate_space"] = "normalized"
+        metadata["scaled_to_source"] = True
+        return bbox, metadata
+
+    if (
+        coordinate_image_width
+        and coordinate_image_height
+        and (coordinate_image_width != source_image_width or coordinate_image_height != source_image_height)
+    ):
+        bbox = _bbox_from_resized_pixels(
+            x=x,
+            y=y,
+            width=width,
+            height=height,
+            coordinate_image_width=coordinate_image_width,
+            coordinate_image_height=coordinate_image_height,
+            source_image_width=source_image_width,
+            source_image_height=source_image_height,
+        )
+        metadata["scaled_to_source"] = True
+        return bbox, metadata
+
+    return BoundingBox(x=int(round(x)), y=int(round(y)), width=int(round(width)), height=int(round(height))), metadata
+
+
+def _require_number(container: dict[str, object], key: str) -> float:
+    value = container[key]
+    if isinstance(value, bool):
+        raise GemmaClientError(f"OCR LLM bbox field {key} must be numeric")
+    try:
+        return float(value)
+    except (TypeError, ValueError) as exc:
+        raise GemmaClientError(f"OCR LLM bbox field {key} must be numeric") from exc
+
+
+def _extract_coordinate_space(payload: dict[str, object], bbox_payload: dict[str, object]) -> str:
+    for container in (payload, bbox_payload):
+        value = container.get("coordinate_space")
+        if isinstance(value, str) and value.strip():
+            return value.strip().lower()
+    return "source_pixels"
+
+
+def _extract_coordinate_image_size(payload: dict[str, object], bbox_payload: dict[str, object]) -> tuple[int | None, int | None]:
+    for container in (payload, bbox_payload):
+        width = _optional_positive_int(container.get("image_width"))
+        height = _optional_positive_int(container.get("image_height"))
+        if width and height:
+            return width, height
+        image_size = container.get("image_size")
+        if isinstance(image_size, dict):
+            width = _optional_positive_int(image_size.get("width"))
+            height = _optional_positive_int(image_size.get("height"))
+            if width and height:
+                return width, height
+    return None, None
+
+
+def _optional_positive_int(value: object) -> int | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        number = int(round(float(value)))
+    except (TypeError, ValueError):
+        return None
+    return number if number > 0 else None
+
+
+def _looks_normalized(*, x: float, y: float, width: float, height: float) -> bool:
+    return 0.0 <= x <= 1.0 and 0.0 <= y <= 1.0 and 0.0 < width <= 1.0 and 0.0 < height <= 1.0
+
+
+def _bbox_from_normalized(
+    *,
+    x: float,
+    y: float,
+    width: float,
+    height: float,
+    source_image_width: int,
+    source_image_height: int,
+) -> BoundingBox:
+    return _bbox_from_edges(
+        left=x * source_image_width,
+        top=y * source_image_height,
+        right=(x + width) * source_image_width,
+        bottom=(y + height) * source_image_height,
+    )
+
+
+def _bbox_from_resized_pixels(
+    *,
+    x: float,
+    y: float,
+    width: float,
+    height: float,
+    coordinate_image_width: int,
+    coordinate_image_height: int,
+    source_image_width: int,
+    source_image_height: int,
+) -> BoundingBox:
+    scale_x = source_image_width / coordinate_image_width
+    scale_y = source_image_height / coordinate_image_height
+    return _bbox_from_edges(
+        left=x * scale_x,
+        top=y * scale_y,
+        right=(x + width) * scale_x,
+        bottom=(y + height) * scale_y,
+    )
+
+
+def _bbox_from_edges(*, left: float, top: float, right: float, bottom: float) -> BoundingBox:
+    x = int(round(left))
+    y = int(round(top))
+    right_px = int(round(right))
+    bottom_px = int(round(bottom))
+    return BoundingBox(
+        x=x,
+        y=y,
+        width=max(1, right_px - x),
+        height=max(1, bottom_px - y),
+    )
 
 
 def _normalize_confidence(value: object) -> float:
@@ -257,6 +431,19 @@ def _safe_response_metadata(payload: object) -> str:
     choice_count = len(choices) if isinstance(choices, list) else 0
     usage_keys = sorted(usage) if isinstance(usage, dict) else []
     return f"choice_count={choice_count} usage_keys={','.join(str(key) for key in usage_keys)[:80]}"
+
+
+def _safe_bbox_metadata(raw_metadata: dict[str, object]) -> str:
+    coordinate_space = str(raw_metadata.get("coordinate_space", "source_pixels"))[:32]
+    coordinate_image_width = raw_metadata.get("coordinate_image_width")
+    coordinate_image_height = raw_metadata.get("coordinate_image_height")
+    scaled_to_source = bool(raw_metadata.get("scaled_to_source", False))
+    return (
+        f"coordinate_space={coordinate_space} "
+        f"coordinate_image_width={coordinate_image_width} "
+        f"coordinate_image_height={coordinate_image_height} "
+        f"scaled_to_source={scaled_to_source}"
+    )
 
 
 def _safe_exception_message(exc: BaseException) -> str:

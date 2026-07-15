@@ -5,7 +5,7 @@ from PIL import Image
 
 from reports_ad.bot import build_application
 from reports_ad.config import BotConfig
-from reports_ad.gemma_client import build_gemma_client_from_config
+from reports_ad.gemma_client import _parse_bbox_result, build_gemma_client_from_config
 from reports_ad.models import BBoxDetectionResult, BoundingBox, CreativeInfo, Placement, ProofRequest, ProofResult, SourceScreenshotInfo
 from reports_ad.proof import compose_final_image
 from reports_ad.stage2_proof import compose_stage2_image, fallback_landing_bbox, generate_stage2_proof
@@ -65,6 +65,33 @@ def test_stage2_compose_stretches_creative_draws_landing_and_ad_mark(tmp_path: P
         assert result.getpixel((200, 285)) != (255, 255, 255)
 
 
+def test_stage2_compose_pastes_creative_into_exact_banner_region(tmp_path: Path) -> None:
+    source_path = tmp_path / "source.png"
+    creative_path = tmp_path / "creative.png"
+    output_path = tmp_path / "stage2.png"
+    banner_path = tmp_path / "banner.png"
+    Image.new("RGB", (240, 180), (255, 255, 255)).save(source_path)
+    Image.new("RGBA", (10, 10), (20, 40, 220, 255)).save(creative_path)
+
+    compose_stage2_image(
+        source_screenshot_path=source_path,
+        creative_path=creative_path,
+        effective_click_url="https://example.com/landing?utm_source=test&utm_medium=cpc",
+        banner_bbox=BoundingBox(x=80, y=30, width=60, height=90),
+        landing_bbox=fallback_landing_bbox(image_width=240, image_height=180),
+        output_path=output_path,
+        banner_replaced_path=banner_path,
+    )
+
+    with Image.open(banner_path) as result:
+        assert result.getpixel((130, 70)) == (20, 40, 220)
+        assert result.getpixel((130, 105)) == (20, 40, 220)
+        assert result.getpixel((79, 45)) == (255, 255, 255)
+        assert result.getpixel((140, 45)) == (255, 255, 255)
+        assert result.getpixel((90, 29)) == (255, 255, 255)
+        assert result.getpixel((90, 120)) == (255, 255, 255)
+
+
 def test_fallback_landing_bbox_uses_lower_10_to_20_percent() -> None:
     bbox = fallback_landing_bbox(image_width=1000, image_height=800)
 
@@ -93,6 +120,29 @@ def test_gemma_client_builder_uses_ocr_config_fields() -> None:
     assert client._timeout_seconds == 20
     assert client._max_retries == 3
     assert client._confidence_threshold == 0.6
+
+
+def test_parse_bbox_result_rescales_from_resized_coordinate_space() -> None:
+    result = _parse_bbox_result(
+        {
+            "bbox": {"x": 400, "y": 100, "width": 200, "height": 300},
+            "confidence": 0.95,
+            "reason": "bbox taken from resized preview",
+            "coordinate_space": "resized_pixels",
+            "image_width": 800,
+            "image_height": 600,
+        },
+        stage="banner_bbox",
+        confidence_threshold=0.45,
+        source_image_width=1600,
+        source_image_height=1200,
+    )
+
+    assert result.bbox == BoundingBox(800, 200, 400, 600)
+    assert result.raw_metadata["coordinate_space"] == "resized_pixels"
+    assert result.raw_metadata["coordinate_image_width"] == 800
+    assert result.raw_metadata["coordinate_image_height"] == 600
+    assert result.raw_metadata["scaled_to_source"] is True
 
 
 def test_gemma_client_builder_rejects_missing_runtime_config() -> None:
