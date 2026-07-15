@@ -1,7 +1,7 @@
 from pathlib import Path
 
 import pytest
-from PIL import Image
+from PIL import Image, ImageChops, ImageDraw
 
 from reports_ad.bot import build_application
 from reports_ad.config import BotConfig
@@ -90,6 +90,63 @@ def test_stage2_compose_pastes_creative_into_exact_banner_region(tmp_path: Path)
         assert result.getpixel((140, 45)) == (255, 255, 255)
         assert result.getpixel((90, 29)) == (255, 255, 255)
         assert result.getpixel((90, 120)) == (255, 255, 255)
+
+
+def test_stage2_compose_trims_transparent_padding_before_stretching_to_slot(tmp_path: Path) -> None:
+    source_path = tmp_path / "source.png"
+    creative_path = tmp_path / "creative.png"
+    output_path = tmp_path / "stage2.png"
+    banner_path = tmp_path / "banner.png"
+    bbox = BoundingBox(x=60, y=40, width=160, height=100)
+    source = Image.new("RGB", (300, 220), (255, 255, 255))
+    source.save(source_path)
+    creative = Image.new("RGBA", (120, 80), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(creative)
+    draw.rectangle((30, 20, 89, 59), fill=(15, 35, 210, 255))
+    creative.save(creative_path)
+
+    compose_stage2_image(
+        source_screenshot_path=source_path,
+        creative_path=creative_path,
+        effective_click_url="https://example.com/landing?utm_source=test&utm_medium=cpc",
+        banner_bbox=bbox,
+        landing_bbox=fallback_landing_bbox(image_width=300, image_height=220),
+        output_path=output_path,
+        banner_replaced_path=banner_path,
+    )
+
+    with Image.open(banner_path) as result:
+        assert result.getpixel((bbox.x, bbox.y)) == (15, 35, 210)
+        assert result.getpixel((bbox.right - 1, bbox.y)) == (15, 35, 210)
+        assert result.getpixel((bbox.x, bbox.bottom - 1)) == (15, 35, 210)
+        assert result.getpixel((bbox.right - 1, bbox.bottom - 1)) == (15, 35, 210)
+        assert result.getpixel((bbox.x - 1, bbox.y + 10)) == (255, 255, 255)
+        assert result.getpixel((bbox.right, bbox.y + 10)) == (255, 255, 255)
+
+
+def test_stage2_compose_changed_region_matches_target_banner_bbox(tmp_path: Path) -> None:
+    source_path = tmp_path / "source.png"
+    creative_path = tmp_path / "creative.png"
+    banner_path = tmp_path / "banner.png"
+    output_path = tmp_path / "stage2.png"
+    bbox = BoundingBox(x=42, y=35, width=96, height=64)
+    Image.new("RGB", (220, 180), (255, 255, 255)).save(source_path)
+    Image.new("RGBA", (32, 32), (230, 30, 20, 255)).save(creative_path)
+
+    compose_stage2_image(
+        source_screenshot_path=source_path,
+        creative_path=creative_path,
+        effective_click_url="https://example.com/landing?utm_source=test&utm_medium=cpc",
+        banner_bbox=bbox,
+        landing_bbox=fallback_landing_bbox(image_width=220, image_height=180),
+        output_path=output_path,
+        banner_replaced_path=banner_path,
+    )
+
+    with Image.open(source_path) as source_raw, Image.open(banner_path) as result_raw:
+        diff_bbox = ImageChops.difference(source_raw.convert("RGB"), result_raw.convert("RGB")).getbbox()
+
+    assert diff_bbox == (bbox.x, bbox.y, bbox.right, bbox.bottom)
 
 
 def test_fallback_landing_bbox_uses_lower_10_to_20_percent() -> None:

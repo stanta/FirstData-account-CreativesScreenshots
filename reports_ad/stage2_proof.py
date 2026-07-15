@@ -134,12 +134,10 @@ def compose_stage2_image(
         _validate_bbox_for_compose(landing_bbox, image=source, label="landing/link area")
 
         result = source.copy()
-        creative = creative_raw.convert("RGBA").resize((banner_bbox.width, banner_bbox.height), Image.Resampling.LANCZOS)
+        creative_source = _trim_transparent_padding(creative_raw.convert("RGBA"))
+        creative = creative_source.resize((banner_bbox.width, banner_bbox.height), Image.Resampling.LANCZOS)
         background_crop = result.crop((banner_bbox.x, banner_bbox.y, banner_bbox.right, banner_bbox.bottom))
-        if "A" in creative.getbands():
-            blended = Image.alpha_composite(background_crop, creative)
-        else:
-            blended = creative
+        blended = Image.alpha_composite(background_crop, creative)
         result.paste(blended, (banner_bbox.x, banner_bbox.y))
         _draw_ad_mark(result, banner_bbox)
 
@@ -178,6 +176,15 @@ def _valid_or_fallback_landing_bbox(bbox: BoundingBox | None, *, image_width: in
         return validate_bbox_within_image(bbox, image_width=image_width, image_height=image_height, label="landing/link area")
     except ValidationError:
         return fallback_landing_bbox(image_width=image_width, image_height=image_height)
+
+
+def _trim_transparent_padding(image: Image.Image) -> Image.Image:
+    alpha_bbox = image.getchannel("A").getbbox()
+    if alpha_bbox is None:
+        return image
+    if alpha_bbox == (0, 0, image.width, image.height):
+        return image
+    return image.crop(alpha_bbox)
 
 
 def _draw_ad_mark(image: Image.Image, bbox: BoundingBox) -> None:
