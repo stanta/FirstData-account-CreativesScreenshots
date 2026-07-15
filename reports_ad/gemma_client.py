@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import json
 import logging
+import os
+import re
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -14,6 +17,8 @@ from .models import BBoxDetectionResult, BoundingBox, CreativeSpec, SourceScreen
 from .validation import ValidationError
 
 logger = logging.getLogger(__name__)
+DETAILED_OCR_LOGGING_ENV = "REPORTS_AD_OCR_LOG_TEXT"
+MAX_LOG_TEXT_CHARS = 700
 
 
 class GemmaClientError(RuntimeError):
@@ -68,7 +73,24 @@ class HeaderAuthGemmaClient:
 
         last_error: BaseException | None = None
         for attempt in range(1, self._max_retries + 1):
-            logger.info("ocr_llm_request request_id=%s stage=%s attempt=%s model=%s", request_id, stage, attempt, self._model)
+            logger.info(
+                "ocr_llm_request request_id=%s stage=%s attempt=%s model=%s spec_slug=%s spec_name=%s screenshot=%sx%s expected_dimensions=%s expected_aspect_ratio=%s placement_hint_present=%s placement_hint=%s prompt_length=%s prompt_sha256=%s prompt_text=%s",
+                request_id,
+                stage,
+                attempt,
+                self._model,
+                spec.slug,
+                _sanitize_log_text(spec.display_name, limit=120),
+                screenshot.width,
+                screenshot.height,
+                spec.dimensions_label,
+                _safe_aspect_ratio(spec),
+                bool(spec.position_hint.strip()),
+                _sanitize_log_text(spec.placement_hint, limit=180),
+                len(prompt),
+                _sha256_short(prompt),
+                _safe_debug_text(prompt),
+            )
             try:
                 payload = await self._execute_request(prompt=prompt, image_path=screenshot.path, mime_type=screenshot.mime_type)
                 raw_text = _extract_openai_compatible_text(payload)
@@ -81,23 +103,29 @@ class HeaderAuthGemmaClient:
                     source_image_height=screenshot.height,
                 )
                 logger.info(
-                    "ocr_llm_response request_id=%s stage=%s attempt=%s status=ok confidence=%.3f bbox=%s metadata=%s bbox_meta=%s",
+                    "ocr_llm_response request_id=%s stage=%s attempt=%s status=ok parse_success=%s confidence=%.3f bbox=%s coordinate_space=%s metadata=%s bbox_meta=%s response_text_length=%s response_text_sha256=%s response_text=%s",
                     request_id,
                     stage,
                     attempt,
+                    True,
                     result.confidence,
                     _safe_bbox(result.bbox),
+                    _safe_coordinate_space(result.raw_metadata),
                     _safe_response_metadata(payload),
                     _safe_bbox_metadata(result.raw_metadata),
+                    len(raw_text),
+                    _sha256_short(raw_text),
+                    _safe_debug_text(raw_text),
                 )
                 return result
             except (httpx.HTTPError, OSError, ValueError, TypeError, KeyError, GemmaClientError) as exc:
                 last_error = exc
                 logger.warning(
-                    "ocr_llm_response request_id=%s stage=%s attempt=%s status=retryable_error error_class=%s error_message=%s",
+                    "ocr_llm_response request_id=%s stage=%s attempt=%s status=retryable_error parse_success=%s error_class=%s error_message=%s",
                     request_id,
                     stage,
                     attempt,
+                    False,
                     type(exc).__name__,
                     _safe_exception_message(exc),
                 )
@@ -160,13 +188,17 @@ def _require_ocr_runtime_config(config: BotConfig | None) -> BotConfig:
 def _banner_prompt(*, screenshot: SourceScreenshotInfo, spec: CreativeSpec) -> str:
     return (
         "You are analyzing a placement screenshot for an advertising proof generator. "
-        "Find the visible existing ad image area that must be replaced by the uploaded creative. "
-        "Use the selected network/spec context and examples implied by this placement type. "
+        "Find the visible original ad slot area that must be replaced by the uploaded creative. "
+        "Use the selected network/spec context, expected dimensions, aspect ratio, and placement hint. "
+        "You MUST identify the original ad slot matching this selected banner type and position hint; do NOT select the uploaded replacement creative, a floating preview, an editor overlay, or a landing/link/browser area. "
         "Return ONLY JSON with keys: bbox {x,y,width,height}, confidence 0..1, reason, coordinate_space, image_width, image_height. "
         "Preferred output: coordinate_space='normalized' with bbox values as 0..1 fractions of the full screenshot. "
+        "If you return source screenshot pixel coordinates, set coordinate_space='source_pixels'. "
         "If you return pixel coordinates from any resized/preview image, set coordinate_space='resized_pixels' and include the exact image_width and image_height used for those coordinates. "
-        f"The original screenshot is {screenshot.width}x{screenshot.height}; never crop the coordinate origin. "
-        f"Selected spec: {spec.display_name}, dimensions {spec.dimensions_label}, network {spec.network_display_name}."
+        f"The source screenshot is {screenshot.width}x{screenshot.height} pixels; bbox must map to this source screenshot and must never crop or reset the coordinate origin. "
+        f"Selected spec slug: {spec.slug}. Selected spec name: {spec.display_name}. Network: {spec.network_display_name}. "
+        f"Selected spec dimensions: {spec.dimensions_label}; expected aspect ratio: {_safe_aspect_ratio(spec)}. "
+        f"Selected banner placement hint from catalog: {spec.placement_hint}"
     )
 
 
@@ -434,7 +466,7 @@ def _safe_response_metadata(payload: object) -> str:
 
 
 def _safe_bbox_metadata(raw_metadata: dict[str, object]) -> str:
-    coordinate_space = str(raw_metadata.get("coordinate_space", "source_pixels"))[:32]
+    coordinate_space = _safe_coordinate_space(raw_metadata)
     coordinate_image_width = raw_metadata.get("coordinate_image_width")
     coordinate_image_height = raw_metadata.get("coordinate_image_height")
     scaled_to_source = bool(raw_metadata.get("scaled_to_source", False))
@@ -446,5 +478,47 @@ def _safe_bbox_metadata(raw_metadata: dict[str, object]) -> str:
     )
 
 
+def _safe_coordinate_space(raw_metadata: dict[str, object]) -> str:
+    return _sanitize_log_text(str(raw_metadata.get("coordinate_space", "source_pixels")), limit=32)
+
+
+def _safe_aspect_ratio(spec: CreativeSpec) -> str:
+    if not spec.width or not spec.height:
+        return "unknown"
+    return f"{spec.width / spec.height:.4f}"
+
+
+def _sha256_short(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8", errors="replace")).hexdigest()[:16]
+
+
+def _safe_debug_text(value: str) -> str:
+    if not _detailed_ocr_logging_enabled():
+        return "disabled"
+    return _sanitize_log_text(value, limit=MAX_LOG_TEXT_CHARS)
+
+
+def _detailed_ocr_logging_enabled() -> bool:
+    return os.getenv(DETAILED_OCR_LOGGING_ENV, "").strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _sanitize_log_text(value: str, *, limit: int) -> str:
+    compact = re.sub(r"\s+", " ", value or "").strip()
+    redacted = re.sub(
+        r"(?i)\b(authorization|authorisation|password|passwd|secret|token|api[_-]?key|cookie)\b\s*[:=]\s*(?:Basic|Bearer)\s+[^\s,;\"'}]+",
+        r"\1=<redacted>",
+        compact,
+    )
+    redacted = re.sub(
+        r"(?i)\b(authorization|authorisation|password|passwd|secret|token|api[_-]?key|cookie)\b\s*[:=]\s*[^\s,;\"'}]+",
+        r"\1=<redacted>",
+        redacted,
+    )
+    redacted = re.sub(r"(?i)\b(Basic|Bearer)\s+[A-Za-z0-9._~+/=-]+", r"\1 <redacted>", redacted)
+    if len(redacted) <= limit:
+        return redacted
+    return f"{redacted[:limit]}…[truncated:{len(redacted)}]"
+
+
 def _safe_exception_message(exc: BaseException) -> str:
-    return str(exc).replace("\n", " ")[:200]
+    return _sanitize_log_text(str(exc).replace("\n", " "), limit=200)

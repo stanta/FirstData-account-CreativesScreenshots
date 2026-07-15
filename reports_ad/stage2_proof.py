@@ -32,7 +32,7 @@ async def generate_stage2_proof(request: ProofRequest, *, gemma_client: GemmaBBo
     landing_area_path = artifact_base.with_suffix(".landing-area.png")
 
     logger.info(
-        "stage2_generation_started request_id=%s network=%s spec=%s screenshot=%sx%s creative=%sx%s",
+        "stage2_generation_started request_id=%s network=%s spec=%s screenshot=%sx%s creative=%sx%s placement_hint_present=%s",
         request.request_id,
         request.network_slug,
         request.spec.slug,
@@ -40,6 +40,7 @@ async def generate_stage2_proof(request: ProofRequest, *, gemma_client: GemmaBBo
         request.source_screenshot.height,
         request.creative.width,
         request.creative.height,
+        bool(request.spec.position_hint.strip()),
     )
 
     try:

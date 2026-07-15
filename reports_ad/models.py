@@ -94,12 +94,18 @@ class CreativeSpec:
     requires_ad_marking: bool = False
     runtime_upload_supported: bool = False
     runtime_restriction_note: str = ""
+    position_hint: str = ""
 
     @property
     def dimensions_label(self) -> str:
         if self.width and self.height:
             return f"{self.width}×{self.height}"
         return self.format_slug
+
+    @property
+    def placement_hint(self) -> str:
+        hint = self.position_hint.strip()
+        return hint if hint else "No additional placement hint is available."
 
     @property
     def label(self) -> str:

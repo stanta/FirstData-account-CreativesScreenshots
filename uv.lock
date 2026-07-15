@@ -292,6 +292,7 @@ dependencies = [
     { name = "httpx" },
     { name = "pillow" },
     { name = "pytest" },
+    { name = "pytest-asyncio" },
     { name = "python-telegram-bot" },
     { name = "telegram-menu" },
 ]
@@ -308,6 +309,7 @@ requires-dist = [
     { name = "pillow", specifier = ">=10.0.0" },
     { name = "pytest", specifier = ">=9.1.1" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
+    { name = "pytest-asyncio", specifier = ">=1.4.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23.0" },
     { name = "python-telegram-bot", specifier = ">=21.0,<23.0" },
     { name = "telegram-menu", specifier = ">=3.0.0,<4.0.0" },

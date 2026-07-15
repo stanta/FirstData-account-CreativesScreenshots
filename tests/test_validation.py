@@ -120,6 +120,14 @@ def test_catalog_loads_runtime_png_jpeg_specs() -> None:
     assert {"image/png", "image/jpeg"}.issuperset(specs[0].runtime_allowed_mime_types)
 
 
+def test_catalog_loads_spec_position_hint_from_json() -> None:
+    spec = get_spec("yandex-graphic-banners-300x250-image")
+
+    assert spec is not None
+    assert "Medium rectangle display banner" in spec.position_hint
+    assert spec.placement_hint == spec.position_hint
+
+
 def test_placement_sites_json_loads_by_media_type() -> None:
     assert list_placement_sites("video") == [
         "yandex.ru",

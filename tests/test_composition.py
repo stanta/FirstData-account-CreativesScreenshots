@@ -5,7 +5,7 @@ from PIL import Image, ImageChops, ImageDraw
 
 from reports_ad.bot import build_application
 from reports_ad.config import BotConfig
-from reports_ad.gemma_client import _parse_bbox_result, build_gemma_client_from_config
+from reports_ad.gemma_client import HeaderAuthGemmaClient, _banner_prompt, _parse_bbox_result, build_gemma_client_from_config
 from reports_ad.models import BBoxDetectionResult, BoundingBox, CreativeInfo, Placement, ProofRequest, ProofResult, SourceScreenshotInfo
 from reports_ad.proof import compose_final_image
 from reports_ad.stage2_proof import compose_stage2_image, fallback_landing_bbox, generate_stage2_proof
@@ -200,6 +200,71 @@ def test_parse_bbox_result_rescales_from_resized_coordinate_space() -> None:
     assert result.raw_metadata["coordinate_image_width"] == 800
     assert result.raw_metadata["coordinate_image_height"] == 600
     assert result.raw_metadata["scaled_to_source"] is True
+
+
+def test_banner_prompt_includes_selected_spec_dimensions_and_position_hint() -> None:
+    spec = get_spec("yandex-graphic-banners-300x250-image")
+    assert spec is not None
+    screenshot = SourceScreenshotInfo(path=Path("source.png"), mime_type="image/png", width=1024, height=768, size_bytes=123)
+
+    prompt = _banner_prompt(screenshot=screenshot, spec=spec)
+
+    assert spec.slug in prompt
+    assert spec.dimensions_label in prompt
+    assert spec.position_hint in prompt
+    assert "original ad slot" in prompt
+    assert "uploaded replacement creative" in prompt
+    assert "landing/link/browser area" in prompt
+    assert "coordinate_space='normalized'" in prompt
+    assert "source screenshot" in prompt
+
+
+@pytest.mark.asyncio
+async def test_ocr_request_response_logs_are_sanitized_and_bounded(tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("REPORTS_AD_OCR_LOG_TEXT", "1")
+    spec = get_spec("yandex-graphic-banners-300x250-image")
+    assert spec is not None
+    source_path = tmp_path / "source.png"
+    Image.new("RGB", (400, 300), "white").save(source_path)
+    screenshot = SourceScreenshotInfo(path=source_path, mime_type="image/png", width=400, height=300, size_bytes=source_path.stat().st_size)
+    client = HeaderAuthGemmaClient(
+        base_url="http://ocr.example.test/v1",
+        model="test-model",
+        authorization_header="Basic super-secret-token",
+        max_retries=1,
+    )
+
+    async def fake_execute_request(**kwargs):
+        assert "Authorization" not in kwargs
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "content": '{"bbox":{"x":0.1,"y":0.2,"width":0.3,"height":0.4},"confidence":0.91,"coordinate_space":"normalized","reason":"Authorization: Bearer raw-secret Password=hidden"}'
+                    }
+                }
+            ],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+            "authorization": "Bearer should-not-log",
+        }
+
+    monkeypatch.setattr(client, "_execute_request", fake_execute_request)
+
+    with caplog.at_level("INFO", logger="reports_ad.gemma_client"):
+        result = await client.detect_banner_bbox(screenshot=screenshot, spec=spec, request_id="req-logs")
+
+    log_text = "\n".join(record.getMessage() for record in caplog.records)
+    assert result.bbox == BoundingBox(40, 60, 120, 120)
+    assert "ocr_llm_request request_id=req-logs stage=banner_bbox" in log_text
+    assert "ocr_llm_response request_id=req-logs stage=banner_bbox" in log_text
+    assert "prompt_sha256=" in log_text
+    assert "response_text_sha256=" in log_text
+    assert spec.position_hint in log_text
+    assert "Basic super-secret-token" not in log_text
+    assert "raw-secret" not in log_text
+    assert "Password=hidden" not in log_text
+    assert "should-not-log" not in log_text
+    assert "data:image" not in log_text
 
 
 def test_gemma_client_builder_rejects_missing_runtime_config() -> None:

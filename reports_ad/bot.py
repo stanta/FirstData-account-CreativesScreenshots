@@ -299,7 +299,7 @@ async def _generate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             output_path = _ensure_temp_dir(context.user_data, config) / "proof-result.png"
             request = _build_proof_request(context.user_data, config, output_path)
             logger.info(
-                "proof_generation_request_built request_id=%s user=%s chat=%s landing_host=%s network=%s spec=%s dimensions=%s screenshot=%sx%s timeout_seconds=%s",
+                "proof_generation_request_built request_id=%s user=%s chat=%s landing_host=%s network=%s spec=%s dimensions=%s screenshot=%sx%s placement_hint_present=%s timeout_seconds=%s",
                 request_id,
                 user_hash,
                 chat_hash,
@@ -309,6 +309,7 @@ async def _generate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 request.spec.dimensions_label,
                 request.source_screenshot.width,
                 request.source_screenshot.height,
+                bool(request.spec.position_hint.strip()),
                 config.request_timeout_seconds,
             )
             proof_generator: ProofGenerator = context.bot_data["proof_generator"]

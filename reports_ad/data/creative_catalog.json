@@ -125,7 +125,8 @@
       "max_file_size_bytes": 524288,
       "requires_ad_marking": false,
       "runtime_upload_supported": true,
-      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime.",
+      "position": "Yandex Advertising Network display placement: Medium rectangle display banner, typically placed in-page within article/content flows or in sidebars."
     },
     {
       "slug": "yandex-graphic-banners-240x400-image",
@@ -160,7 +161,8 @@
       "max_file_size_bytes": 524288,
       "requires_ad_marking": false,
       "runtime_upload_supported": true,
-      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime.",
+      "position": "Yandex Advertising Network display placement: Vertical rectangle banner, typically placed in a sidebar or right-column ad slot on desktop pages."
     },
     {
       "slug": "yandex-graphic-banners-300x600-image",
@@ -195,7 +197,8 @@
       "max_file_size_bytes": 524288,
       "requires_ad_marking": false,
       "runtime_upload_supported": true,
-      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime.",
+      "position": "Yandex Advertising Network display placement: Half-page vertical banner, typically placed in a desktop sidebar or sticky right-column slot."
     },
     {
       "slug": "yandex-graphic-banners-300x500-image",
@@ -230,7 +233,8 @@
       "max_file_size_bytes": 524288,
       "requires_ad_marking": false,
       "runtime_upload_supported": true,
-      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime.",
+      "position": "Yandex Advertising Network display placement: Large vertical rectangle banner, typically placed in sidebars or extended in-content ad slots."
     },
     {
       "slug": "yandex-graphic-banners-320x50-image",
@@ -265,7 +269,8 @@
       "max_file_size_bytes": 524288,
       "requires_ad_marking": false,
       "runtime_upload_supported": true,
-      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime.",
+      "position": "Yandex Advertising Network display placement: Mobile leaderboard banner, typically placed at the top or bottom of a mobile page or app viewport."
     },
     {
       "slug": "yandex-graphic-banners-320x100-image",
@@ -300,7 +305,8 @@
       "max_file_size_bytes": 524288,
       "requires_ad_marking": false,
       "runtime_upload_supported": true,
-      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime.",
+      "position": "Yandex Advertising Network display placement: Large mobile banner, typically placed at the top or bottom of a mobile page or in-feed mobile slot."
     },
     {
       "slug": "yandex-graphic-banners-320x480-image",
@@ -335,7 +341,8 @@
       "max_file_size_bytes": 524288,
       "requires_ad_marking": false,
       "runtime_upload_supported": true,
-      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime.",
+      "position": "Yandex Advertising Network display placement: Mobile interstitial or large portrait banner, typically placed as a full-screen mobile ad slot."
     },
     {
       "slug": "yandex-graphic-banners-480x320-image",
@@ -370,7 +377,8 @@
       "max_file_size_bytes": 524288,
       "requires_ad_marking": false,
       "runtime_upload_supported": true,
-      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime.",
+      "position": "Yandex Advertising Network display placement: Landscape mobile/interstitial banner, typically placed as a full-screen landscape mobile ad slot."
     },
     {
       "slug": "yandex-graphic-banners-336x280-image",
@@ -405,7 +413,8 @@
       "max_file_size_bytes": 524288,
       "requires_ad_marking": false,
       "runtime_upload_supported": true,
-      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime.",
+      "position": "Yandex Advertising Network display placement: Large rectangle display banner, typically placed in-page near editorial content or in a wide sidebar."
     },
     {
       "slug": "yandex-graphic-banners-728x90-image",
@@ -440,7 +449,8 @@
       "max_file_size_bytes": 524288,
       "requires_ad_marking": false,
       "runtime_upload_supported": true,
-      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime.",
+      "position": "Yandex Advertising Network display placement: Desktop leaderboard banner, typically placed above main content, below navigation, or near page headers."
     },
     {
       "slug": "yandex-media-banners-300x250-image",
@@ -475,7 +485,8 @@
       "max_file_size_bytes": 524288,
       "requires_ad_marking": false,
       "runtime_upload_supported": true,
-      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime.",
+      "position": "Yandex Advertising Network display placement: Medium rectangle display banner, typically placed in-page within article/content flows or in sidebars."
     },
     {
       "slug": "yandex-media-banners-240x400-image",
@@ -510,7 +521,8 @@
       "max_file_size_bytes": 524288,
       "requires_ad_marking": false,
       "runtime_upload_supported": true,
-      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime.",
+      "position": "Yandex Advertising Network display placement: Vertical rectangle banner, typically placed in a sidebar or right-column ad slot on desktop pages."
     },
     {
       "slug": "yandex-media-banners-300x600-image",
@@ -545,7 +557,8 @@
       "max_file_size_bytes": 524288,
       "requires_ad_marking": false,
       "runtime_upload_supported": true,
-      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime.",
+      "position": "Yandex Advertising Network display placement: Half-page vertical banner, typically placed in a desktop sidebar or sticky right-column slot."
     },
     {
       "slug": "yandex-media-banners-300x500-image",
@@ -580,7 +593,8 @@
       "max_file_size_bytes": 524288,
       "requires_ad_marking": false,
       "runtime_upload_supported": true,
-      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime.",
+      "position": "Yandex Advertising Network display placement: Large vertical rectangle banner, typically placed in sidebars or extended in-content ad slots."
     },
     {
       "slug": "yandex-media-banners-320x50-image",
@@ -615,7 +629,8 @@
       "max_file_size_bytes": 524288,
       "requires_ad_marking": false,
       "runtime_upload_supported": true,
-      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime.",
+      "position": "Yandex Advertising Network display placement: Mobile leaderboard banner, typically placed at the top or bottom of a mobile page or app viewport."
     },
     {
       "slug": "yandex-media-banners-320x100-image",
@@ -650,7 +665,8 @@
       "max_file_size_bytes": 524288,
       "requires_ad_marking": false,
       "runtime_upload_supported": true,
-      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime.",
+      "position": "Yandex Advertising Network display placement: Large mobile banner, typically placed at the top or bottom of a mobile page or in-feed mobile slot."
     },
     {
       "slug": "yandex-media-banners-320x480-image",
@@ -685,7 +701,8 @@
       "max_file_size_bytes": 524288,
       "requires_ad_marking": false,
       "runtime_upload_supported": true,
-      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime.",
+      "position": "Yandex Advertising Network display placement: Mobile interstitial or large portrait banner, typically placed as a full-screen mobile ad slot."
     },
     {
       "slug": "yandex-media-banners-480x320-image",
@@ -720,7 +737,8 @@
       "max_file_size_bytes": 524288,
       "requires_ad_marking": false,
       "runtime_upload_supported": true,
-      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime.",
+      "position": "Yandex Advertising Network display placement: Landscape mobile/interstitial banner, typically placed as a full-screen landscape mobile ad slot."
     },
     {
       "slug": "yandex-media-banners-336x280-image",
@@ -755,7 +773,8 @@
       "max_file_size_bytes": 524288,
       "requires_ad_marking": false,
       "runtime_upload_supported": true,
-      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime.",
+      "position": "Yandex Advertising Network display placement: Large rectangle display banner, typically placed in-page near editorial content or in a wide sidebar."
     },
     {
       "slug": "yandex-media-banners-728x90-image",
@@ -790,7 +809,8 @@
       "max_file_size_bytes": 524288,
       "requires_ad_marking": false,
       "runtime_upload_supported": true,
-      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime.",
+      "position": "Yandex Advertising Network display placement: Desktop leaderboard banner, typically placed above main content, below navigation, or near page headers."
     },
     {
       "slug": "yandex-tgo-600x600-text-image",
@@ -825,7 +845,8 @@
       "max_file_size_bytes": 5242880,
       "requires_ad_marking": false,
       "runtime_upload_supported": true,
-      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime.",
+      "position": "Yandex Text & Image ad placement: square image asset used in search results, product gallery, and Yandex Advertising Network feed/content blocks."
     },
     {
       "slug": "yandex-tgo-1080x607-text-image",
@@ -860,7 +881,8 @@
       "max_file_size_bytes": 5242880,
       "requires_ad_marking": false,
       "runtime_upload_supported": true,
-      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime.",
+      "position": "Yandex Text & Image ad placement: 16:9 image asset used in search results, product gallery, and Yandex Advertising Network feed/content blocks."
     },
     {
       "slug": "yandex-html5-banners-300x250-html5",
@@ -883,7 +905,8 @@
       "max_file_size_bytes": 524288,
       "requires_ad_marking": false,
       "runtime_upload_supported": false,
-      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime.",
+      "position": "Yandex Advertising Network display placement: Medium rectangle display banner, typically placed in-page within article/content flows or in sidebars."
     },
     {
       "slug": "yandex-video-banner-1280x720-video",
@@ -915,7 +938,8 @@
       "max_file_size_bytes": 104857600,
       "requires_ad_marking": false,
       "runtime_upload_supported": false,
-      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime.",
+      "position": "Yandex video banner placement in Yandex Advertising Network video-capable display inventory; used in video or rich-media ad blocks."
     },
     {
       "slug": "yandex-multiformat-multi-asset-text-image",
@@ -948,7 +972,8 @@
       "max_file_size_bytes": 5242880,
       "requires_ad_marking": false,
       "runtime_upload_supported": false,
-      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime.",
+      "position": "Yandex multi-format placement: assets are automatically adapted across search results, product-gallery, and Yandex Advertising Network ad blocks."
     },
     {
       "slug": "yandex-universal-ads-600x600-text-image",
@@ -981,7 +1006,8 @@
       "max_file_size_bytes": 5242880,
       "requires_ad_marking": false,
       "runtime_upload_supported": true,
-      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime.",
+      "position": "Yandex Universal ad placement: square image asset adapted into search, product-gallery, and Yandex Advertising Network placements."
     },
     {
       "slug": "yandex-universal-ads-1080x607-text-image",
@@ -1014,7 +1040,8 @@
       "max_file_size_bytes": 5242880,
       "requires_ad_marking": false,
       "runtime_upload_supported": true,
-      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime.",
+      "position": "Yandex Universal ad placement: 16:9 image asset adapted into search, product-gallery, and Yandex Advertising Network placements."
     },
     {
       "slug": "first-data-rtb-banners-300x250-image",
@@ -1049,7 +1076,8 @@
       "max_file_size_bytes": 153600,
       "requires_ad_marking": false,
       "runtime_upload_supported": true,
-      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime.",
+      "position": "First Data RTB display placement: Medium rectangle display banner, typically placed in-page within article/content flows or in sidebars."
     },
     {
       "slug": "first-data-rtb-banners-160x600-image",
@@ -1084,7 +1112,8 @@
       "max_file_size_bytes": 153600,
       "requires_ad_marking": false,
       "runtime_upload_supported": true,
-      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime.",
+      "position": "First Data RTB display placement: Vertical skyscraper banner, typically placed in a left or right sidebar on desktop pages."
     },
     {
       "slug": "first-data-rtb-banners-240x400-image",
@@ -1119,7 +1148,8 @@
       "max_file_size_bytes": 153600,
       "requires_ad_marking": false,
       "runtime_upload_supported": true,
-      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime.",
+      "position": "First Data RTB display placement: Vertical rectangle banner, typically placed in a sidebar or right-column ad slot on desktop pages."
     },
     {
       "slug": "first-data-rtb-banners-250x250-image",
@@ -1154,7 +1184,8 @@
       "max_file_size_bytes": 153600,
       "requires_ad_marking": false,
       "runtime_upload_supported": true,
-      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime.",
+      "position": "First Data RTB display placement: Square display banner, typically placed inside content blocks or sidebar modules."
     },
     {
       "slug": "first-data-rtb-banners-300x50-image",
@@ -1189,7 +1220,8 @@
       "max_file_size_bytes": 153600,
       "requires_ad_marking": false,
       "runtime_upload_supported": true,
-      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime.",
+      "position": "First Data RTB display placement: Small mobile banner, typically placed at the top or bottom of a mobile page or app viewport."
     },
     {
       "slug": "first-data-rtb-banners-300x300-image",
@@ -1224,7 +1256,8 @@
       "max_file_size_bytes": 153600,
       "requires_ad_marking": false,
       "runtime_upload_supported": true,
-      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime.",
+      "position": "First Data RTB display placement: Square display banner, typically placed inside content blocks, feeds, or sidebar modules."
     },
     {
       "slug": "first-data-rtb-banners-300x500-image",
@@ -1259,7 +1292,8 @@
       "max_file_size_bytes": 153600,
       "requires_ad_marking": false,
       "runtime_upload_supported": true,
-      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime.",
+      "position": "First Data RTB display placement: Large vertical rectangle banner, typically placed in sidebars or extended in-content ad slots."
     },
     {
       "slug": "first-data-rtb-banners-300x600-image",
@@ -1294,7 +1328,8 @@
       "max_file_size_bytes": 153600,
       "requires_ad_marking": false,
       "runtime_upload_supported": true,
-      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime.",
+      "position": "First Data RTB display placement: Half-page vertical banner, typically placed in a desktop sidebar or sticky right-column slot."
     },
     {
       "slug": "first-data-rtb-banners-320x50-image",
@@ -1329,7 +1364,8 @@
       "max_file_size_bytes": 153600,
       "requires_ad_marking": false,
       "runtime_upload_supported": true,
-      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime.",
+      "position": "First Data RTB display placement: Mobile leaderboard banner, typically placed at the top or bottom of a mobile page or app viewport."
     },
     {
       "slug": "first-data-rtb-banners-320x100-image",
@@ -1364,7 +1400,8 @@
       "max_file_size_bytes": 153600,
       "requires_ad_marking": false,
       "runtime_upload_supported": true,
-      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime.",
+      "position": "First Data RTB display placement: Large mobile banner, typically placed at the top or bottom of a mobile page or in-feed mobile slot."
     },
     {
       "slug": "first-data-rtb-banners-320x480-image",
@@ -1399,7 +1436,8 @@
       "max_file_size_bytes": 153600,
       "requires_ad_marking": false,
       "runtime_upload_supported": true,
-      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime.",
+      "position": "First Data RTB display placement: Mobile interstitial or large portrait banner, typically placed as a full-screen mobile ad slot."
     },
     {
       "slug": "first-data-rtb-banners-336x280-image",
@@ -1434,7 +1472,8 @@
       "max_file_size_bytes": 153600,
       "requires_ad_marking": false,
       "runtime_upload_supported": true,
-      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime.",
+      "position": "First Data RTB display placement: Large rectangle display banner, typically placed in-page near editorial content or in a wide sidebar."
     },
     {
       "slug": "first-data-rtb-banners-480x320-image",
@@ -1469,7 +1508,8 @@
       "max_file_size_bytes": 153600,
       "requires_ad_marking": false,
       "runtime_upload_supported": true,
-      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime.",
+      "position": "First Data RTB display placement: Landscape mobile/interstitial banner, typically placed as a full-screen landscape mobile ad slot."
     },
     {
       "slug": "first-data-rtb-banners-580x400-image",
@@ -1504,7 +1544,8 @@
       "max_file_size_bytes": 153600,
       "requires_ad_marking": false,
       "runtime_upload_supported": true,
-      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime.",
+      "position": "First Data RTB display placement: Large landscape display banner, typically placed in wide in-content or rich-media ad slots."
     },
     {
       "slug": "first-data-rtb-banners-728x90-image",
@@ -1539,7 +1580,8 @@
       "max_file_size_bytes": 153600,
       "requires_ad_marking": false,
       "runtime_upload_supported": true,
-      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime.",
+      "position": "First Data RTB display placement: Desktop leaderboard banner, typically placed above main content, below navigation, or near page headers."
     },
     {
       "slug": "first-data-rtb-banners-970x90-image",
@@ -1574,7 +1616,8 @@
       "max_file_size_bytes": 153600,
       "requires_ad_marking": false,
       "runtime_upload_supported": true,
-      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime.",
+      "position": "First Data RTB display placement: Large desktop leaderboard banner, typically placed in a wide top-of-page header ad slot."
     },
     {
       "slug": "first-data-rtb-banners-970x250-image",
@@ -1609,7 +1652,8 @@
       "max_file_size_bytes": 153600,
       "requires_ad_marking": false,
       "runtime_upload_supported": true,
-      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime.",
+      "position": "First Data RTB display placement: Billboard banner, typically placed as a premium wide header or hero-area desktop ad slot."
     },
     {
       "slug": "first-data-rtb-html-banner-300x250-html5",
@@ -1632,7 +1676,8 @@
       "max_file_size_bytes": 5242880,
       "requires_ad_marking": true,
       "runtime_upload_supported": false,
-      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime.",
+      "position": "First Data RTB HTML5 display placement: Medium rectangle display banner, typically placed in-page within article/content flows or in sidebars."
     },
     {
       "slug": "first-data-rtb-html-banner-320x480-html5",
@@ -1655,7 +1700,8 @@
       "max_file_size_bytes": 5242880,
       "requires_ad_marking": true,
       "runtime_upload_supported": false,
-      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime.",
+      "position": "First Data RTB HTML5 display placement: Mobile interstitial or large portrait banner, typically placed as a full-screen mobile ad slot."
     },
     {
       "slug": "first-data-rtb-video-300x250-image",
@@ -1690,7 +1736,8 @@
       "max_file_size_bytes": 153600,
       "requires_ad_marking": false,
       "runtime_upload_supported": true,
-      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime.",
+      "position": "First Data RTB companion banner placement: medium rectangle displayed near or alongside a video ad/player."
     },
     {
       "slug": "first-data-rtb-video-1280x720-video",
@@ -1717,7 +1764,8 @@
       "max_file_size_bytes": 104857600,
       "requires_ad_marking": false,
       "runtime_upload_supported": false,
-      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime.",
+      "position": "First Data RTB video placement: 16:9 video used in instream, outstream, or Smart TV video inventory."
     },
     {
       "slug": "first-data-rtb-video-576x320-video",
@@ -1744,7 +1792,8 @@
       "max_file_size_bytes": 104857600,
       "requires_ad_marking": false,
       "runtime_upload_supported": false,
-      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime.",
+      "position": "First Data RTB video placement: 16:9 video used in instream, outstream, or Smart TV video inventory."
     },
     {
       "slug": "first-data-rtb-video-640x360-video",
@@ -1771,7 +1820,8 @@
       "max_file_size_bytes": 104857600,
       "requires_ad_marking": false,
       "runtime_upload_supported": false,
-      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime.",
+      "position": "First Data RTB video placement: 16:9 video used in instream, outstream, or Smart TV video inventory."
     },
     {
       "slug": "first-data-rtb-video-1920x1080-video",
@@ -1798,7 +1848,8 @@
       "max_file_size_bytes": 104857600,
       "requires_ad_marking": false,
       "runtime_upload_supported": false,
-      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime.",
+      "position": "First Data RTB video placement: 16:9 video used in instream, outstream, or Smart TV video inventory."
     },
     {
       "slug": "yandex-smart-tv-video-1920x1080-video",
@@ -1830,7 +1881,8 @@
       "max_file_size_bytes": 104857600,
       "requires_ad_marking": false,
       "runtime_upload_supported": false,
-      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime."
+      "runtime_restriction_note": "MVP accepts only PNG/JPEG uploads; GIF/video/HTML5/PSD/source-only formats are cataloged but not accepted by Telegram runtime.",
+      "position": "Yandex Smart TV video placement: full-screen 16:9 video ad shown on Smart TV-enabled inventory."
     },
     {
       "slug": "supervideo-1280x720-video",
