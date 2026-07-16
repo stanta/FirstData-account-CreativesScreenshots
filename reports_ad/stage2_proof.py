@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import re
 import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -19,6 +20,13 @@ DEFAULT_BANNER_ASPECT_RATIO_DEVIATION_THRESHOLD = 0.35
 MIN_BANNER_AREA_RATIO = 0.002
 MIN_BANNER_DIMENSION_PIXELS = 16
 MIN_BANNER_SPEC_DIMENSION_RATIO = 0.20
+MAX_BANNER_SELECTION_ATTEMPTS = 5
+
+
+@dataclass(frozen=True, slots=True)
+class _BannerValidationFeedback:
+    message: str
+    reason_codes: tuple[str, ...]
 
 
 async def generate_stage2_proof(request: ProofRequest, *, gemma_client: GemmaBBoxClient | None = None, config: BotConfig | None = None) -> ProofResult:
@@ -48,31 +56,8 @@ async def generate_stage2_proof(request: ProofRequest, *, gemma_client: GemmaBBo
     )
 
     try:
-        banner_detection = await client.detect_banner_bbox(screenshot=request.source_screenshot, spec=request.spec, request_id=request.request_id)
+        banner_bbox = await select_valid_banner_bbox_with_feedback(client=client, request=request)
         timings["banner_bbox_detected"] = _elapsed_ms(started)
-        try:
-            banner_bbox = validate_bbox_within_image(
-                banner_detection.bbox,
-                image_width=request.source_screenshot.width,
-                image_height=request.source_screenshot.height,
-                label="область баннера",
-            )
-        except ValidationError:
-            logger.info(
-                "stage2_banner_bbox_semantic_validation request_id=%s spec_slug=%s bbox=%s decision=rejected reason_codes=%s",
-                request.request_id,
-                request.spec.slug,
-                _safe_bbox(banner_detection.bbox),
-                "out_of_bounds",
-            )
-            raise
-        banner_bbox = validate_banner_bbox_semantics(
-            banner_bbox,
-            spec=request.spec,
-            image_width=request.source_screenshot.width,
-            image_height=request.source_screenshot.height,
-            request_id=request.request_id,
-        )
 
         landing_detection = await client.detect_landing_bbox(screenshot=request.source_screenshot, spec=request.spec, request_id=request.request_id)
         timings["landing_bbox_detected"] = _elapsed_ms(started)
@@ -132,6 +117,75 @@ async def generate_stage2_proof(request: ProofRequest, *, gemma_client: GemmaBBo
     except Exception as exc:
         logger.exception("stage2_generation_failed request_id=%s elapsed_ms=%s exception_class=%s", request.request_id, _elapsed_ms(started), type(exc).__name__)
         raise ScreenshotGenerationError("Не удалось сформировать proof-скриншот из загруженного скриншота.") from exc
+
+
+async def select_valid_banner_bbox_with_feedback(
+    *,
+    client: GemmaBBoxClient,
+    request: ProofRequest,
+    max_attempts: int = MAX_BANNER_SELECTION_ATTEMPTS,
+) -> BoundingBox:
+    """Select and validate a banner bbox before any creative composition."""
+
+    validation_feedback: str | None = None
+    last_feedback: _BannerValidationFeedback | None = None
+    bounded_attempts = max(1, max_attempts)
+
+    for attempt in range(1, bounded_attempts + 1):
+        banner_detection = await client.detect_banner_bbox(
+            screenshot=request.source_screenshot,
+            spec=request.spec,
+            request_id=request.request_id,
+            validation_feedback=validation_feedback,
+            selection_attempt=attempt,
+        )
+        try:
+            banner_bbox = validate_bbox_within_image(
+                banner_detection.bbox,
+                image_width=request.source_screenshot.width,
+                image_height=request.source_screenshot.height,
+                label="область баннера",
+            )
+            banner_bbox = validate_banner_bbox_semantics(
+                banner_bbox,
+                spec=request.spec,
+                image_width=request.source_screenshot.width,
+                image_height=request.source_screenshot.height,
+                request_id=request.request_id,
+            )
+        except ValidationError as exc:
+            last_feedback = _banner_validation_feedback(
+                banner_detection.bbox,
+                spec=request.spec,
+                image_width=request.source_screenshot.width,
+                image_height=request.source_screenshot.height,
+                error=exc,
+            )
+            logger.info(
+                "stage2_banner_bbox_selection_attempt request_id=%s attempt=%s max_attempts=%s spec_slug=%s bbox=%s validation_status=rejected reason_codes=%s validation_error=%s",
+                request.request_id,
+                attempt,
+                bounded_attempts,
+                request.spec.slug,
+                _safe_bbox(banner_detection.bbox),
+                ",".join(last_feedback.reason_codes) if last_feedback.reason_codes else "unknown",
+                last_feedback.message,
+            )
+            validation_feedback = last_feedback.message
+            continue
+
+        logger.info(
+            "stage2_banner_bbox_selection_attempt request_id=%s attempt=%s max_attempts=%s spec_slug=%s bbox=%s validation_status=accepted reason_codes=none validation_error=none",
+            request.request_id,
+            attempt,
+            bounded_attempts,
+            request.spec.slug,
+            _safe_bbox(banner_bbox),
+        )
+        return banner_bbox
+
+    last_message = last_feedback.message if last_feedback else "unknown validation error"
+    raise ValidationError(f"ИИ не смог подобрать валидную область баннера после {bounded_attempts} попыток. Последняя ошибка: {last_message}")
 
 
 def compose_stage2_image(
@@ -241,6 +295,76 @@ def validate_banner_bbox_semantics(
     return bbox
 
 
+def _banner_validation_feedback(
+    bbox: BoundingBox | None,
+    *,
+    spec: CreativeSpec,
+    image_width: int,
+    image_height: int,
+    error: ValidationError,
+) -> _BannerValidationFeedback:
+    reason_codes: list[str] = []
+    parts = [f"validation_error={_safe_feedback_text(error.safe_message)}"]
+    expected_ratio = _spec_aspect_ratio(spec)
+    min_width, min_height = _minimum_banner_dimensions(spec=spec)
+    parts.extend(
+        [
+            f"selected_spec={spec.slug}",
+            f"expected_dimensions={spec.dimensions_label}",
+            f"expected_ratio={expected_ratio:.3f}",
+            f"min_width={min_width}",
+            f"min_height={min_height}",
+            f"source_image={image_width}x{image_height}",
+            "coordinate_contract=source screenshot pixel bbox must stay within image bounds",
+            "tgo_full_card_policy=select full ad card/original slot, not internal image asset",
+        ]
+    )
+
+    if bbox is None:
+        reason_codes.append("bbox_missing")
+        parts.extend(["previous_invalid_bbox=none", "avoid_previous_invalid_area=true"])
+    else:
+        bbox_ratio = bbox.width / bbox.height if bbox.height > 0 else 0.0
+        ratio_deviation = _relative_ratio_deviation(bbox_ratio=bbox_ratio, expected_ratio=expected_ratio)
+        area_ratio = bbox.width * bbox.height / (image_width * image_height) if image_width > 0 and image_height > 0 else 0.0
+        center_x = bbox.x + bbox.width / 2
+        center_y = bbox.y + bbox.height / 2
+        zone = _bbox_zone(bbox=bbox, image_width=image_width, image_height=image_height)
+        reason_codes.extend(
+            _semantic_reject_reason_codes(
+                bbox=bbox,
+                ratio_invalid=ratio_deviation > DEFAULT_BANNER_ASPECT_RATIO_DEVIATION_THRESHOLD,
+                ratio_deviation=ratio_deviation,
+                min_width=min_width,
+                min_height=min_height,
+                area_ratio=area_ratio,
+                image_width=image_width,
+                image_height=image_height,
+            )
+        )
+        if bbox.x < 0 or bbox.y < 0 or bbox.width <= 0 or bbox.height <= 0:
+            reason_codes.append("invalid_dimensions")
+        if bbox.right > image_width or bbox.bottom > image_height:
+            reason_codes.append("out_of_bounds")
+        parts.extend(
+            [
+                f"previous_invalid_bbox={_safe_bbox(bbox)}",
+                f"previous_invalid_center=x={center_x:.1f},y={center_y:.1f}",
+                f"previous_invalid_zone={zone}",
+                "avoid_previous_invalid_area=true",
+                "do_not_repeat_previous_invalid_bbox=true",
+                f"bbox_ratio={bbox_ratio:.3f}",
+                f"ratio_deviation={ratio_deviation:.3f}",
+                f"area_ratio={area_ratio:.5f}",
+                f"out_of_bounds={bbox.x < 0 or bbox.y < 0 or bbox.width <= 0 or bbox.height <= 0 or bbox.right > image_width or bbox.bottom > image_height}",
+            ]
+        )
+
+    unique_reason_codes = tuple(dict.fromkeys(reason_codes or ["validation_failed"]))
+    parts.append(f"reason_codes={','.join(unique_reason_codes)}")
+    return _BannerValidationFeedback(message="; ".join(parts), reason_codes=unique_reason_codes)
+
+
 def _semantic_reject_reason_codes(
     *,
     bbox: BoundingBox,
@@ -264,6 +388,16 @@ def _semantic_reject_reason_codes(
     if area_ratio < MIN_BANNER_AREA_RATIO:
         reasons.append("min_area_ratio")
     return reasons
+
+
+def _bbox_zone(*, bbox: BoundingBox, image_width: int, image_height: int) -> str:
+    if image_width <= 0 or image_height <= 0:
+        return "unknown"
+    center_x = (bbox.x + bbox.width / 2) / image_width
+    center_y = (bbox.y + bbox.height / 2) / image_height
+    horizontal = "left" if center_x < 1 / 3 else "right" if center_x > 2 / 3 else "center"
+    vertical = "top" if center_y < 1 / 3 else "bottom" if center_y > 2 / 3 else "middle"
+    return f"{vertical}_{horizontal}"
 
 
 def _valid_or_fallback_landing_bbox(bbox: BoundingBox | None, *, image_width: int, image_height: int) -> BoundingBox:
@@ -364,8 +498,16 @@ def _safe_filename_part(value: str, *, max_length: int = 80) -> str:
     return (normalized or "artifact")[:max_length]
 
 
-def _safe_bbox(bbox: BoundingBox) -> str:
+def _safe_bbox(bbox: BoundingBox | None) -> str:
+    if bbox is None:
+        return "none"
     return f"x={bbox.x},y={bbox.y},width={bbox.width},height={bbox.height}"
+
+
+def _safe_feedback_text(value: str, *, max_length: int = 300) -> str:
+    safe = re.sub(r"[\r\n\t]+", " ", value.strip())
+    safe = re.sub(r"[^0-9A-Za-zА-Яа-яЁё .,;:()_\-=+/%×]+", "", safe)
+    return safe[:max_length]
 
 
 def _truncate_middle(value: str, limit: int) -> str:

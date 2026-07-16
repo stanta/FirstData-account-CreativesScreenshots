@@ -342,6 +342,57 @@ def test_banner_prompt_includes_selected_spec_dimensions_and_position_hint() -> 
     assert "source screenshot" in prompt
 
 
+def test_banner_prompt_includes_validation_feedback_for_retry() -> None:
+    spec = get_spec("yandex-graphic-banners-300x250-image")
+    assert spec is not None
+    screenshot = SourceScreenshotInfo(path=Path("source.png"), mime_type="image/png", width=1024, height=768, size_bytes=123)
+
+    prompt = _banner_prompt(screenshot=screenshot, spec=spec, validation_feedback="reason_codes=out_of_bounds; previous_invalid_bbox=x=390,y=10,width=50,height=50", selection_attempt=2)
+
+    assert "Base task instructions:" in prompt
+    assert "Retry feedback:" in prompt
+    assert "Previous validation feedback for this retry:" in prompt
+    assert "selection attempt 2" in prompt
+    assert "previous bbox candidate was rejected" in prompt
+    assert "reason_codes=out_of_bounds" in prompt
+    assert "Do NOT repeat the previous invalid bbox" in prompt
+    assert "previous_invalid_bbox=x=390,y=10,width=50,height=50" in prompt
+    assert "coordinate contract" in prompt
+
+
+def test_banner_retry_prompt_keeps_full_base_instructions_with_feedback_section() -> None:
+    spec = get_spec("yandex-graphic-banners-300x250-image")
+    assert spec is not None
+    screenshot = SourceScreenshotInfo(path=Path("source.png"), mime_type="image/png", width=1024, height=768, size_bytes=123)
+    feedback = (
+        "validation_error=ИИ вернул область баннера за границами скриншота; "
+        "selected_spec=yandex-graphic-banners-300x250-image; "
+        "expected_dimensions=300×250; previous_invalid_bbox=x=390,y=10,width=50,height=50; "
+        "previous_invalid_center=x=415.0,y=35.0; previous_invalid_zone=top_right; "
+        "reason_codes=out_of_bounds"
+    )
+
+    base_prompt = _banner_prompt(screenshot=screenshot, spec=spec)
+    retry_prompt = _banner_prompt(screenshot=screenshot, spec=spec, validation_feedback=feedback, selection_attempt=2)
+
+    assert base_prompt in retry_prompt
+    assert retry_prompt.index("Base task instructions:") < retry_prompt.index("Retry feedback:")
+    assert retry_prompt.count("Base task instructions:") == 1
+    assert retry_prompt.count("Retry feedback:") == 1
+    assert "Find the visible original ad slot area" in retry_prompt
+    assert "Selected spec dimensions: 300×250" in retry_prompt
+    assert spec.position_hint in retry_prompt
+    assert "The source screenshot is 1024x768 pixels" in retry_prompt
+    assert "Previous validation feedback for this retry:" in retry_prompt
+    assert "validation_error=" in retry_prompt
+    assert "reason_codes=out_of_bounds" in retry_prompt
+    assert "previous_invalid_bbox=x=390,y=10,width=50,height=50" in retry_prompt
+    assert "previous_invalid_center=x=415.0,y=35.0" in retry_prompt
+    assert "previous_invalid_zone=top_right" in retry_prompt
+    assert "Do NOT repeat the previous invalid bbox" in retry_prompt
+    assert "Base task instructions remain authoritative" in retry_prompt
+
+
 def test_tgo_banner_prompt_selects_full_visible_ad_card_container() -> None:
     spec = get_spec("yandex-tgo-600x600-text-image")
     assert spec is not None
@@ -490,18 +541,29 @@ async def test_stage2_generate_uses_mocked_gemma_and_fallback_landing(tmp_path: 
     )
 
     class MockGemma:
+        def __init__(self) -> None:
+            self.banner_calls = 0
+            self.landing_calls = 0
+
         async def detect_banner_bbox(self, **kwargs):
+            self.banner_calls += 1
+            assert kwargs["selection_attempt"] == 1
+            assert kwargs["validation_feedback"] is None
             return BBoxDetectionResult(bbox=BoundingBox(20, 30, 100, 70), confidence=0.9, source="mock")
 
         async def detect_landing_bbox(self, **kwargs):
+            self.landing_calls += 1
             return BBoxDetectionResult(bbox=None, confidence=0.0, source="mock")
 
-    result = await generate_stage2_proof(request, gemma_client=MockGemma())
+    client = MockGemma()
+    result = await generate_stage2_proof(request, gemma_client=client)
 
     assert result.output_path.exists()
     assert result.banner_bbox == BoundingBox(20, 30, 100, 70)
     assert result.landing_fallback_used is True
     assert result.landing_bbox == fallback_landing_bbox(image_width=400, image_height=300)
+    assert client.banner_calls == 1
+    assert client.landing_calls == 1
 
 
 @pytest.mark.asyncio
@@ -587,9 +649,124 @@ async def test_stage2_generate_invalid_banner_bbox_asks_for_better_screenshot(tm
     try:
         await generate_stage2_proof(request, gemma_client=MockGemma())
     except ValidationError as exc:
-        assert "Загрузите более качественный скриншот" in exc.safe_message
+        assert "после 5 попыток" in exc.safe_message
+        assert "Последняя ошибка" in exc.safe_message
     else:
         raise AssertionError("Expected ValidationError")
+
+
+@pytest.mark.asyncio
+async def test_stage2_generate_retries_with_validation_feedback_then_uses_valid_bbox(tmp_path: Path) -> None:
+    spec = get_spec("yandex-graphic-banners-300x250-image")
+    assert spec is not None
+    source_path = tmp_path / "source.png"
+    creative_path = tmp_path / "creative.png"
+    output_path = tmp_path / "final.png"
+    Image.new("RGB", (400, 300), "white").save(source_path)
+    Image.new("RGB", (300, 250), "blue").save(creative_path)
+    original_source_bytes = source_path.read_bytes()
+    request = ProofRequest(
+        request_id="req-stage2-retry",
+        network_display_name="Яндекс",
+        network_slug="yandex_graphic_banners",
+        spec=spec,
+        banner_type=spec.display_name,
+        source_screenshot=SourceScreenshotInfo(path=source_path, mime_type="image/png", width=400, height=300, size_bytes=source_path.stat().st_size),
+        creative=CreativeInfo(path=creative_path, mime_type="image/png", width=300, height=250, size_bytes=creative_path.stat().st_size),
+        landing_url="https://example.com/landing",
+        utm_params={"utm_source": "test"},
+        placement=Placement(mode="template", value="screenshot-detected"),
+        output_path=output_path,
+    )
+
+    class MockGemma:
+        def __init__(self) -> None:
+            self.banner_calls: list[dict[str, object]] = []
+
+        async def detect_banner_bbox(self, **kwargs):
+            self.banner_calls.append(kwargs)
+            assert source_path.read_bytes() == original_source_bytes
+            if len(self.banner_calls) == 1:
+                assert output_path.exists() is False
+                return BBoxDetectionResult(bbox=BoundingBox(390, 10, 50, 50), confidence=0.9, source="mock")
+            return BBoxDetectionResult(bbox=BoundingBox(20, 30, 100, 70), confidence=0.9, source="mock")
+
+        async def detect_landing_bbox(self, **kwargs):
+            return BBoxDetectionResult(bbox=None, confidence=0.0, source="mock")
+
+    client = MockGemma()
+    result = await generate_stage2_proof(request, gemma_client=client)
+
+    assert result.output_path.exists()
+    assert result.banner_bbox == BoundingBox(20, 30, 100, 70)
+    assert source_path.read_bytes() == original_source_bytes
+    assert len(client.banner_calls) == 2
+    assert client.banner_calls[0]["selection_attempt"] == 1
+    assert client.banner_calls[0]["validation_feedback"] is None
+    assert client.banner_calls[1]["selection_attempt"] == 2
+    retry_feedback = str(client.banner_calls[1]["validation_feedback"])
+    assert "out_of_bounds" in retry_feedback
+    assert "previous_invalid_bbox=x=390,y=10,width=50,height=50" in retry_feedback
+    assert "previous_invalid_center=x=415.0,y=35.0" in retry_feedback
+    assert "previous_invalid_zone=top_right" in retry_feedback
+    assert "do_not_repeat_previous_invalid_bbox=true" in retry_feedback
+    with Image.open(output_path) as result_image:
+        assert result_image.getpixel((45, 55)) != (255, 255, 255)
+        assert result_image.getpixel((390, 10)) == (255, 255, 255)
+
+
+@pytest.mark.asyncio
+async def test_stage2_generate_exhausts_five_invalid_bbox_attempts_without_composition(tmp_path: Path) -> None:
+    spec = get_spec("yandex-graphic-banners-300x250-image")
+    assert spec is not None
+    source_path = tmp_path / "source.png"
+    creative_path = tmp_path / "creative.png"
+    output_path = tmp_path / "final.png"
+    Image.new("RGB", (400, 300), "white").save(source_path)
+    Image.new("RGB", (300, 250), "blue").save(creative_path)
+    original_source_bytes = source_path.read_bytes()
+    request = ProofRequest(
+        request_id="req-stage2-exhaust",
+        network_display_name="Яндекс",
+        network_slug="yandex_graphic_banners",
+        spec=spec,
+        banner_type=spec.display_name,
+        source_screenshot=SourceScreenshotInfo(path=source_path, mime_type="image/png", width=400, height=300, size_bytes=source_path.stat().st_size),
+        creative=CreativeInfo(path=creative_path, mime_type="image/png", width=300, height=250, size_bytes=creative_path.stat().st_size),
+        landing_url="https://example.com/landing",
+        utm_params={"utm_source": "test"},
+        placement=Placement(mode="template", value="screenshot-detected"),
+        output_path=output_path,
+    )
+
+    class MockGemma:
+        def __init__(self) -> None:
+            self.banner_calls: list[dict[str, object]] = []
+            self.landing_calls = 0
+
+        async def detect_banner_bbox(self, **kwargs):
+            self.banner_calls.append(kwargs)
+            assert source_path.read_bytes() == original_source_bytes
+            return BBoxDetectionResult(bbox=BoundingBox(390, 10, 50, 50), confidence=0.9, source="mock")
+
+        async def detect_landing_bbox(self, **kwargs):
+            self.landing_calls += 1
+            return BBoxDetectionResult(bbox=None, confidence=0.0, source="mock")
+
+    client = MockGemma()
+    with pytest.raises(ValidationError) as exc_info:
+        await generate_stage2_proof(request, gemma_client=client)
+
+    assert "после 5 попыток" in exc_info.value.safe_message
+    assert "Последняя ошибка" in exc_info.value.safe_message
+    assert "out_of_bounds" in exc_info.value.safe_message
+    assert len(client.banner_calls) == 5
+    assert [call["selection_attempt"] for call in client.banner_calls] == [1, 2, 3, 4, 5]
+    assert client.banner_calls[0]["validation_feedback"] is None
+    assert all(call["validation_feedback"] for call in client.banner_calls[1:])
+    assert client.landing_calls == 0
+    assert output_path.exists() is False
+    assert source_path.read_bytes() == original_source_bytes
 
 
 @pytest.mark.asyncio

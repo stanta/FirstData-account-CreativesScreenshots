@@ -29,7 +29,15 @@ class GemmaClientError(RuntimeError):
 
 
 class GemmaBBoxClient(Protocol):
-    async def detect_banner_bbox(self, *, screenshot: SourceScreenshotInfo, spec: CreativeSpec, request_id: str) -> BBoxDetectionResult: ...
+    async def detect_banner_bbox(
+        self,
+        *,
+        screenshot: SourceScreenshotInfo,
+        spec: CreativeSpec,
+        request_id: str,
+        validation_feedback: str | None = None,
+        selection_attempt: int = 1,
+    ) -> BBoxDetectionResult: ...
 
     async def detect_landing_bbox(self, *, screenshot: SourceScreenshotInfo, spec: CreativeSpec, request_id: str) -> BBoxDetectionResult: ...
 
@@ -58,8 +66,23 @@ class HeaderAuthGemmaClient:
         self._ocr_image_max_width = max(0, ocr_image_max_width)
         self._ocr_image_max_pixels = max(0, ocr_image_max_pixels)
 
-    async def detect_banner_bbox(self, *, screenshot: SourceScreenshotInfo, spec: CreativeSpec, request_id: str) -> BBoxDetectionResult:
-        return await self._detect_bbox(stage="banner_bbox", screenshot=screenshot, spec=spec, request_id=request_id)
+    async def detect_banner_bbox(
+        self,
+        *,
+        screenshot: SourceScreenshotInfo,
+        spec: CreativeSpec,
+        request_id: str,
+        validation_feedback: str | None = None,
+        selection_attempt: int = 1,
+    ) -> BBoxDetectionResult:
+        return await self._detect_bbox(
+            stage="banner_bbox",
+            screenshot=screenshot,
+            spec=spec,
+            request_id=request_id,
+            validation_feedback=validation_feedback,
+            selection_attempt=selection_attempt,
+        )
 
     async def detect_landing_bbox(self, *, screenshot: SourceScreenshotInfo, spec: CreativeSpec, request_id: str) -> BBoxDetectionResult:
         return await self._detect_bbox(stage="landing_bbox", screenshot=screenshot, spec=spec, request_id=request_id)
@@ -71,6 +94,8 @@ class HeaderAuthGemmaClient:
         screenshot: SourceScreenshotInfo,
         spec: CreativeSpec,
         request_id: str,
+        validation_feedback: str | None = None,
+        selection_attempt: int = 1,
     ) -> BBoxDetectionResult:
         if not self._base_url:
             raise GemmaClientError("OCR LLM endpoint is not configured")
@@ -85,7 +110,14 @@ class HeaderAuthGemmaClient:
                 max_pixels=self._ocr_image_max_pixels,
             )
             prompt = (
-                _banner_prompt(screenshot=screenshot, spec=spec, ocr_image_width=ocr_image_width, ocr_image_height=ocr_image_height)
+                _banner_prompt(
+                    screenshot=screenshot,
+                    spec=spec,
+                    ocr_image_width=ocr_image_width,
+                    ocr_image_height=ocr_image_height,
+                    validation_feedback=validation_feedback,
+                    selection_attempt=selection_attempt,
+                )
                 if stage == "banner_bbox"
                 else _landing_prompt(screenshot=screenshot, spec=spec, ocr_image_width=ocr_image_width, ocr_image_height=ocr_image_height)
             )
@@ -228,7 +260,15 @@ def _require_ocr_runtime_config(config: BotConfig | None) -> BotConfig:
     return config
 
 
-def _banner_prompt(*, screenshot: SourceScreenshotInfo, spec: CreativeSpec, ocr_image_width: int | None = None, ocr_image_height: int | None = None) -> str:
+def _banner_prompt(
+    *,
+    screenshot: SourceScreenshotInfo,
+    spec: CreativeSpec,
+    ocr_image_width: int | None = None,
+    ocr_image_height: int | None = None,
+    validation_feedback: str | None = None,
+    selection_attempt: int = 1,
+) -> str:
     ocr_width = ocr_image_width or screenshot.width
     ocr_height = ocr_image_height or screenshot.height
     candidate_instruction = ""
@@ -239,7 +279,8 @@ def _banner_prompt(*, screenshot: SourceScreenshotInfo, spec: CreativeSpec, ocr_
             "Allowed candidate role labels include: full_ad_card, original_ad_slot, internal_image_asset, landing_area, browser_ui, unknown. "
             "Prefer full_ad_card or original_ad_slot for replacement; do not select internal_image_asset when the full ad card/container is visible. "
         )
-    return (
+    base_task_instructions = (
+        "Base task instructions: "
         "You are analyzing a placement screenshot for an advertising proof generator. "
         "Find the visible original ad slot area that must be replaced by the uploaded creative. "
         "Use the selected network/spec context, expected dimensions, aspect ratio, and placement hint. "
@@ -255,8 +296,19 @@ def _banner_prompt(*, screenshot: SourceScreenshotInfo, spec: CreativeSpec, ocr_
         f"The source screenshot is {screenshot.width}x{screenshot.height} pixels; the OCR input image sent to you is {ocr_width}x{ocr_height} pixels. "
         "The source and OCR input may differ; do not crop or reset the coordinate origin. "
         f"Selected spec slug: {spec.slug}. Selected spec name: {spec.display_name}. Network: {spec.network_display_name}. "
-     
     )
+    feedback_instruction = ""
+    if validation_feedback and validation_feedback.strip():
+        feedback_instruction = (
+            "\nRetry feedback: "
+            f"This is selection attempt {max(1, selection_attempt)}. "
+            "The previous bbox candidate was rejected by deterministic validation. "
+            f"Previous validation feedback for this retry: {_sanitize_log_text(validation_feedback, limit=900)} "
+            "Do NOT repeat the previous invalid bbox or substantially the same visual area. "
+            "Use this feedback only as correction context; the Base task instructions remain authoritative. "
+            "Choose a different original ad slot candidate that satisfies the coordinate contract, selected spec dimensions, aspect ratio, minimum size, and TGO/full-card policy. "
+        )
+    return base_task_instructions + feedback_instruction
 
 
 def _landing_prompt(*, screenshot: SourceScreenshotInfo, spec: CreativeSpec, ocr_image_width: int | None = None, ocr_image_height: int | None = None) -> str:
