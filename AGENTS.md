@@ -221,6 +221,14 @@ python -m playwright install chromium
 
 ---
 
+## Ход проекта — 2026-07-16 — Stage 2 semantic banner bbox validation and TGO prompt hardening
+
+- Добавлена post-OCR semantic validation для Stage 2 banner bbox сразу после проверки границ изображения: bbox сверяется с aspect ratio выбранного spec, минимальной площадью и минимальными размерами относительно spec, чтобы не принимать внутренний asset вместо полного рекламного блока.
+- Для TGO/text-image форматов поведение уточнено: заменяется полный видимый ad card/container, включая image, text и CTA, а не только внутренняя картинка. Соответствующая инструкция добавлена в OCR prompt.
+- Пользовательская ошибка при implausible bbox остается безопасной: просит более четкий скриншот и не раскрывает OCR internals, секреты, UTM или пути файлов. Диагностика пишется только структурированными полями request/spec/bbox/ratio/area/decision.
+
+---
+
 ## Ход проекта — 2026-07-14 — Stage 2 OCR config propagation bugfix
 
 - Исправлен production bug в screenshot-only Stage 2 flow: runtime `BotConfig` теперь явно пробрасывается из Telegram runtime path в Stage 2 proof generator, поэтому `build_gemma_client_from_config(...)` больше не получает `None` при штатном запуске через бота.

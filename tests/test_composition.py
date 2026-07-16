@@ -8,7 +8,7 @@ from reports_ad.config import BotConfig
 from reports_ad.gemma_client import HeaderAuthGemmaClient, _banner_prompt, _parse_bbox_result, build_gemma_client_from_config
 from reports_ad.models import BBoxDetectionResult, BoundingBox, CreativeInfo, Placement, ProofRequest, ProofResult, SourceScreenshotInfo
 from reports_ad.proof import compose_final_image
-from reports_ad.stage2_proof import compose_stage2_image, fallback_landing_bbox, generate_stage2_proof
+from reports_ad.stage2_proof import compose_stage2_image, fallback_landing_bbox, generate_stage2_proof, validate_banner_bbox_semantics
 from reports_ad.catalog import get_spec
 from reports_ad.validation import ValidationError
 
@@ -158,6 +158,47 @@ def test_fallback_landing_bbox_uses_lower_10_to_20_percent() -> None:
     assert bbox.height == 128
 
 
+def test_tgo_semantic_banner_bbox_rejects_wrong_internal_image_shape(caplog: pytest.LogCaptureFixture) -> None:
+    spec = get_spec("yandex-tgo-600x600-text-image")
+    assert spec is not None
+    bbox = BoundingBox(x=922, y=215, width=217, height=373)
+
+    with caplog.at_level("INFO", logger="reports_ad.stage2_proof"), pytest.raises(ValidationError, match="неправдоподобную область баннера"):
+        validate_banner_bbox_semantics(
+            bbox,
+            spec=spec,
+            image_width=1280,
+            image_height=828,
+            request_id="ee76e0a22f96",
+        )
+
+    log_text = "\n".join(record.getMessage() for record in caplog.records)
+    assert "stage2_banner_bbox_semantic_validation request_id=ee76e0a22f96" in log_text
+    assert "spec_slug=yandex-tgo-600x600-text-image" in log_text
+    assert "decision=rejected" in log_text
+    assert "expected_ratio=1.000" in log_text
+
+
+def test_tgo_semantic_banner_bbox_accepts_plausible_square_slot(caplog: pytest.LogCaptureFixture) -> None:
+    spec = get_spec("yandex-tgo-600x600-text-image")
+    assert spec is not None
+    bbox = BoundingBox(x=680, y=140, width=360, height=350)
+
+    with caplog.at_level("INFO", logger="reports_ad.stage2_proof"):
+        result = validate_banner_bbox_semantics(
+            bbox,
+            spec=spec,
+            image_width=1280,
+            image_height=828,
+            request_id="req-plausible-tgo",
+        )
+
+    assert result == bbox
+    log_text = "\n".join(record.getMessage() for record in caplog.records)
+    assert "stage2_banner_bbox_semantic_validation request_id=req-plausible-tgo" in log_text
+    assert "decision=accepted" in log_text
+
+
 def test_gemma_client_builder_uses_ocr_config_fields() -> None:
     config = BotConfig(
         telegram_token="test",
@@ -217,6 +258,19 @@ def test_banner_prompt_includes_selected_spec_dimensions_and_position_hint() -> 
     assert "landing/link/browser area" in prompt
     assert "coordinate_space='normalized'" in prompt
     assert "source screenshot" in prompt
+
+
+def test_tgo_banner_prompt_selects_full_visible_ad_card_container() -> None:
+    spec = get_spec("yandex-tgo-600x600-text-image")
+    assert spec is not None
+    screenshot = SourceScreenshotInfo(path=Path("source.png"), mime_type="image/png", width=1280, height=828, size_bytes=123)
+
+    prompt = _banner_prompt(screenshot=screenshot, spec=spec)
+
+    assert "full visible ad card/container including image, text and CTA" in prompt
+    assert "not only the internal image asset" in prompt
+    assert "coordinate_space='normalized'" in prompt
+    assert spec.position_hint in prompt
 
 
 @pytest.mark.asyncio

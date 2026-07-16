@@ -10,11 +10,15 @@ from PIL import Image, ImageDraw, ImageFont
 
 from .config import BotConfig
 from .gemma_client import GemmaBBoxClient, build_gemma_client_from_config
-from .models import BoundingBox, GeneratedProofArtifacts, ProofRequest, ProofResult
+from .models import BoundingBox, CreativeSpec, GeneratedProofArtifacts, ProofRequest, ProofResult
 from .proof import ScreenshotGenerationError
 from .validation import ValidationError, merge_url_with_utm, validate_bbox_within_image
 
 logger = logging.getLogger(__name__)
+DEFAULT_BANNER_ASPECT_RATIO_DEVIATION_THRESHOLD = 0.35
+MIN_BANNER_AREA_RATIO = 0.002
+MIN_BANNER_DIMENSION_PIXELS = 16
+MIN_BANNER_SPEC_DIMENSION_RATIO = 0.20
 
 
 async def generate_stage2_proof(request: ProofRequest, *, gemma_client: GemmaBBoxClient | None = None, config: BotConfig | None = None) -> ProofResult:
@@ -40,7 +44,7 @@ async def generate_stage2_proof(request: ProofRequest, *, gemma_client: GemmaBBo
         request.source_screenshot.height,
         request.creative.width,
         request.creative.height,
-        bool(request.spec.position_hint.strip()),
+        request.spec.position_hint,
     )
 
     try:
@@ -51,6 +55,13 @@ async def generate_stage2_proof(request: ProofRequest, *, gemma_client: GemmaBBo
             image_width=request.source_screenshot.width,
             image_height=request.source_screenshot.height,
             label="область баннера",
+        )
+        banner_bbox = validate_banner_bbox_semantics(
+            banner_bbox,
+            spec=request.spec,
+            image_width=request.source_screenshot.width,
+            image_height=request.source_screenshot.height,
+            request_id=request.request_id,
         )
 
         landing_detection = await client.detect_landing_bbox(screenshot=request.source_screenshot, spec=request.spec, request_id=request.request_id)
@@ -170,6 +181,45 @@ def fallback_landing_bbox(*, image_width: int, image_height: int, ratio: float =
     return BoundingBox(x=0, y=image_height - height, width=image_width, height=height)
 
 
+def validate_banner_bbox_semantics(
+    bbox: BoundingBox,
+    *,
+    spec: CreativeSpec,
+    image_width: int,
+    image_height: int,
+    request_id: str,
+    max_aspect_ratio_deviation: float = DEFAULT_BANNER_ASPECT_RATIO_DEVIATION_THRESHOLD,
+) -> BoundingBox:
+    """Validate OCR banner bbox against selected creative spec geometry."""
+
+    expected_ratio = _spec_aspect_ratio(spec)
+    bbox_ratio = bbox.width / bbox.height if bbox.height > 0 else 0.0
+    ratio_deviation = _relative_ratio_deviation(bbox_ratio=bbox_ratio, expected_ratio=expected_ratio)
+    area_ratio = bbox.width * bbox.height / (image_width * image_height) if image_width > 0 and image_height > 0 else 0.0
+    min_width, min_height = _minimum_banner_dimensions(spec=spec)
+    too_small = bbox.width < min_width or bbox.height < min_height or area_ratio < MIN_BANNER_AREA_RATIO
+    ratio_invalid = ratio_deviation > max_aspect_ratio_deviation
+    accepted = not (ratio_invalid or too_small)
+
+    logger.info(
+        "stage2_banner_bbox_semantic_validation request_id=%s spec_slug=%s bbox=%s bbox_ratio=%.3f expected_ratio=%.3f ratio_deviation=%.3f area_ratio=%.5f min_width=%s min_height=%s decision=%s",
+        request_id,
+        spec.slug,
+        _safe_bbox(bbox),
+        bbox_ratio,
+        expected_ratio,
+        ratio_deviation,
+        area_ratio,
+        min_width,
+        min_height,
+        "accepted" if accepted else "rejected",
+    )
+
+    if not accepted:
+        raise ValidationError("ИИ нашел неправдоподобную область баннера на скриншоте. Загрузите более четкий скриншот, где весь рекламный блок виден полностью.")
+    return bbox
+
+
 def _valid_or_fallback_landing_bbox(bbox: BoundingBox | None, *, image_width: int, image_height: int) -> BoundingBox:
     if bbox is None:
         return fallback_landing_bbox(image_width=image_width, image_height=image_height)
@@ -229,6 +279,27 @@ def _draw_landing_area(image: Image.Image, bbox: BoundingBox, effective_click_ur
 def _validate_bbox_for_compose(bbox: BoundingBox, *, image: Image.Image, label: str) -> None:
     if bbox.x < 0 or bbox.y < 0 or bbox.width <= 0 or bbox.height <= 0 or bbox.right > image.width or bbox.bottom > image.height:
         raise ScreenshotGenerationError(f"Некорректная {label}: координаты выходят за границы изображения.")
+
+
+def _spec_aspect_ratio(spec: CreativeSpec) -> float:
+    if spec.width and spec.height and spec.width > 0 and spec.height > 0:
+        return spec.width / spec.height
+    return 0.0
+
+
+def _relative_ratio_deviation(*, bbox_ratio: float, expected_ratio: float) -> float:
+    if bbox_ratio <= 0 or expected_ratio <= 0:
+        return 0.0
+    return abs(bbox_ratio - expected_ratio) / expected_ratio
+
+
+def _minimum_banner_dimensions(*, spec: CreativeSpec) -> tuple[int, int]:
+    min_width = MIN_BANNER_DIMENSION_PIXELS
+    min_height = MIN_BANNER_DIMENSION_PIXELS
+    if spec.width and spec.height:
+        min_width = max(min_width, int(round(spec.width * MIN_BANNER_SPEC_DIMENSION_RATIO)))
+        min_height = max(min_height, int(round(spec.height * MIN_BANNER_SPEC_DIMENSION_RATIO)))
+    return min_width, min_height
 
 
 def _artifact_base(request: ProofRequest) -> Path:

@@ -191,6 +191,7 @@ def _banner_prompt(*, screenshot: SourceScreenshotInfo, spec: CreativeSpec) -> s
         "Find the visible original ad slot area that must be replaced by the uploaded creative. "
         "Use the selected network/spec context, expected dimensions, aspect ratio, and placement hint. "
         "You MUST identify the original ad slot matching this selected banner type and position hint; do NOT select the uploaded replacement creative, a floating preview, an editor overlay, or a landing/link/browser area. "
+        "Select the full visible ad card/container including image, text and CTA, not only the internal image asset. "
         "Return ONLY JSON with keys: bbox {x,y,width,height}, confidence 0..1, reason, coordinate_space, image_width, image_height. "
         "Preferred output: coordinate_space='normalized' with bbox values as 0..1 fractions of the full screenshot. "
         "If you return source screenshot pixel coordinates, set coordinate_space='source_pixels'. "
@@ -198,7 +199,7 @@ def _banner_prompt(*, screenshot: SourceScreenshotInfo, spec: CreativeSpec) -> s
         f"The source screenshot is {screenshot.width}x{screenshot.height} pixels; bbox must map to this source screenshot and must never crop or reset the coordinate origin. "
         f"Selected spec slug: {spec.slug}. Selected spec name: {spec.display_name}. Network: {spec.network_display_name}. "
         f"Selected spec dimensions: {spec.dimensions_label}; expected aspect ratio: {_safe_aspect_ratio(spec)}. "
-        f"Selected banner placement hint from catalog: {spec.placement_hint}"
+        f"Selected banner usually placement: {spec.placement_hint}"
     )
 
 
