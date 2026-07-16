@@ -23,6 +23,10 @@ dev = [
   "pytest>=8.0.0",
   "pytest-asyncio>=0.23.0",
 ]
+telegram-e2e = [
+  "kurigram>=2.1,<3",
+  "TgCrypto>=1.2.5,<2",
+]
 
 [project.scripts]
 reports-ad-bot = "reports_ad.bot:main"
@@ -38,3 +42,9 @@ reports_ad = ["data/*.json"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+markers = [
+  "telegram_e2e: opt-in live Telegram end-to-end tests driven by Kurigram",
+  "network: tests that access external network services",
+  "slow: tests expected to run slower than the unit suite",
+  "quarantine: temporarily excluded or non-release-blocking flaky tests",
+]

@@ -52,6 +52,49 @@ python -m reports_ad
 reports-ad-bot
 ```
 
+## Live Telegram E2E tests
+
+Automated user-facing Telegram E2E tests live under `tests/e2e` and are skipped by default. They use Kurigram as an external user driver and do not replace the production `python-telegram-bot` polling runtime.
+
+Install test-only dependencies when you intentionally need the live suite:
+
+```bash
+cd /512-2/FD/reports_ad
+pip install -e ".[dev,telegram-e2e]"
+```
+
+Run the production bot separately with a dedicated test bot token; only one polling process may use that token:
+
+```bash
+cd /512-2/FD/reports_ad
+export REPORTS_AD_TELEGRAM_TOKEN="<dedicated-test-bot-token>"
+export REPORTS_AD_ALLOW_LOCAL_CREATIVE_PATH=0
+python -m reports_ad
+```
+
+In another shell, enable and run the live E2E suite with a dedicated Telegram user account session:
+
+```bash
+cd /512-2/FD/reports_ad
+export TELEGRAM_E2E=1
+export TELEGRAM_API_ID="<telegram-api-id>"
+export TELEGRAM_API_HASH="<telegram-api-hash>"
+export TELEGRAM_SESSION_STRING="<kurigram-string-session>"
+export TELEGRAM_BOT_USERNAME="@<dedicated-test-bot-username>"
+export TELEGRAM_E2E_TIMEOUT=180
+pytest -m telegram_e2e tests/e2e
+```
+
+Optional variables:
+
+| Variable                     |                      Default | Purpose                                                       |
+| ---------------------------- | ---------------------------: | ------------------------------------------------------------- |
+| `TELEGRAM_E2E_ARTIFACT_DIR`  | `tmp/telegram-e2e-artifacts` | Directory for downloaded proof documents/photos.              |
+| `TELEGRAM_E2E_POLL_INTERVAL` |                        `1.0` | Poll interval while waiting for bot responses.                |
+| `TELEGRAM_E2E_CLEANUP`       |                          `1` | Delete sent/received test messages where Telegram permits it. |
+
+The live harness redacts Telegram bot tokens, API hashes, string sessions, chat/user IDs, file IDs, and full UTM URLs from timeout diagnostics. Normal `pytest` runs do not require Telegram credentials; without `TELEGRAM_E2E=1`, live scenarios are collected as skipped tests.
+
 ## Docker
 
 Контейнерный runtime рассчитан на polling-бота и headless Playwright Chromium внутри Linux-контейнера. Браузер и системные зависимости устанавливаются на этапе сборки образа, поэтому интерактивный `playwright install` при старте контейнера не нужен.
