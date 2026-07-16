@@ -50,12 +50,22 @@ async def generate_stage2_proof(request: ProofRequest, *, gemma_client: GemmaBBo
     try:
         banner_detection = await client.detect_banner_bbox(screenshot=request.source_screenshot, spec=request.spec, request_id=request.request_id)
         timings["banner_bbox_detected"] = _elapsed_ms(started)
-        banner_bbox = validate_bbox_within_image(
-            banner_detection.bbox,
-            image_width=request.source_screenshot.width,
-            image_height=request.source_screenshot.height,
-            label="область баннера",
-        )
+        try:
+            banner_bbox = validate_bbox_within_image(
+                banner_detection.bbox,
+                image_width=request.source_screenshot.width,
+                image_height=request.source_screenshot.height,
+                label="область баннера",
+            )
+        except ValidationError:
+            logger.info(
+                "stage2_banner_bbox_semantic_validation request_id=%s spec_slug=%s bbox=%s decision=rejected reason_codes=%s",
+                request.request_id,
+                request.spec.slug,
+                _safe_bbox(banner_detection.bbox),
+                "out_of_bounds",
+            )
+            raise
         banner_bbox = validate_banner_bbox_semantics(
             banner_bbox,
             spec=request.spec,
@@ -200,9 +210,19 @@ def validate_banner_bbox_semantics(
     too_small = bbox.width < min_width or bbox.height < min_height or area_ratio < MIN_BANNER_AREA_RATIO
     ratio_invalid = ratio_deviation > max_aspect_ratio_deviation
     accepted = not (ratio_invalid or too_small)
+    reason_codes = _semantic_reject_reason_codes(
+        bbox=bbox,
+        ratio_invalid=ratio_invalid,
+        ratio_deviation=ratio_deviation,
+        min_width=min_width,
+        min_height=min_height,
+        area_ratio=area_ratio,
+        image_width=image_width,
+        image_height=image_height,
+    )
 
     logger.info(
-        "stage2_banner_bbox_semantic_validation request_id=%s spec_slug=%s bbox=%s bbox_ratio=%.3f expected_ratio=%.3f ratio_deviation=%.3f area_ratio=%.5f min_width=%s min_height=%s decision=%s",
+        "stage2_banner_bbox_semantic_validation request_id=%s spec_slug=%s bbox=%s bbox_ratio=%.3f expected_ratio=%.3f ratio_deviation=%.3f area_ratio=%.5f min_width=%s min_height=%s decision=%s reason_codes=%s",
         request_id,
         spec.slug,
         _safe_bbox(bbox),
@@ -213,11 +233,37 @@ def validate_banner_bbox_semantics(
         min_width,
         min_height,
         "accepted" if accepted else "rejected",
+        ",".join(reason_codes) if reason_codes else "none",
     )
 
     if not accepted:
         raise ValidationError("ИИ нашел неправдоподобную область баннера на скриншоте. Загрузите более четкий скриншот, где весь рекламный блок виден полностью.")
     return bbox
+
+
+def _semantic_reject_reason_codes(
+    *,
+    bbox: BoundingBox,
+    ratio_invalid: bool,
+    ratio_deviation: float,
+    min_width: int,
+    min_height: int,
+    area_ratio: float,
+    image_width: int,
+    image_height: int,
+) -> list[str]:
+    reasons: list[str] = []
+    if bbox.x < 0 or bbox.y < 0 or bbox.width <= 0 or bbox.height <= 0 or bbox.right > image_width or bbox.bottom > image_height:
+        reasons.append("out_of_bounds")
+    if ratio_invalid:
+        reasons.append("aspect_ratio_deviation")
+    if bbox.width < min_width:
+        reasons.append("min_width")
+    if bbox.height < min_height:
+        reasons.append("min_height")
+    if area_ratio < MIN_BANNER_AREA_RATIO:
+        reasons.append("min_area_ratio")
+    return reasons
 
 
 def _valid_or_fallback_landing_bbox(bbox: BoundingBox | None, *, image_width: int, image_height: int) -> BoundingBox:

@@ -215,6 +215,16 @@ python -m playwright install chromium
 
 ---
 
+## Ход проекта — 2026-07-16 — Stage 2 OCR robustness next-step fixes
+
+- OCR input теперь создается как отдельная PNG-копия скриншота и ограничивается `REPORTS_AD_OCR_IMAGE_MAX_WIDTH=1280` и `REPORTS_AD_OCR_IMAGE_MAX_PIXELS=2000000` по умолчанию; исходный screenshot для итоговой композиции не изменяется. Bbox из `resized_pixels` OCR-копии масштабируется обратно в координаты исходного изображения перед `compose_stage2_image`.
+- Контракт координат ужесточен: `coordinate_space=normalized` принимается только для реальных 0..1 bbox-значений, а `coordinate_space=resized_pixels` требует `image_width`/`image_height`; нарушения логируются как `invalid_coordinate_space` и идут через retry OCR parsing path без раскрытия секретов/байтов изображения.
+- Для TGO/text-image prompt поддерживает `candidates` с ролями `full_ad_card`, `original_ad_slot`, `internal_image_asset`, `landing_area`, `browser_ui`, `unknown`; deterministic selection предпочитает `full_ad_card`/`original_ad_slot` и отбрасывает `internal_image_asset`, если продуктово заменяется полный ad card/container.
+- Observability расширена: логируются sanitized raw bbox/candidate fields до normalization и reason codes semantic reject (`aspect_ratio_deviation`, `min_width`, `min_height`, `min_area_ratio`, `out_of_bounds`, `invalid_coordinate_space` для parser path). Пользовательские ошибки остаются краткими и безопасными.
+- Проверка: `reports_ad/.venv/bin/python -m pytest reports_ad/tests/test_composition.py reports_ad/tests/test_validation.py reports_ad/tests/test_diagnostics.py -q` — passed, 75 tests.
+
+---
+
 ## Ход проекта — 2026-07-09 — контейнеризация runtime
 
 Для `reports_ad` добавлены минимальные production-practical container assets под Telegram polling bot и headless Playwright Chromium.

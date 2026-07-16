@@ -204,6 +204,8 @@ def test_bot_config_reads_ocr_llm_env_names(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setenv("REPORTS_AD_OCR_LLM_TIMEOUT_SECONDS", "20")
     monkeypatch.setenv("REPORTS_AD_OCR_LLM_MAX_RETRIES", "3")
     monkeypatch.setenv("REPORTS_AD_OCR_LLM_CONFIDENCE_THRESHOLD", "0.6")
+    monkeypatch.setenv("REPORTS_AD_OCR_IMAGE_MAX_WIDTH", "1024")
+    monkeypatch.setenv("REPORTS_AD_OCR_IMAGE_MAX_PIXELS", "900000")
 
     config = BotConfig.from_env()
 
@@ -213,6 +215,8 @@ def test_bot_config_reads_ocr_llm_env_names(monkeypatch: pytest.MonkeyPatch) -> 
     assert config.ocr_llm_timeout_seconds == 20
     assert config.ocr_llm_max_retries == 3
     assert config.ocr_llm_confidence_threshold == 0.6
+    assert config.ocr_image_max_width == 1024
+    assert config.ocr_image_max_pixels == 900_000
 
 
 def test_validate_creative_against_selected_spec_accepts_runtime_png(tmp_path: Path) -> None:

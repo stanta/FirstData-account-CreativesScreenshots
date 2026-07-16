@@ -175,6 +175,8 @@ docker compose down
 | `REPORTS_AD_OCR_LLM_TIMEOUT_SECONDS`        |                                   `20` | timeout OCR LLM request                                                                                                    |
 | `REPORTS_AD_OCR_LLM_MAX_RETRIES`            |                                    `5` | количество попыток OCR LLM request / JSON parsing                                                                          |
 | `REPORTS_AD_OCR_LLM_CONFIDENCE_THRESHOLD`   |                                 `0.45` | минимальная confidence для принятия bbox                                                                                   |
+| `REPORTS_AD_OCR_IMAGE_MAX_WIDTH`            |                                 `1280` | максимальная ширина отдельной OCR-копии скриншота; исходный скриншот для композиции не изменяется                          |
+| `REPORTS_AD_OCR_IMAGE_MAX_PIXELS`           |                              `2000000` | максимальное число пикселей отдельной OCR-копии скриншота перед отправкой в OCR endpoint                                   |
 | `REPORTS_AD_OCR_LLM_HEADER_AUTHORISATION`   |                                    нет | опциональный raw Authorization header; имеет приоритет над user/password                                                   |
 | `REPORTS_AD_OCR_LLM_USER`                   |                                    нет | опциональный basic-auth username для OCR LLM                                                                               |
 | `REPORTS_AD_OCR_LLM_PASSWORD`               |                                    нет | опциональный basic-auth password для OCR LLM                                                                               |

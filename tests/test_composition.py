@@ -5,7 +5,7 @@ from PIL import Image, ImageChops, ImageDraw
 
 from reports_ad.bot import build_application
 from reports_ad.config import BotConfig
-from reports_ad.gemma_client import HeaderAuthGemmaClient, _banner_prompt, _parse_bbox_result, build_gemma_client_from_config
+from reports_ad.gemma_client import GemmaClientError, HeaderAuthGemmaClient, _banner_prompt, _parse_bbox_result, build_gemma_client_from_config
 from reports_ad.models import BBoxDetectionResult, BoundingBox, CreativeInfo, Placement, ProofRequest, ProofResult, SourceScreenshotInfo
 from reports_ad.proof import compose_final_image
 from reports_ad.stage2_proof import compose_stage2_image, fallback_landing_bbox, generate_stage2_proof, validate_banner_bbox_semantics
@@ -177,6 +177,7 @@ def test_tgo_semantic_banner_bbox_rejects_wrong_internal_image_shape(caplog: pyt
     assert "spec_slug=yandex-tgo-600x600-text-image" in log_text
     assert "decision=rejected" in log_text
     assert "expected_ratio=1.000" in log_text
+    assert "reason_codes=aspect_ratio_deviation" in log_text
 
 
 def test_tgo_semantic_banner_bbox_accepts_plausible_square_slot(caplog: pytest.LogCaptureFixture) -> None:
@@ -197,6 +198,7 @@ def test_tgo_semantic_banner_bbox_accepts_plausible_square_slot(caplog: pytest.L
     log_text = "\n".join(record.getMessage() for record in caplog.records)
     assert "stage2_banner_bbox_semantic_validation request_id=req-plausible-tgo" in log_text
     assert "decision=accepted" in log_text
+    assert "reason_codes=none" in log_text
 
 
 def test_gemma_client_builder_uses_ocr_config_fields() -> None:
@@ -218,6 +220,8 @@ def test_gemma_client_builder_uses_ocr_config_fields() -> None:
     assert client._timeout_seconds == 20
     assert client._max_retries == 3
     assert client._confidence_threshold == 0.6
+    assert client._ocr_image_max_width == 1280
+    assert client._ocr_image_max_pixels == 2_000_000
 
 
 def test_parse_bbox_result_rescales_from_resized_coordinate_space() -> None:
@@ -241,6 +245,84 @@ def test_parse_bbox_result_rescales_from_resized_coordinate_space() -> None:
     assert result.raw_metadata["coordinate_image_width"] == 800
     assert result.raw_metadata["coordinate_image_height"] == 600
     assert result.raw_metadata["scaled_to_source"] is True
+
+
+def test_parse_bbox_result_rejects_invalid_normalized_coordinate_space() -> None:
+    with pytest.raises(GemmaClientError, match="invalid_coordinate_space"):
+        _parse_bbox_result(
+            {
+                "bbox": {"x": 922, "y": 215, "width": 217, "height": 373},
+                "confidence": 0.95,
+                "coordinate_space": "normalized",
+                "reason": "model mislabeled pixel coordinates as normalized",
+            },
+            stage="banner_bbox",
+            confidence_threshold=0.45,
+            source_image_width=1280,
+            source_image_height=828,
+        )
+
+
+def test_parse_bbox_result_requires_resized_pixel_image_size() -> None:
+    with pytest.raises(GemmaClientError, match="invalid_coordinate_space"):
+        _parse_bbox_result(
+            {
+                "bbox": {"x": 400, "y": 100, "width": 200, "height": 300},
+                "confidence": 0.95,
+                "coordinate_space": "resized_pixels",
+            },
+            stage="banner_bbox",
+            confidence_threshold=0.45,
+            source_image_width=1600,
+            source_image_height=1200,
+        )
+
+
+def test_tgo_candidates_choose_full_ad_card_over_internal_image_asset() -> None:
+    spec = get_spec("yandex-tgo-600x600-text-image")
+    assert spec is not None
+
+    result = _parse_bbox_result(
+        {
+            "candidates": [
+                {
+                    "role": "internal_image_asset",
+                    "bbox": {"x": 820, "y": 190, "width": 225, "height": 400},
+                    "confidence": 0.99,
+                    "coordinate_space": "resized_pixels",
+                    "image_width": 1280,
+                    "image_height": 828,
+                },
+                {
+                    "role": "full_ad_card",
+                    "bbox": {"x": 680, "y": 140, "width": 360, "height": 350},
+                    "confidence": 0.80,
+                    "coordinate_space": "resized_pixels",
+                    "image_width": 1280,
+                    "image_height": 828,
+                },
+                {
+                    "role": "browser_ui",
+                    "bbox": {"x": 0, "y": 760, "width": 1280, "height": 68},
+                    "confidence": 1.0,
+                    "coordinate_space": "resized_pixels",
+                    "image_width": 1280,
+                    "image_height": 828,
+                },
+            ],
+            "confidence": 0.1,
+            "reason": "multiple candidates",
+        },
+        stage="banner_bbox",
+        spec=spec,
+        confidence_threshold=0.45,
+        source_image_width=1280,
+        source_image_height=828,
+    )
+
+    assert result.bbox == BoundingBox(680, 140, 360, 350)
+    assert result.confidence == 0.80
+    assert result.raw_metadata["candidate_role"] == "full_ad_card"
 
 
 def test_banner_prompt_includes_selected_spec_dimensions_and_position_hint() -> None:
@@ -269,6 +351,13 @@ def test_tgo_banner_prompt_selects_full_visible_ad_card_container() -> None:
 
     assert "full visible ad card/container including image, text and CTA" in prompt
     assert "not only the internal image asset" in prompt
+    assert "candidates array" in prompt
+    assert "full_ad_card" in prompt
+    assert "original_ad_slot" in prompt
+    assert "internal_image_asset" in prompt
+    assert "landing_area" in prompt
+    assert "browser_ui" in prompt
+    assert "unknown" in prompt
     assert "coordinate_space='normalized'" in prompt
     assert spec.position_hint in prompt
 
@@ -319,6 +408,51 @@ async def test_ocr_request_response_logs_are_sanitized_and_bounded(tmp_path: Pat
     assert "Password=hidden" not in log_text
     assert "should-not-log" not in log_text
     assert "data:image" not in log_text
+
+
+@pytest.mark.asyncio
+async def test_ocr_downscale_copy_is_used_and_resized_bbox_maps_to_source(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    spec = get_spec("yandex-graphic-banners-300x250-image")
+    assert spec is not None
+    source_path = tmp_path / "large-source.png"
+    Image.new("RGB", (2560, 1440), "white").save(source_path)
+    screenshot = SourceScreenshotInfo(path=source_path, mime_type="image/png", width=2560, height=1440, size_bytes=source_path.stat().st_size)
+    client = HeaderAuthGemmaClient(
+        base_url="http://ocr.example.test/v1",
+        model="test-model",
+        authorization_header=None,
+        max_retries=1,
+        ocr_image_max_width=1280,
+        ocr_image_max_pixels=2_000_000,
+    )
+    captured: dict[str, object] = {}
+
+    async def fake_execute_request(**kwargs):
+        image_path = kwargs["image_path"]
+        captured["image_path"] = image_path
+        captured["prompt"] = kwargs["prompt"]
+        with Image.open(image_path) as sent:
+            captured["sent_size"] = sent.size
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "content": '{"bbox":{"x":100,"y":50,"width":300,"height":250},"confidence":0.9,"coordinate_space":"resized_pixels","image_width":1280,"image_height":720}'
+                    }
+                }
+            ]
+        }
+
+    monkeypatch.setattr(client, "_execute_request", fake_execute_request)
+
+    result = await client.detect_banner_bbox(screenshot=screenshot, spec=spec, request_id="req-downscale")
+
+    assert captured["sent_size"] == (1280, 720)
+    assert captured["image_path"] != source_path
+    assert Path(captured["image_path"]).exists() is False
+    assert "source screenshot is 2560x1440" in captured["prompt"]
+    assert "OCR input image sent to you is 1280x720" in captured["prompt"]
+    assert result.bbox == BoundingBox(200, 100, 600, 500)
 
 
 def test_gemma_client_builder_rejects_missing_runtime_config() -> None:
