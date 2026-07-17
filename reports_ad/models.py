@@ -68,6 +68,19 @@ class BBoxDetectionResult:
 
 
 @dataclass(frozen=True, slots=True)
+class CompositionValidationResult:
+    passed: bool
+    original_banner_bbox: BoundingBox | None
+    inserted_creative_bbox: BoundingBox | None
+    deltas: dict[str, int] = field(default_factory=dict)
+    corrected_bbox: BoundingBox | None = None
+    confidence: float = 0.0
+    reason: str = ""
+    source: str = "gemma"
+    raw_metadata: dict[str, object] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
 class GeneratedProofArtifacts:
     source_copy_path: Path | None = None
     banner_replaced_path: Path | None = None

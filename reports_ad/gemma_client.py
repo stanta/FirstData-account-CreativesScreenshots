@@ -16,7 +16,7 @@ import httpx
 from PIL import Image
 
 from .config import BotConfig
-from .models import BBoxDetectionResult, BoundingBox, CreativeSpec, SourceScreenshotInfo
+from .models import BBoxDetectionResult, BoundingBox, CompositionValidationResult, CreativeSpec, SourceScreenshotInfo
 from .validation import ValidationError
 
 logger = logging.getLogger(__name__)
@@ -40,6 +40,17 @@ class GemmaBBoxClient(Protocol):
     ) -> BBoxDetectionResult: ...
 
     async def detect_landing_bbox(self, *, screenshot: SourceScreenshotInfo, spec: CreativeSpec, request_id: str) -> BBoxDetectionResult: ...
+
+    async def verify_composition_alignment(
+        self,
+        *,
+        original_screenshot: SourceScreenshotInfo,
+        composed_screenshot_path: Path,
+        current_banner_bbox: BoundingBox,
+        spec: CreativeSpec,
+        request_id: str,
+        validation_attempt: int = 1,
+    ) -> CompositionValidationResult: ...
 
 
 class HeaderAuthGemmaClient:
@@ -86,6 +97,124 @@ class HeaderAuthGemmaClient:
 
     async def detect_landing_bbox(self, *, screenshot: SourceScreenshotInfo, spec: CreativeSpec, request_id: str) -> BBoxDetectionResult:
         return await self._detect_bbox(stage="landing_bbox", screenshot=screenshot, spec=spec, request_id=request_id)
+
+    async def verify_composition_alignment(
+        self,
+        *,
+        original_screenshot: SourceScreenshotInfo,
+        composed_screenshot_path: Path,
+        current_banner_bbox: BoundingBox,
+        spec: CreativeSpec,
+        request_id: str,
+        validation_attempt: int = 1,
+    ) -> CompositionValidationResult:
+        if not self._base_url:
+            raise GemmaClientError("OCR LLM endpoint is not configured")
+
+        last_error: BaseException | None = None
+        original_ocr_path: Path | None = None
+        composed_ocr_path: Path | None = None
+        cleanup_original = False
+        cleanup_composed = False
+        stage = "composition_validation"
+        try:
+            original_ocr_path, original_width, original_height, original_mime_type, cleanup_original = _prepare_ocr_input_image(
+                screenshot=original_screenshot,
+                max_width=self._ocr_image_max_width,
+                max_pixels=self._ocr_image_max_pixels,
+            )
+            composed_ocr_path, composed_width, composed_height, composed_mime_type, cleanup_composed = _prepare_image_input_copy(
+                image_path=composed_screenshot_path,
+                max_width=self._ocr_image_max_width,
+                max_pixels=self._ocr_image_max_pixels,
+            )
+            prompt = _composition_validation_prompt(
+                screenshot=original_screenshot,
+                spec=spec,
+                current_banner_bbox=current_banner_bbox,
+                ocr_image_width=original_width,
+                ocr_image_height=original_height,
+                validation_attempt=validation_attempt,
+            )
+            for attempt in range(1, self._max_retries + 1):
+                logger.info(
+                    "ocr_llm_request request_id=%s stage=%s attempt=%s validation_attempt=%s model=%s spec_slug=%s source_screenshot=%sx%s original_ocr_image=%sx%s composed_ocr_image=%sx%s current_banner_bbox=%s prompt_length=%s prompt_sha256=%s prompt_text=%s",
+                    request_id,
+                    stage,
+                    attempt,
+                    validation_attempt,
+                    self._model,
+                    spec.slug,
+                    original_screenshot.width,
+                    original_screenshot.height,
+                    original_width,
+                    original_height,
+                    composed_width,
+                    composed_height,
+                    _safe_bbox(current_banner_bbox),
+                    len(prompt),
+                    _sha256_short(prompt),
+                    _safe_debug_text(prompt),
+                )
+                try:
+                    payload = await self._execute_multimodal_request(
+                        prompt=prompt,
+                        images=[
+                            (original_ocr_path, original_mime_type),
+                            (composed_ocr_path, composed_mime_type),
+                        ],
+                    )
+                    raw_text = _extract_openai_compatible_text(payload)
+                    parsed = _loads_json_object(raw_text)
+                    result = _parse_composition_validation_result(
+                        parsed,
+                        source_image_width=original_screenshot.width,
+                        source_image_height=original_screenshot.height,
+                        confidence_threshold=self._confidence_threshold,
+                    )
+                    logger.info(
+                        "ocr_llm_response request_id=%s stage=%s attempt=%s validation_attempt=%s status=ok parse_success=%s passed=%s confidence=%.3f original_banner_bbox=%s inserted_creative_bbox=%s corrected_bbox=%s deltas=%s reason=%s response_text_length=%s response_text_sha256=%s response_text=%s",
+                        request_id,
+                        stage,
+                        attempt,
+                        validation_attempt,
+                        True,
+                        result.passed,
+                        result.confidence,
+                        _safe_bbox(result.original_banner_bbox),
+                        _safe_bbox(result.inserted_creative_bbox),
+                        _safe_bbox(result.corrected_bbox),
+                        _safe_deltas(result.deltas),
+                        _sanitize_log_text(result.reason, limit=180),
+                        len(raw_text),
+                        _sha256_short(raw_text),
+                        _safe_debug_text(raw_text),
+                    )
+                    return result
+                except (httpx.HTTPError, OSError, ValueError, TypeError, KeyError, GemmaClientError) as exc:
+                    last_error = exc
+                    logger.warning(
+                        "ocr_llm_response request_id=%s stage=%s attempt=%s validation_attempt=%s status=retryable_error parse_success=%s error_class=%s reason_code=%s error_message=%s",
+                        request_id,
+                        stage,
+                        attempt,
+                        validation_attempt,
+                        False,
+                        type(exc).__name__,
+                        _ocr_error_reason_code(exc),
+                        _safe_exception_message(exc),
+                    )
+                    if attempt < self._max_retries:
+                        await asyncio.sleep(min(2 ** (attempt - 1), 8))
+        finally:
+            for cleanup, path in ((cleanup_original, original_ocr_path), (cleanup_composed, composed_ocr_path)):
+                if cleanup and path is not None:
+                    try:
+                        path.unlink(missing_ok=True)
+                    except OSError:
+                        logger.debug("ocr_input_cleanup_failed path=%s", path.name)
+
+        raise GemmaClientError(f"OCR LLM composition validation failed after {self._max_retries} attempts: {type(last_error).__name__ if last_error else 'unknown'}") from last_error
 
     async def _detect_bbox(
         self,
@@ -208,9 +337,14 @@ class HeaderAuthGemmaClient:
         raise GemmaClientError(f"OCR LLM failed after {self._max_retries} attempts: {type(last_error).__name__ if last_error else 'unknown'}") from last_error
 
     async def _execute_request(self, *, prompt: str, image_path: Path, mime_type: str) -> object:
+        return await self._execute_multimodal_request(prompt=prompt, images=[(image_path, mime_type)])
+
+    async def _execute_multimodal_request(self, *, prompt: str, images: list[tuple[Path, str]]) -> object:
         headers = {"Content-Type": "application/json"}
         if self._authorization_header:
             headers["Authorization"] = self._authorization_header
+        content: list[dict[str, object]] = [{"type": "text", "text": prompt}]
+        content.extend({"type": "image_url", "image_url": {"url": _data_url(image_path=image_path, mime_type=mime_type)}} for image_path, mime_type in images)
         async with httpx.AsyncClient(timeout=self._timeout_seconds) as client:
             response = await client.post(
                 f"{self._base_url}/chat/completions",
@@ -220,10 +354,7 @@ class HeaderAuthGemmaClient:
                     "messages": [
                         {
                             "role": "user",
-                            "content": [
-                                {"type": "text", "text": prompt},
-                                {"type": "image_url", "image_url": {"url": _data_url(image_path=image_path, mime_type=mime_type)}},
-                            ],
+                            "content": content,
                         }
                     ],
                     "response_format": {"type": "json_object"},
@@ -332,12 +463,21 @@ def _prepare_ocr_input_image(
     max_width: int,
     max_pixels: int,
 ) -> tuple[Path, int, int, str, bool]:
-    with Image.open(screenshot.path) as raw_image:
+    return _prepare_image_input_copy(image_path=screenshot.path, max_width=max_width, max_pixels=max_pixels)
+
+
+def _prepare_image_input_copy(
+    *,
+    image_path: Path,
+    max_width: int,
+    max_pixels: int,
+) -> tuple[Path, int, int, str, bool]:
+    with Image.open(image_path) as raw_image:
         image = raw_image.convert("RGB")
         target_width, target_height = _bounded_ocr_image_size(width=image.width, height=image.height, max_width=max_width, max_pixels=max_pixels)
         if (target_width, target_height) != image.size:
             image = image.resize((target_width, target_height), Image.Resampling.LANCZOS)
-        with tempfile.NamedTemporaryFile(prefix="reports-ad-ocr-", suffix=".png", dir=screenshot.path.parent, delete=False) as temp_file:
+        with tempfile.NamedTemporaryFile(prefix="reports-ad-ocr-", suffix=".png", dir=image_path.parent, delete=False) as temp_file:
             temp_path = Path(temp_file.name)
         image.save(temp_path, format="PNG", optimize=True)
         return temp_path, target_width, target_height, "image/png", True
@@ -435,6 +575,113 @@ def _parse_bbox_result(
     if bbox is not None and confidence < confidence_threshold:
         bbox = None
     return BBoxDetectionResult(bbox=bbox, confidence=confidence, source="gemma", raw_metadata=raw_metadata)
+
+
+def _parse_composition_validation_result(
+    payload: dict[str, object],
+    *,
+    source_image_width: int,
+    source_image_height: int,
+    confidence_threshold: float,
+) -> CompositionValidationResult:
+    confidence = _normalize_confidence(payload.get("confidence"))
+    raw_passed = _first_present(payload.get("verification_passed"), payload.get("passed"), payload.get("pass"), payload.get("is_exact_match"))
+    if not isinstance(raw_passed, bool):
+        raise GemmaClientError("composition validation JSON must include boolean verification_passed")
+    original_bbox = _optional_bbox_from_payload(
+        payload,
+        keys=("original_banner_bbox", "original_bbox", "banner_bbox"),
+        source_image_width=source_image_width,
+        source_image_height=source_image_height,
+    )
+    inserted_bbox = _optional_bbox_from_payload(
+        payload,
+        keys=("actual_inserted_creative_bbox", "inserted_creative_bbox", "actual_bbox", "inserted_bbox"),
+        source_image_width=source_image_width,
+        source_image_height=source_image_height,
+    )
+    corrected_bbox = _optional_bbox_from_payload(
+        payload,
+        keys=("recommended_corrected_bbox", "corrected_bbox", "recommended_insert_bbox", "corrected_insert_parameters"),
+        source_image_width=source_image_width,
+        source_image_height=source_image_height,
+    )
+    if original_bbox is None:
+        raise GemmaClientError("composition validation JSON must include original_banner_bbox")
+    if inserted_bbox is None:
+        raise GemmaClientError("composition validation JSON must include actual_inserted_creative_bbox")
+    deltas = _parse_bbox_deltas(payload.get("deltas") or payload.get("mismatches") or payload.get("delta"), original_bbox=original_bbox, inserted_bbox=inserted_bbox)
+    exact_match = all(deltas.get(key, 0) == 0 for key in ("x", "y", "width", "height"))
+    passed = bool(raw_passed) and exact_match and confidence >= confidence_threshold
+    if bool(raw_passed) and not exact_match:
+        corrected_bbox = corrected_bbox or original_bbox
+    if passed and corrected_bbox is None:
+        corrected_bbox = original_bbox
+    if not passed and corrected_bbox is None:
+        raise GemmaClientError("composition validation mismatch must include recommended_corrected_bbox")
+    reason = str(payload.get("reason") or payload.get("explanation") or "")[:300]
+    if bool(raw_passed) and confidence < confidence_threshold:
+        reason = (reason + "; " if reason else "") + "confidence below threshold"
+    return CompositionValidationResult(
+        passed=passed,
+        original_banner_bbox=original_bbox,
+        inserted_creative_bbox=inserted_bbox,
+        deltas=deltas,
+        corrected_bbox=corrected_bbox,
+        confidence=confidence,
+        reason=reason,
+        source="gemma",
+        raw_metadata={
+            "raw_passed": raw_passed,
+            "exact_match": exact_match,
+            "confidence_threshold": confidence_threshold,
+            "coordinate_space": _sanitize_log_text(str(payload.get("coordinate_space", "source_pixels")), limit=32),
+        },
+    )
+
+
+def _optional_bbox_from_payload(
+    payload: dict[str, object],
+    *,
+    keys: tuple[str, ...],
+    source_image_width: int,
+    source_image_height: int,
+) -> BoundingBox | None:
+    for key in keys:
+        value = payload.get(key)
+        if value is None:
+            continue
+        if not isinstance(value, dict):
+            raise GemmaClientError(f"composition validation field {key} must be bbox object or null")
+        bbox, _ = _coerce_bbox_to_source_pixels(
+            bbox_payload=value,
+            payload={**payload, **value},
+            source_image_width=source_image_width,
+            source_image_height=source_image_height,
+        )
+        return bbox
+    return None
+
+
+def _parse_bbox_deltas(value: object, *, original_bbox: BoundingBox, inserted_bbox: BoundingBox) -> dict[str, int]:
+    computed = {
+        "x": inserted_bbox.x - original_bbox.x,
+        "y": inserted_bbox.y - original_bbox.y,
+        "width": inserted_bbox.width - original_bbox.width,
+        "height": inserted_bbox.height - original_bbox.height,
+    }
+    if not isinstance(value, dict):
+        return computed
+    deltas: dict[str, int] = {}
+    for key in ("x", "y", "width", "height"):
+        raw = value.get(key, computed[key])
+        if isinstance(raw, bool):
+            raw = computed[key]
+        try:
+            deltas[key] = int(round(float(raw)))
+        except (TypeError, ValueError):
+            deltas[key] = computed[key]
+    return deltas
 
 
 def _coerce_bbox_to_source_pixels(
@@ -627,6 +874,28 @@ def _candidate_position_penalty(*, bbox: BoundingBox, spec: CreativeSpec | None,
     return 0.0
 
 
+def _composition_validation_prompt(
+    *,
+    screenshot: SourceScreenshotInfo,
+    spec: CreativeSpec,
+    current_banner_bbox: BoundingBox,
+    ocr_image_width: int,
+    ocr_image_height: int,
+    validation_attempt: int,
+) -> str:
+    return (
+        "You are validating an advertising proof image after creative insertion. "
+        "You receive two images in this order: Image 1 is the original source screenshot BEFORE insertion; Image 2 is the composed screenshot AFTER the uploaded creative was inserted. "
+        "Compare the two images and verify whether the inserted creative fully and exactly covers the original ad banner/card area with pixel-level alignment: no x/y offset, incomplete coverage, overflow, extra margins, or width/height mismatch. "
+        f"Current insertion bbox in source screenshot pixels: x={current_banner_bbox.x}, y={current_banner_bbox.y}, width={current_banner_bbox.width}, height={current_banner_bbox.height}. "
+        f"Selected spec dimensions: {spec.dimensions_label}; expected aspect ratio: {_safe_aspect_ratio(spec)}; selected spec slug: {spec.slug}; network: {spec.network_display_name}. "
+        f"Validation cycle: {max(1, validation_attempt)}. Source screenshot is {screenshot.width}x{screenshot.height} pixels; OCR input images sent to you are {ocr_image_width}x{ocr_image_height} pixels. "
+        "Return ONLY strict JSON with keys: verification_passed boolean, original_banner_bbox {x,y,width,height}, actual_inserted_creative_bbox {x,y,width,height}, deltas {x,y,width,height}, recommended_corrected_bbox {x,y,width,height} or null, confidence 0..1, reason string, coordinate_space, image_width, image_height. "
+        "Use source screenshot pixel coordinates whenever possible and set coordinate_space='source_pixels'. If you return resized OCR-image pixels, set coordinate_space='resized_pixels' and include image_width and image_height. "
+        "If verification_passed is false, recommended_corrected_bbox must be the exact pixel bbox to use for the next insertion attempt."
+    )
+
+
 def _first_present(*values: object) -> object:
     for value in values:
         if value is not None:
@@ -754,6 +1023,10 @@ def _safe_bbox(bbox: BoundingBox | None) -> str:
     if bbox is None:
         return "none"
     return f"x={bbox.x},y={bbox.y},width={bbox.width},height={bbox.height}"
+
+
+def _safe_deltas(deltas: dict[str, int]) -> str:
+    return ",".join(f"{key}={int(deltas.get(key, 0))}" for key in ("x", "y", "width", "height"))
 
 
 def _safe_response_metadata(payload: object) -> str:

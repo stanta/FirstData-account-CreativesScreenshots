@@ -5,8 +5,8 @@ from PIL import Image, ImageChops, ImageDraw
 
 from reports_ad.bot import build_application
 from reports_ad.config import BotConfig
-from reports_ad.gemma_client import GemmaClientError, HeaderAuthGemmaClient, _banner_prompt, _parse_bbox_result, build_gemma_client_from_config
-from reports_ad.models import BBoxDetectionResult, BoundingBox, CreativeInfo, Placement, ProofRequest, ProofResult, SourceScreenshotInfo
+from reports_ad.gemma_client import GemmaClientError, HeaderAuthGemmaClient, _banner_prompt, _parse_bbox_result, _parse_composition_validation_result, build_gemma_client_from_config
+from reports_ad.models import BBoxDetectionResult, BoundingBox, CompositionValidationResult, CreativeInfo, Placement, ProofRequest, ProofResult, SourceScreenshotInfo
 from reports_ad.proof import compose_final_image
 from reports_ad.stage2_proof import compose_stage2_image, fallback_landing_bbox, generate_stage2_proof, validate_banner_bbox_semantics
 from reports_ad.catalog import get_spec
@@ -278,6 +278,53 @@ def test_parse_bbox_result_requires_resized_pixel_image_size() -> None:
         )
 
 
+def test_parse_composition_validation_result_requires_structured_pass_flag() -> None:
+    with pytest.raises(GemmaClientError, match="verification_passed"):
+        _parse_composition_validation_result(
+            {"confidence": 0.9, "reason": "missing pass flag"},
+            source_image_width=400,
+            source_image_height=300,
+            confidence_threshold=0.45,
+        )
+
+
+def test_parse_composition_validation_result_detects_exact_pass_and_correction() -> None:
+    passed = _parse_composition_validation_result(
+        {
+            "verification_passed": True,
+            "original_banner_bbox": {"x": 20, "y": 30, "width": 100, "height": 70},
+            "actual_inserted_creative_bbox": {"x": 20, "y": 30, "width": 100, "height": 70},
+            "deltas": {"x": 0, "y": 0, "width": 0, "height": 0},
+            "recommended_corrected_bbox": None,
+            "confidence": 0.9,
+            "reason": "exact match",
+        },
+        source_image_width=400,
+        source_image_height=300,
+        confidence_threshold=0.45,
+    )
+    failed = _parse_composition_validation_result(
+        {
+            "verification_passed": False,
+            "original_banner_bbox": {"x": 40, "y": 50, "width": 120, "height": 80},
+            "actual_inserted_creative_bbox": {"x": 20, "y": 30, "width": 100, "height": 70},
+            "deltas": {"x": -20, "y": -20, "width": -20, "height": -10},
+            "recommended_corrected_bbox": {"x": 40, "y": 50, "width": 120, "height": 80},
+            "confidence": 0.95,
+            "reason": "offset mismatch",
+        },
+        source_image_width=400,
+        source_image_height=300,
+        confidence_threshold=0.45,
+    )
+
+    assert passed.passed is True
+    assert passed.corrected_bbox == BoundingBox(20, 30, 100, 70)
+    assert failed.passed is False
+    assert failed.corrected_bbox == BoundingBox(40, 50, 120, 80)
+    assert failed.deltas == {"x": -20, "y": -20, "width": -20, "height": -10}
+
+
 def test_tgo_candidates_choose_full_ad_card_over_internal_image_asset() -> None:
     spec = get_spec("yandex-tgo-600x600-text-image")
     assert spec is not None
@@ -544,6 +591,7 @@ async def test_stage2_generate_uses_mocked_gemma_and_fallback_landing(tmp_path: 
         def __init__(self) -> None:
             self.banner_calls = 0
             self.landing_calls = 0
+            self.validation_calls = 0
 
         async def detect_banner_bbox(self, **kwargs):
             self.banner_calls += 1
@@ -555,6 +603,18 @@ async def test_stage2_generate_uses_mocked_gemma_and_fallback_landing(tmp_path: 
             self.landing_calls += 1
             return BBoxDetectionResult(bbox=None, confidence=0.0, source="mock")
 
+        async def verify_composition_alignment(self, **kwargs):
+            self.validation_calls += 1
+            return CompositionValidationResult(
+                passed=True,
+                original_banner_bbox=kwargs["current_banner_bbox"],
+                inserted_creative_bbox=kwargs["current_banner_bbox"],
+                corrected_bbox=kwargs["current_banner_bbox"],
+                confidence=0.99,
+                reason="exact match",
+                source="mock",
+            )
+
     client = MockGemma()
     result = await generate_stage2_proof(request, gemma_client=client)
 
@@ -564,6 +624,163 @@ async def test_stage2_generate_uses_mocked_gemma_and_fallback_landing(tmp_path: 
     assert result.landing_bbox == fallback_landing_bbox(image_width=400, image_height=300)
     assert client.banner_calls == 1
     assert client.landing_calls == 1
+    assert client.validation_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_stage2_generate_corrects_composition_after_validation_offset(tmp_path: Path) -> None:
+    spec = get_spec("yandex-graphic-banners-300x250-image")
+    assert spec is not None
+    source_path = tmp_path / "source.png"
+    creative_path = tmp_path / "creative.png"
+    Image.new("RGB", (400, 300), "white").save(source_path)
+    Image.new("RGB", (300, 250), "blue").save(creative_path)
+    request = ProofRequest(
+        request_id="req-stage2-correct",
+        network_display_name="Яндекс",
+        network_slug="yandex_graphic_banners",
+        spec=spec,
+        banner_type=spec.display_name,
+        source_screenshot=SourceScreenshotInfo(path=source_path, mime_type="image/png", width=400, height=300, size_bytes=source_path.stat().st_size),
+        creative=CreativeInfo(path=creative_path, mime_type="image/png", width=300, height=250, size_bytes=creative_path.stat().st_size),
+        landing_url="https://example.com/landing",
+        utm_params={"utm_source": "test"},
+        placement=Placement(mode="template", value="screenshot-detected"),
+        output_path=tmp_path / "final.png",
+    )
+
+    class MockGemma:
+        def __init__(self) -> None:
+            self.validation_bboxes: list[BoundingBox] = []
+
+        async def detect_banner_bbox(self, **kwargs):
+            return BBoxDetectionResult(bbox=BoundingBox(20, 30, 100, 70), confidence=0.9, source="mock")
+
+        async def detect_landing_bbox(self, **kwargs):
+            return BBoxDetectionResult(bbox=None, confidence=0.0, source="mock")
+
+        async def verify_composition_alignment(self, **kwargs):
+            bbox = kwargs["current_banner_bbox"]
+            self.validation_bboxes.append(bbox)
+            if len(self.validation_bboxes) == 1:
+                return CompositionValidationResult(
+                    passed=False,
+                    original_banner_bbox=BoundingBox(40, 50, 120, 80),
+                    inserted_creative_bbox=bbox,
+                    corrected_bbox=BoundingBox(40, 50, 120, 80),
+                    deltas={"x": -20, "y": -20, "width": -20, "height": -10},
+                    confidence=0.95,
+                    reason="offset and size mismatch",
+                    source="mock",
+                )
+            return CompositionValidationResult(
+                passed=True,
+                original_banner_bbox=bbox,
+                inserted_creative_bbox=bbox,
+                corrected_bbox=bbox,
+                confidence=0.98,
+                reason="exact match after correction",
+                source="mock",
+            )
+
+    client = MockGemma()
+    result = await generate_stage2_proof(request, gemma_client=client)
+
+    assert result.banner_bbox == BoundingBox(40, 50, 120, 80)
+    assert client.validation_bboxes == [BoundingBox(20, 30, 100, 70), BoundingBox(40, 50, 120, 80)]
+    with Image.open(result.intermediate_screenshot_path) as result_image:
+        assert result_image.getpixel((45, 55)) != (255, 255, 255)
+        assert result_image.getpixel((25, 35)) == (255, 255, 255)
+
+
+@pytest.mark.asyncio
+async def test_stage2_generate_fails_after_three_unsuccessful_composition_validations(tmp_path: Path) -> None:
+    spec = get_spec("yandex-graphic-banners-300x250-image")
+    assert spec is not None
+    source_path = tmp_path / "source.png"
+    creative_path = tmp_path / "creative.png"
+    Image.new("RGB", (400, 300), "white").save(source_path)
+    Image.new("RGB", (300, 250), "blue").save(creative_path)
+    request = ProofRequest(
+        request_id="req-stage2-uncorrected",
+        network_display_name="Яндекс",
+        network_slug="yandex_graphic_banners",
+        spec=spec,
+        banner_type=spec.display_name,
+        source_screenshot=SourceScreenshotInfo(path=source_path, mime_type="image/png", width=400, height=300, size_bytes=source_path.stat().st_size),
+        creative=CreativeInfo(path=creative_path, mime_type="image/png", width=300, height=250, size_bytes=creative_path.stat().st_size),
+        landing_url="https://example.com/landing",
+        utm_params={"utm_source": "test"},
+        placement=Placement(mode="template", value="screenshot-detected"),
+        output_path=tmp_path / "final.png",
+    )
+
+    class MockGemma:
+        def __init__(self) -> None:
+            self.validation_calls = 0
+
+        async def detect_banner_bbox(self, **kwargs):
+            return BBoxDetectionResult(bbox=BoundingBox(20, 30, 100, 70), confidence=0.9, source="mock")
+
+        async def detect_landing_bbox(self, **kwargs):
+            return BBoxDetectionResult(bbox=None, confidence=0.0, source="mock")
+
+        async def verify_composition_alignment(self, **kwargs):
+            self.validation_calls += 1
+            return CompositionValidationResult(
+                passed=False,
+                original_banner_bbox=BoundingBox(60, 50, 120, 80),
+                inserted_creative_bbox=kwargs["current_banner_bbox"],
+                corrected_bbox=BoundingBox(20 + self.validation_calls * 10, 30, 100, 70),
+                deltas={"x": -10, "y": 0, "width": 0, "height": 0},
+                confidence=0.9,
+                reason=f"still offset {self.validation_calls}",
+                source="mock",
+            )
+
+    client = MockGemma()
+    with pytest.raises(ValidationError, match="точно совместить"):
+        await generate_stage2_proof(request, gemma_client=client)
+
+    assert client.validation_calls == 3
+    diagnostics = list(Path("reports_ad/tmp").glob("stage2-req-stage2-uncorrected-*.composition-validation-failed.json"))
+    assert diagnostics
+
+
+@pytest.mark.asyncio
+async def test_stage2_generate_handles_invalid_composition_validation_response(tmp_path: Path) -> None:
+    spec = get_spec("yandex-graphic-banners-300x250-image")
+    assert spec is not None
+    source_path = tmp_path / "source.png"
+    creative_path = tmp_path / "creative.png"
+    Image.new("RGB", (400, 300), "white").save(source_path)
+    Image.new("RGB", (300, 250), "blue").save(creative_path)
+    request = ProofRequest(
+        request_id="req-stage2-invalid-validation",
+        network_display_name="Яндекс",
+        network_slug="yandex_graphic_banners",
+        spec=spec,
+        banner_type=spec.display_name,
+        source_screenshot=SourceScreenshotInfo(path=source_path, mime_type="image/png", width=400, height=300, size_bytes=source_path.stat().st_size),
+        creative=CreativeInfo(path=creative_path, mime_type="image/png", width=300, height=250, size_bytes=creative_path.stat().st_size),
+        landing_url="https://example.com/landing",
+        utm_params={"utm_source": "test"},
+        placement=Placement(mode="template", value="screenshot-detected"),
+        output_path=tmp_path / "final.png",
+    )
+
+    class MockGemma:
+        async def detect_banner_bbox(self, **kwargs):
+            return BBoxDetectionResult(bbox=BoundingBox(20, 30, 100, 70), confidence=0.9, source="mock")
+
+        async def detect_landing_bbox(self, **kwargs):
+            return BBoxDetectionResult(bbox=None, confidence=0.0, source="mock")
+
+        async def verify_composition_alignment(self, **kwargs):
+            raise GemmaClientError("invalid JSON")
+
+    with pytest.raises(ValidationError, match="точно совместить"):
+        await generate_stage2_proof(request, gemma_client=MockGemma())
 
 
 @pytest.mark.asyncio

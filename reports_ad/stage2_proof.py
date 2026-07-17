@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import logging
+import json
 import re
+import shutil
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -10,8 +12,8 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
 from .config import BotConfig
-from .gemma_client import GemmaBBoxClient, build_gemma_client_from_config
-from .models import BoundingBox, CreativeSpec, GeneratedProofArtifacts, ProofRequest, ProofResult
+from .gemma_client import GemmaBBoxClient, GemmaClientError, build_gemma_client_from_config
+from .models import BoundingBox, CompositionValidationResult, CreativeSpec, GeneratedProofArtifacts, ProofRequest, ProofResult
 from .proof import ScreenshotGenerationError
 from .validation import ValidationError, merge_url_with_utm, validate_bbox_within_image
 
@@ -21,6 +23,7 @@ MIN_BANNER_AREA_RATIO = 0.002
 MIN_BANNER_DIMENSION_PIXELS = 16
 MIN_BANNER_SPEC_DIMENSION_RATIO = 0.20
 MAX_BANNER_SELECTION_ATTEMPTS = 5
+MAX_COMPOSITION_VALIDATION_ATTEMPTS = 3
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,13 +71,14 @@ async def generate_stage2_proof(request: ProofRequest, *, gemma_client: GemmaBBo
         )
         landing_fallback_used = landing_detection.bbox is None or landing_detection.bbox != landing_bbox
 
-        width, height = compose_stage2_image(
-            source_screenshot_path=request.source_screenshot.path,
-            creative_path=request.creative.path,
+        width, height, final_banner_bbox, final_banner_replaced_path = await compose_stage2_image_with_validation(
+            client=client,
+            request=request,
             effective_click_url=effective_click_url,
-            banner_bbox=banner_bbox,
+            initial_banner_bbox=banner_bbox,
             landing_bbox=landing_bbox,
             output_path=output_path,
+            artifact_base=artifact_base,
             source_copy_path=source_copy_path,
             banner_replaced_path=banner_replaced_path,
             landing_area_path=landing_area_path,
@@ -84,13 +88,13 @@ async def generate_stage2_proof(request: ProofRequest, *, gemma_client: GemmaBBo
             "stage2_generation_done request_id=%s elapsed_ms=%s banner_bbox=%s landing_bbox=%s landing_fallback_used=%s",
             request.request_id,
             _elapsed_ms(started),
-            _safe_bbox(banner_bbox),
+            _safe_bbox(final_banner_bbox),
             _safe_bbox(landing_bbox),
             landing_fallback_used,
         )
         artifacts = GeneratedProofArtifacts(
             source_copy_path=source_copy_path,
-            banner_replaced_path=banner_replaced_path,
+            banner_replaced_path=final_banner_replaced_path,
             landing_area_path=landing_area_path,
             final_path=output_path,
         )
@@ -100,12 +104,12 @@ async def generate_stage2_proof(request: ProofRequest, *, gemma_client: GemmaBBo
             height=height,
             effective_click_url=effective_click_url,
             request_id=request.request_id,
-            intermediate_screenshot_path=banner_replaced_path,
+            intermediate_screenshot_path=final_banner_replaced_path,
             landing_fallback_used=landing_fallback_used,
             ad_page_fallback_used=False,
             fallback_media_type="screenshot-only",
             resolved_ad_page_host="uploaded-screenshot",
-            banner_bbox=banner_bbox,
+            banner_bbox=final_banner_bbox,
             landing_bbox=landing_bbox,
             artifacts=artifacts,
             timings_ms=timings,
@@ -117,6 +121,133 @@ async def generate_stage2_proof(request: ProofRequest, *, gemma_client: GemmaBBo
     except Exception as exc:
         logger.exception("stage2_generation_failed request_id=%s elapsed_ms=%s exception_class=%s", request.request_id, _elapsed_ms(started), type(exc).__name__)
         raise ScreenshotGenerationError("Не удалось сформировать proof-скриншот из загруженного скриншота.") from exc
+
+
+async def compose_stage2_image_with_validation(
+    *,
+    client: GemmaBBoxClient,
+    request: ProofRequest,
+    effective_click_url: str,
+    initial_banner_bbox: BoundingBox,
+    landing_bbox: BoundingBox,
+    output_path: Path,
+    artifact_base: Path,
+    source_copy_path: Path,
+    banner_replaced_path: Path,
+    landing_area_path: Path,
+    max_attempts: int = MAX_COMPOSITION_VALIDATION_ATTEMPTS,
+) -> tuple[int, int, BoundingBox, Path]:
+    current_bbox = initial_banner_bbox
+    bounded_attempts = max(1, max_attempts)
+    attempts: list[dict[str, object]] = []
+    last_validation: CompositionValidationResult | None = None
+    last_banner_attempt_path = banner_replaced_path
+
+    for attempt in range(1, bounded_attempts + 1):
+        banner_attempt_path = artifact_base.with_suffix(f".banner-attempt-{attempt}.png")
+        last_banner_attempt_path = banner_attempt_path
+        width, height = compose_stage2_image(
+            source_screenshot_path=request.source_screenshot.path,
+            creative_path=request.creative.path,
+            effective_click_url=effective_click_url,
+            banner_bbox=current_bbox,
+            landing_bbox=landing_bbox,
+            output_path=output_path,
+            source_copy_path=source_copy_path if attempt == 1 else None,
+            banner_replaced_path=banner_attempt_path,
+            landing_area_path=landing_area_path,
+        )
+        validation = await _verify_stage2_composition(
+            client=client,
+            request=request,
+            composed_screenshot_path=banner_attempt_path,
+            current_banner_bbox=current_bbox,
+            validation_attempt=attempt,
+        )
+        last_validation = validation
+        attempts.append(
+            {
+                "attempt": attempt,
+                "bbox": _bbox_dict(current_bbox),
+                "banner_attempt_path": banner_attempt_path.name,
+                "passed": validation.passed,
+                "confidence": validation.confidence,
+                "reason": _safe_feedback_text(validation.reason, max_length=240),
+                "corrected_bbox": _bbox_dict(validation.corrected_bbox),
+                "deltas": dict(validation.deltas),
+            }
+        )
+        logger.info(
+            "stage2_composition_validation_attempt request_id=%s attempt=%s max_attempts=%s current_bbox=%s passed=%s confidence=%.3f original_banner_bbox=%s inserted_creative_bbox=%s corrected_bbox=%s deltas=%s reason=%s",
+            request.request_id,
+            attempt,
+            bounded_attempts,
+            _safe_bbox(current_bbox),
+            validation.passed,
+            validation.confidence,
+            _safe_bbox(validation.original_banner_bbox),
+            _safe_bbox(validation.inserted_creative_bbox),
+            _safe_bbox(validation.corrected_bbox),
+            _safe_deltas(validation.deltas),
+            _safe_feedback_text(validation.reason, max_length=240),
+        )
+        if validation.passed:
+            if banner_attempt_path != banner_replaced_path:
+                shutil.copyfile(banner_attempt_path, banner_replaced_path)
+            return width, height, current_bbox, banner_replaced_path
+
+        corrected_bbox = validation.corrected_bbox
+        if corrected_bbox is None:
+            logger.info(
+                "stage2_composition_validation_no_correction request_id=%s attempt=%s reason=%s",
+                request.request_id,
+                attempt,
+                _safe_feedback_text(validation.reason, max_length=240),
+            )
+            break
+        try:
+            corrected_bbox = validate_bbox_within_image(
+                corrected_bbox,
+                image_width=request.source_screenshot.width,
+                image_height=request.source_screenshot.height,
+                label="исправленная область баннера",
+            )
+            corrected_bbox = validate_banner_bbox_semantics(
+                corrected_bbox,
+                spec=request.spec,
+                image_width=request.source_screenshot.width,
+                image_height=request.source_screenshot.height,
+                request_id=request.request_id,
+            )
+        except ValidationError as exc:
+            logger.info(
+                "stage2_composition_validation_invalid_correction request_id=%s attempt=%s corrected_bbox=%s validation_error=%s",
+                request.request_id,
+                attempt,
+                _safe_bbox(corrected_bbox),
+                _safe_feedback_text(exc.safe_message, max_length=240),
+            )
+            break
+        current_bbox = corrected_bbox
+
+    diagnostics_path = _save_composition_validation_diagnostics(
+        request=request,
+        artifact_base=artifact_base,
+        source_copy_path=source_copy_path,
+        output_path=output_path,
+        last_banner_attempt_path=last_banner_attempt_path,
+        attempts=attempts,
+        last_validation=last_validation,
+    )
+    logger.warning(
+        "stage2_composition_validation_failed request_id=%s attempts=%s last_reason=%s last_corrected_bbox=%s diagnostics=%s",
+        request.request_id,
+        len(attempts),
+        _safe_feedback_text(last_validation.reason if last_validation else "validation unavailable", max_length=240),
+        _safe_bbox(last_validation.corrected_bbox if last_validation else None),
+        diagnostics_path.name,
+    )
+    raise ValidationError("ИИ не смог точно совместить креатив с исходным рекламным блоком после проверки. Загрузите более четкий скриншот, где весь рекламный блок виден полностью.")
 
 
 async def select_valid_banner_bbox_with_feedback(
@@ -409,6 +540,60 @@ def _valid_or_fallback_landing_bbox(bbox: BoundingBox | None, *, image_width: in
         return fallback_landing_bbox(image_width=image_width, image_height=image_height)
 
 
+async def _verify_stage2_composition(
+    *,
+    client: GemmaBBoxClient,
+    request: ProofRequest,
+    composed_screenshot_path: Path,
+    current_banner_bbox: BoundingBox,
+    validation_attempt: int,
+) -> CompositionValidationResult:
+    verifier = getattr(client, "verify_composition_alignment", None)
+    if verifier is None:
+        logger.info(
+            "stage2_composition_validation_skipped request_id=%s attempt=%s reason=client_method_missing",
+            request.request_id,
+            validation_attempt,
+        )
+        return CompositionValidationResult(
+            passed=True,
+            original_banner_bbox=current_banner_bbox,
+            inserted_creative_bbox=current_banner_bbox,
+            corrected_bbox=current_banner_bbox,
+            confidence=1.0,
+            reason="composition validation skipped because injected client has no verifier",
+            source="local",
+            raw_metadata={"skipped": True},
+        )
+    try:
+        return await verifier(
+            original_screenshot=request.source_screenshot,
+            composed_screenshot_path=composed_screenshot_path,
+            current_banner_bbox=current_banner_bbox,
+            spec=request.spec,
+            request_id=request.request_id,
+            validation_attempt=validation_attempt,
+        )
+    except (GemmaClientError, ValueError, TypeError, KeyError) as exc:
+        logger.warning(
+            "stage2_composition_validation_model_error request_id=%s attempt=%s error_class=%s error_message=%s",
+            request.request_id,
+            validation_attempt,
+            type(exc).__name__,
+            _safe_feedback_text(str(exc), max_length=240),
+        )
+        return CompositionValidationResult(
+            passed=False,
+            original_banner_bbox=None,
+            inserted_creative_bbox=current_banner_bbox,
+            corrected_bbox=None,
+            confidence=0.0,
+            reason="invalid composition validation model response",
+            source="gemma",
+            raw_metadata={"error_class": type(exc).__name__},
+        )
+
+
 def _trim_transparent_padding(image: Image.Image) -> Image.Image:
     alpha_bbox = image.getchannel("A").getbbox()
     if alpha_bbox is None:
@@ -502,6 +687,42 @@ def _safe_bbox(bbox: BoundingBox | None) -> str:
     if bbox is None:
         return "none"
     return f"x={bbox.x},y={bbox.y},width={bbox.width},height={bbox.height}"
+
+
+def _bbox_dict(bbox: BoundingBox | None) -> dict[str, int] | None:
+    if bbox is None:
+        return None
+    return {"x": bbox.x, "y": bbox.y, "width": bbox.width, "height": bbox.height}
+
+
+def _safe_deltas(deltas: dict[str, int]) -> str:
+    return ",".join(f"{key}={int(deltas.get(key, 0))}" for key in ("x", "y", "width", "height"))
+
+
+def _save_composition_validation_diagnostics(
+    *,
+    request: ProofRequest,
+    artifact_base: Path,
+    source_copy_path: Path,
+    output_path: Path,
+    last_banner_attempt_path: Path,
+    attempts: list[dict[str, object]],
+    last_validation: CompositionValidationResult | None,
+) -> Path:
+    diagnostics_path = artifact_base.with_suffix(".composition-validation-failed.json")
+    diagnostics_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "request_id": request.request_id,
+        "spec_slug": request.spec.slug,
+        "source_screenshot": {"width": request.source_screenshot.width, "height": request.source_screenshot.height, "artifact": source_copy_path.name},
+        "output_artifact": output_path.name,
+        "last_composed_attempt_artifact": last_banner_attempt_path.name,
+        "attempts": attempts,
+        "last_reason": _safe_feedback_text(last_validation.reason if last_validation else "validation unavailable", max_length=240),
+        "last_corrected_bbox": _bbox_dict(last_validation.corrected_bbox if last_validation else None),
+    }
+    diagnostics_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return diagnostics_path
 
 
 def _safe_feedback_text(value: str, *, max_length: int = 300) -> str:
