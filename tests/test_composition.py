@@ -514,7 +514,7 @@ def test_gemma_client_builder_rejects_missing_runtime_config() -> None:
 def test_gemma_client_builder_requires_base_url() -> None:
     config = BotConfig(telegram_token="test", ocr_llm_base_url="", ocr_llm_model="cyankiwi/gemma-4-26B-A4B-it-AWQ-4bit")
 
-    with pytest.raises(ValidationError, match="REPORTS_AD_OCR_LLM_BASE_URL"):
+    with pytest.raises(ValidationError, match="OCR_LLM_BASE_URL"):
         build_gemma_client_from_config(config)
 
 
@@ -792,5 +792,5 @@ async def test_stage2_generate_requires_ocr_config_when_client_not_injected(tmp_
     )
     config = BotConfig(telegram_token="test", ocr_llm_base_url="")
 
-    with pytest.raises(ValidationError, match="REPORTS_AD_OCR_LLM_BASE_URL"):
+    with pytest.raises(ValidationError, match="OCR_LLM_BASE_URL"):
         await generate_stage2_proof(request, config=config)

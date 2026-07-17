@@ -170,23 +170,23 @@ docker compose down
 | `REPORTS_AD_LOCALE`                         |                                `ru-RU` | locale browser context                                                                                                     |
 | `REPORTS_AD_TIMEZONE`                       |                        `Europe/Moscow` | timezone browser context                                                                                                   |
 | `REPORTS_AD_TEMP_ROOT`                      |                                    нет | корневая директория временных файлов; в Docker используется tmpfs                                                          |
-| `REPORTS_AD_OCR_LLM_BASE_URL`               |                                    нет | OpenAI-compatible base URL для Stage 2 OCR/vision модели                                                                   |
-| `REPORTS_AD_OCR_LLM_MODEL`                  | `cyankiwi/gemma-4-26B-A4B-it-AWQ-4bit` | имя OCR/vision модели; фактическая модель может быть Gemma                                                                 |
-| `REPORTS_AD_OCR_LLM_TIMEOUT_SECONDS`        |                                   `20` | timeout OCR LLM request                                                                                                    |
-| `REPORTS_AD_OCR_LLM_MAX_RETRIES`            |                                    `5` | количество попыток OCR LLM request / JSON parsing                                                                          |
-| `REPORTS_AD_OCR_LLM_CONFIDENCE_THRESHOLD`   |                                 `0.45` | минимальная confidence для принятия bbox                                                                                   |
+| `OCR_LLM_BASE_URL`                          |                                    нет | OpenAI-compatible base URL для Stage 2 OCR/vision модели                                                                   |
+| `OCR_LLM_MODEL`                             | `cyankiwi/gemma-4-26B-A4B-it-AWQ-4bit` | имя OCR/vision модели; фактическая модель может быть Gemma                                                                 |
+| `OCR_LLM_TIMEOUT_SECONDS`                   |                                   `20` | timeout OCR LLM request                                                                                                    |
+| `OCR_LLM_MAX_RETRIES`                       |                                    `5` | количество попыток OCR LLM request / JSON parsing                                                                          |
+| `OCR_LLM_CONFIDENCE_THRESHOLD`              |                                 `0.45` | минимальная confidence для принятия bbox                                                                                   |
 | `REPORTS_AD_OCR_IMAGE_MAX_WIDTH`            |                                 `1280` | максимальная ширина отдельной OCR-копии скриншота; исходный скриншот для композиции не изменяется                          |
 | `REPORTS_AD_OCR_IMAGE_MAX_PIXELS`           |                              `2000000` | максимальное число пикселей отдельной OCR-копии скриншота перед отправкой в OCR endpoint                                   |
-| `REPORTS_AD_OCR_LLM_HEADER_AUTHORISATION`   |                                    нет | опциональный raw Authorization header; имеет приоритет над user/password                                                   |
-| `REPORTS_AD_OCR_LLM_USER`                   |                                    нет | опциональный basic-auth username для OCR LLM                                                                               |
-| `REPORTS_AD_OCR_LLM_PASSWORD`               |                                    нет | опциональный basic-auth password для OCR LLM                                                                               |
-| `REPORTS_AD_OCR_LLM_API_KEY`                |                                    нет | зарезервировано для Gemini-style OCR config parity; текущий OpenAI-compatible клиент его не использует                     |
+| `OCR_LLM_HEADER_AUTHORISATION`              |                                    нет | опциональный raw Authorization header; имеет приоритет над user/password                                                   |
+| `OCR_LLM_USER`                              |                                    нет | опциональный basic-auth username для OCR LLM                                                                               |
+| `OCR_LLM_PASSWORD`                          |                                    нет | опциональный basic-auth password для OCR LLM                                                                               |
+| `OCR_LLM_API_KEY`                           |                                    нет | зарезервировано для Gemini-style OCR config parity; текущий OpenAI-compatible клиент его не использует                     |
 
 `REPORTS_AD_REQUEST_TIMEOUT_SECONDS=300` и `REPORTS_AD_PAGE_LOAD_TIMEOUT_MS=12000` являются согласованной парой: общий timeout достаточно длинный для перебора fallback-площадок, а timeout одного кандидата ограничивает зависание плохих площадок. Площадки, которые по Docker logs не дают пригодную загрузку в пределах 30 секунд, исключаются из активной fallback-итерации в каталоге, но остаются в JSON с `enabled: false` и `disabled_reason` для traceability.
 
-Stage 2 LLM/OCR public configuration uses `REPORTS_AD_OCR_LLM_*` names by analogy with `validator-ai` `OCR_LLM_*`: `BASE_URL`, `MODEL`, `TIMEOUT_SECONDS`, `HEADER_AUTHORISATION`, `USER`, `PASSWORD` and optional `API_KEY`. This naming is intentionally OCR-style even when the actual OpenAI-compatible vision model is Gemma. Legacy `REPORTS_AD_GEMMA_*` names are not read by the runtime.
+Stage 2 LLM/OCR public configuration uses `OCR_LLM_*` names by analogy with `validator-ai` `OCR_LLM_*`: `BASE_URL`, `MODEL`, `TIMEOUT_SECONDS`, `HEADER_AUTHORISATION`, `USER`, `PASSWORD` and optional `API_KEY`. This naming is intentionally OCR-style even when the actual OpenAI-compatible vision model is Gemma. Legacy `REPORTS_AD_GEMMA_*` names are not read by the runtime.
 
-Начиная с bugfix 2026-07-14, Stage 2 screenshot-only flow получает runtime config напрямую из Telegram runtime path. Если OCR runtime не инициализирован или не заполнен `REPORTS_AD_OCR_LLM_BASE_URL`, бот возвращает явную безопасную ошибку конфигурации вместо `AttributeError`.
+Начиная с bugfix 2026-07-14, Stage 2 screenshot-only flow получает runtime config напрямую из Telegram runtime path. Если OCR runtime не инициализирован или не заполнен `OCR_LLM_BASE_URL`, бот возвращает явную безопасную ошибку конфигурации вместо `AttributeError`.
 
 ## Диагностика timeout/no-result
 

@@ -252,10 +252,10 @@ def _require_ocr_runtime_config(config: BotConfig | None) -> BotConfig:
         raise ValidationError("Конфигурация Stage 2 OCR не инициализирована. Перезапустите бота и повторите попытку.")
 
     if not config.ocr_llm_base_url.strip():
-        raise ValidationError("Stage 2 OCR не настроен: заполните REPORTS_AD_OCR_LLM_BASE_URL и перезапустите бота.")
+        raise ValidationError("Stage 2 OCR не настроен: заполните OCR_LLM_BASE_URL и перезапустите бота.")
 
     if not config.ocr_llm_model.strip():
-        raise ValidationError("Stage 2 OCR не настроен: заполните REPORTS_AD_OCR_LLM_MODEL и перезапустите бота.")
+        raise ValidationError("Stage 2 OCR не настроен: заполните OCR_LLM_MODEL и перезапустите бота.")
 
     return config
 

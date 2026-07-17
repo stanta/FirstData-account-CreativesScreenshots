@@ -198,12 +198,12 @@ def test_bot_config_uses_extended_overall_timeout_and_shorter_candidate_timeout(
 
 def test_bot_config_reads_ocr_llm_env_names(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("REPORTS_AD_TELEGRAM_TOKEN", "test-token")
-    monkeypatch.setenv("REPORTS_AD_OCR_LLM_BASE_URL", "http://gemma.firstdata.io/v1/")
-    monkeypatch.setenv("REPORTS_AD_OCR_LLM_MODEL", "cyankiwi/gemma-4-26B-A4B-it-AWQ-4bit")
-    monkeypatch.setenv("REPORTS_AD_OCR_LLM_HEADER_AUTHORISATION", "Basic placeholder")
-    monkeypatch.setenv("REPORTS_AD_OCR_LLM_TIMEOUT_SECONDS", "20")
-    monkeypatch.setenv("REPORTS_AD_OCR_LLM_MAX_RETRIES", "3")
-    monkeypatch.setenv("REPORTS_AD_OCR_LLM_CONFIDENCE_THRESHOLD", "0.6")
+    monkeypatch.setenv("OCR_LLM_BASE_URL", "http://gemma.firstdata.io/v1/")
+    monkeypatch.setenv("OCR_LLM_MODEL", "cyankiwi/gemma-4-26B-A4B-it-AWQ-4bit")
+    monkeypatch.setenv("OCR_LLM_HEADER_AUTHORISATION", "Basic placeholder")
+    monkeypatch.setenv("OCR_LLM_TIMEOUT_SECONDS", "20")
+    monkeypatch.setenv("OCR_LLM_MAX_RETRIES", "3")
+    monkeypatch.setenv("OCR_LLM_CONFIDENCE_THRESHOLD", "0.6")
     monkeypatch.setenv("REPORTS_AD_OCR_IMAGE_MAX_WIDTH", "1024")
     monkeypatch.setenv("REPORTS_AD_OCR_IMAGE_MAX_PIXELS", "900000")
 
