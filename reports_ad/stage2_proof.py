@@ -175,6 +175,7 @@ async def compose_stage2_image_with_validation(
                 "reason": _safe_feedback_text(validation.reason, max_length=240),
                 "corrected_bbox": _bbox_dict(validation.corrected_bbox),
                 "deltas": dict(validation.deltas),
+                "validation_metadata": _safe_validation_metadata(validation.raw_metadata),
             }
         )
         logger.info(
@@ -693,6 +694,20 @@ def _bbox_dict(bbox: BoundingBox | None) -> dict[str, int] | None:
     if bbox is None:
         return None
     return {"x": bbox.x, "y": bbox.y, "width": bbox.width, "height": bbox.height}
+
+
+def _safe_validation_metadata(raw_metadata: dict[str, object]) -> dict[str, object]:
+    allowed_keys = (
+        "coordinate_space",
+        "crop_mode",
+        "crop_origin_x",
+        "crop_origin_y",
+        "crop_width",
+        "crop_height",
+        "confidence_threshold",
+        "exact_match",
+    )
+    return {key: raw_metadata.get(key) for key in allowed_keys if key in raw_metadata}
 
 
 def _safe_deltas(deltas: dict[str, int]) -> str:

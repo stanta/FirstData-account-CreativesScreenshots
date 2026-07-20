@@ -5,7 +5,7 @@ from PIL import Image, ImageChops, ImageDraw
 
 from reports_ad.bot import build_application
 from reports_ad.config import BotConfig
-from reports_ad.gemma_client import GemmaClientError, HeaderAuthGemmaClient, _banner_prompt, _parse_bbox_result, _parse_composition_validation_result, build_gemma_client_from_config
+from reports_ad.gemma_client import GemmaClientError, HeaderAuthGemmaClient, _banner_prompt, _composition_validation_crop_rect, _composition_validation_prompt, _parse_bbox_result, _parse_composition_validation_result, build_gemma_client_from_config
 from reports_ad.models import BBoxDetectionResult, BoundingBox, CompositionValidationResult, CreativeInfo, Placement, ProofRequest, ProofResult, SourceScreenshotInfo
 from reports_ad.proof import compose_final_image
 from reports_ad.stage2_proof import compose_stage2_image, fallback_landing_bbox, generate_stage2_proof, validate_banner_bbox_semantics
@@ -222,6 +222,8 @@ def test_gemma_client_builder_uses_ocr_config_fields() -> None:
     assert client._confidence_threshold == 0.6
     assert client._ocr_image_max_width == 1280
     assert client._ocr_image_max_pixels == 2_000_000
+    assert client._composition_validation_crop_margin_percent == 0.20
+    assert client._composition_validation_crop_margin_min_pixels == 60
 
 
 def test_parse_bbox_result_rescales_from_resized_coordinate_space() -> None:
@@ -261,6 +263,28 @@ def test_parse_bbox_result_rejects_invalid_normalized_coordinate_space() -> None
             source_image_width=1280,
             source_image_height=828,
         )
+
+
+def test_banner_retry_prompt_strictly_forbids_mixed_coordinate_spaces() -> None:
+    spec = get_spec("first-data-rtb-banners-240x400-image")
+    assert spec is not None
+    screenshot = SourceScreenshotInfo(path=Path("source.png"), mime_type="image/png", width=1280, height=719, size_bytes=123)
+
+    prompt = _banner_prompt(
+        screenshot=screenshot,
+        spec=spec,
+        ocr_image_width=1280,
+        ocr_image_height=719,
+        validation_feedback="previous bbox x=902,y=147,width=154,height=396 was rejected by aspect ratio",
+        selection_attempt=2,
+    )
+
+    assert "Coordinate contract is strict and MUST NOT be mixed" in prompt
+    assert "NEVER put pixel numbers with coordinate_space='normalized'" in prompt
+    assert "values such as 707 or 116 are INVALID" in prompt
+    assert "if bbox values are pixel-like numbers greater than 1" in prompt
+    assert "coordinate_space MUST be 'source_pixels' or 'resized_pixels'" in prompt
+    assert "x=0.70 not x=707" in prompt
 
 
 def test_parse_bbox_result_requires_resized_pixel_image_size() -> None:
@@ -323,6 +347,116 @@ def test_parse_composition_validation_result_detects_exact_pass_and_correction()
     assert failed.passed is False
     assert failed.corrected_bbox == BoundingBox(40, 50, 120, 80)
     assert failed.deltas == {"x": -20, "y": -20, "width": -20, "height": -10}
+
+
+def test_composition_validation_crop_rect_expands_and_clamps_bbox() -> None:
+    crop = _composition_validation_crop_rect(
+        bbox=BoundingBox(20, 30, 100, 70),
+        image_width=400,
+        image_height=300,
+        margin_percent=0.20,
+        margin_min_pixels=60,
+    )
+
+    assert (crop.x, crop.y, crop.width, crop.height) == (0, 0, 180, 160)
+    assert (crop.right, crop.bottom) == (180, 160)
+    assert (crop.margin_x, crop.margin_y) == (60, 60)
+
+
+def test_composition_validation_prompt_declares_crop_coordinate_contract() -> None:
+    spec = get_spec("yandex-graphic-banners-300x250-image")
+    assert spec is not None
+    screenshot = SourceScreenshotInfo(path=Path("source.png"), mime_type="image/png", width=400, height=300, size_bytes=123)
+    bbox = BoundingBox(80, 70, 120, 80)
+    crop = _composition_validation_crop_rect(
+        bbox=bbox,
+        image_width=400,
+        image_height=300,
+        margin_percent=0.20,
+        margin_min_pixels=40,
+    )
+
+    prompt = _composition_validation_prompt(
+        screenshot=screenshot,
+        spec=spec,
+        current_banner_bbox=bbox,
+        ocr_image_width=crop.width,
+        ocr_image_height=crop.height,
+        validation_attempt=1,
+        crop=crop,
+    )
+
+    assert "CROPPED images around the current banner candidate" in prompt
+    assert "crop origin is" in prompt
+    assert "coordinate_space='crop_pixels'" in prompt
+    assert "Return full source screenshot pixel coordinates" in prompt
+
+
+def test_parse_composition_validation_result_converts_crop_pixels_to_source_space() -> None:
+    crop = _composition_validation_crop_rect(
+        bbox=BoundingBox(80, 70, 120, 80),
+        image_width=400,
+        image_height=300,
+        margin_percent=0.20,
+        margin_min_pixels=40,
+    )
+
+    result = _parse_composition_validation_result(
+        {
+            "verification_passed": False,
+            "original_banner_bbox": {"x": 30, "y": 40, "width": 130, "height": 90},
+            "actual_inserted_creative_bbox": {"x": 40, "y": 40, "width": 120, "height": 80},
+            "deltas": {"x": 10, "y": 0, "width": -10, "height": -10},
+            "recommended_corrected_bbox": {"x": 30, "y": 40, "width": 130, "height": 90},
+            "confidence": 0.95,
+            "reason": "crop local correction",
+            "coordinate_space": "crop_pixels",
+            "image_width": crop.width,
+            "image_height": crop.height,
+        },
+        source_image_width=400,
+        source_image_height=300,
+        confidence_threshold=0.45,
+        crop=crop,
+    )
+
+    assert result.passed is False
+    assert result.original_banner_bbox == BoundingBox(70, 70, 130, 90)
+    assert result.inserted_creative_bbox == BoundingBox(80, 70, 120, 80)
+    assert result.corrected_bbox == BoundingBox(70, 70, 130, 90)
+    assert result.raw_metadata["crop_origin_x"] == 40
+    assert result.raw_metadata["crop_origin_y"] == 30
+
+
+def test_parse_composition_validation_result_preserves_source_pixel_crop_response() -> None:
+    crop = _composition_validation_crop_rect(
+        bbox=BoundingBox(80, 70, 120, 80),
+        image_width=400,
+        image_height=300,
+        margin_percent=0.20,
+        margin_min_pixels=40,
+    )
+
+    result = _parse_composition_validation_result(
+        {
+            "verification_passed": True,
+            "original_banner_bbox": {"x": 80, "y": 70, "width": 120, "height": 80},
+            "actual_inserted_creative_bbox": {"x": 80, "y": 70, "width": 120, "height": 80},
+            "deltas": {"x": 0, "y": 0, "width": 0, "height": 0},
+            "recommended_corrected_bbox": None,
+            "confidence": 0.95,
+            "reason": "exact source coords",
+            "coordinate_space": "source_pixels",
+        },
+        source_image_width=400,
+        source_image_height=300,
+        confidence_threshold=0.45,
+        crop=crop,
+    )
+
+    assert result.passed is True
+    assert result.corrected_bbox == BoundingBox(80, 70, 120, 80)
+    assert result.raw_metadata["crop_width"] == crop.width
 
 
 def test_tgo_candidates_choose_full_ad_card_over_internal_image_asset() -> None:
@@ -551,6 +685,58 @@ async def test_ocr_downscale_copy_is_used_and_resized_bbox_maps_to_source(tmp_pa
     assert "source screenshot is 2560x1440" in captured["prompt"]
     assert "OCR input image sent to you is 1280x720" in captured["prompt"]
     assert result.bbox == BoundingBox(200, 100, 600, 500)
+
+
+@pytest.mark.asyncio
+async def test_composition_validation_sends_crop_sized_images_instead_of_full_screenshots(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    spec = get_spec("yandex-graphic-banners-300x250-image")
+    assert spec is not None
+    source_path = tmp_path / "source.png"
+    composed_path = tmp_path / "composed.png"
+    Image.new("RGB", (400, 300), "white").save(source_path)
+    Image.new("RGB", (400, 300), "white").save(composed_path)
+    screenshot = SourceScreenshotInfo(path=source_path, mime_type="image/png", width=400, height=300, size_bytes=source_path.stat().st_size)
+    client = HeaderAuthGemmaClient(
+        base_url="http://ocr.example.test/v1",
+        model="test-model",
+        authorization_header=None,
+        max_retries=1,
+        composition_validation_crop_margin_percent=0.20,
+        composition_validation_crop_margin_min_pixels=60,
+    )
+    captured: dict[str, object] = {}
+
+    async def fake_execute_multimodal_request(**kwargs):
+        captured["prompt"] = kwargs["prompt"]
+        sizes = []
+        for image_path, _mime_type in kwargs["images"]:
+            with Image.open(image_path) as sent:
+                sizes.append(sent.size)
+        captured["sent_sizes"] = sizes
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "content": '{"verification_passed":true,"original_banner_bbox":{"x":20,"y":30,"width":100,"height":70},"actual_inserted_creative_bbox":{"x":20,"y":30,"width":100,"height":70},"deltas":{"x":0,"y":0,"width":0,"height":0},"recommended_corrected_bbox":null,"confidence":0.99,"reason":"exact","coordinate_space":"source_pixels"}'
+                    }
+                }
+            ]
+        }
+
+    monkeypatch.setattr(client, "_execute_multimodal_request", fake_execute_multimodal_request)
+
+    result = await client.verify_composition_alignment(
+        original_screenshot=screenshot,
+        composed_screenshot_path=composed_path,
+        current_banner_bbox=BoundingBox(20, 30, 100, 70),
+        spec=spec,
+        request_id="req-validation-crop",
+    )
+
+    assert result.passed is True
+    assert captured["sent_sizes"] == [(180, 160), (180, 160)]
+    assert "CROPPED images around the current banner candidate" in captured["prompt"]
+    assert "crop rectangle in full source pixels is x=0, y=0, width=180, height=160" in captured["prompt"]
 
 
 def test_gemma_client_builder_rejects_missing_runtime_config() -> None:

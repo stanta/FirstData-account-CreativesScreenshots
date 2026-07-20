@@ -9,6 +9,7 @@ import math
 import os
 import re
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -22,6 +23,28 @@ from .validation import ValidationError
 logger = logging.getLogger(__name__)
 DETAILED_OCR_LOGGING_ENV = "REPORTS_AD_OCR_LOG_TEXT"
 MAX_LOG_TEXT_CHARS = 700
+DEFAULT_COMPOSITION_VALIDATION_CROP_MARGIN_PERCENT = 0.20
+DEFAULT_COMPOSITION_VALIDATION_CROP_MARGIN_MIN_PIXELS = 60
+
+
+@dataclass(frozen=True, slots=True)
+class CompositionValidationCrop:
+    x: int
+    y: int
+    width: int
+    height: int
+    margin_x: int
+    margin_y: int
+    margin_percent: float
+    margin_min_pixels: int
+
+    @property
+    def right(self) -> int:
+        return self.x + self.width
+
+    @property
+    def bottom(self) -> int:
+        return self.y + self.height
 
 
 class GemmaClientError(RuntimeError):
@@ -67,6 +90,8 @@ class HeaderAuthGemmaClient:
         confidence_threshold: float = 0.45,
         ocr_image_max_width: int = 1280,
         ocr_image_max_pixels: int = 2_000_000,
+        composition_validation_crop_margin_percent: float = DEFAULT_COMPOSITION_VALIDATION_CROP_MARGIN_PERCENT,
+        composition_validation_crop_margin_min_pixels: int = DEFAULT_COMPOSITION_VALIDATION_CROP_MARGIN_MIN_PIXELS,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._model = model
@@ -76,6 +101,8 @@ class HeaderAuthGemmaClient:
         self._confidence_threshold = confidence_threshold
         self._ocr_image_max_width = max(0, ocr_image_max_width)
         self._ocr_image_max_pixels = max(0, ocr_image_max_pixels)
+        self._composition_validation_crop_margin_percent = max(0.0, composition_validation_crop_margin_percent)
+        self._composition_validation_crop_margin_min_pixels = max(0, composition_validation_crop_margin_min_pixels)
 
     async def detect_banner_bbox(
         self,
@@ -112,19 +139,38 @@ class HeaderAuthGemmaClient:
             raise GemmaClientError("OCR LLM endpoint is not configured")
 
         last_error: BaseException | None = None
+        original_crop_path: Path | None = None
+        composed_crop_path: Path | None = None
         original_ocr_path: Path | None = None
         composed_ocr_path: Path | None = None
-        cleanup_original = False
-        cleanup_composed = False
+        cleanup_original_crop = False
+        cleanup_composed_crop = False
+        cleanup_original_ocr = False
+        cleanup_composed_ocr = False
         stage = "composition_validation"
         try:
-            original_ocr_path, original_width, original_height, original_mime_type, cleanup_original = _prepare_ocr_input_image(
-                screenshot=original_screenshot,
+            crop = _composition_validation_crop_rect(
+                bbox=current_banner_bbox,
+                image_width=original_screenshot.width,
+                image_height=original_screenshot.height,
+                margin_percent=self._composition_validation_crop_margin_percent,
+                margin_min_pixels=self._composition_validation_crop_margin_min_pixels,
+            )
+            original_crop_path, original_crop_width, original_crop_height, original_crop_mime_type, cleanup_original_crop = _crop_image_input_copy(
+                image_path=original_screenshot.path,
+                crop=crop,
+            )
+            composed_crop_path, composed_crop_width, composed_crop_height, composed_crop_mime_type, cleanup_composed_crop = _crop_image_input_copy(
+                image_path=composed_screenshot_path,
+                crop=crop,
+            )
+            original_ocr_path, original_width, original_height, original_mime_type, cleanup_original_ocr = _prepare_image_input_copy(
+                image_path=original_crop_path,
                 max_width=self._ocr_image_max_width,
                 max_pixels=self._ocr_image_max_pixels,
             )
-            composed_ocr_path, composed_width, composed_height, composed_mime_type, cleanup_composed = _prepare_image_input_copy(
-                image_path=composed_screenshot_path,
+            composed_ocr_path, composed_width, composed_height, composed_mime_type, cleanup_composed_ocr = _prepare_image_input_copy(
+                image_path=composed_crop_path,
                 max_width=self._ocr_image_max_width,
                 max_pixels=self._ocr_image_max_pixels,
             )
@@ -135,10 +181,11 @@ class HeaderAuthGemmaClient:
                 ocr_image_width=original_width,
                 ocr_image_height=original_height,
                 validation_attempt=validation_attempt,
+                crop=crop,
             )
             for attempt in range(1, self._max_retries + 1):
                 logger.info(
-                    "ocr_llm_request request_id=%s stage=%s attempt=%s validation_attempt=%s model=%s spec_slug=%s source_screenshot=%sx%s original_ocr_image=%sx%s composed_ocr_image=%sx%s current_banner_bbox=%s prompt_length=%s prompt_sha256=%s prompt_text=%s",
+                    "ocr_llm_request request_id=%s stage=%s attempt=%s validation_attempt=%s model=%s spec_slug=%s crop_mode=banner_bbox_margin source_screenshot=%sx%s crop_origin=%s,%s crop_bounds=%s,%s,%s,%s crop_size=%sx%s original_ocr_image=%sx%s composed_ocr_image=%sx%s current_banner_bbox=%s crop_margin_percent=%.3f crop_margin_min_pixels=%s crop_margin_x=%s crop_margin_y=%s prompt_length=%s prompt_sha256=%s prompt_text=%s",
                     request_id,
                     stage,
                     attempt,
@@ -147,11 +194,23 @@ class HeaderAuthGemmaClient:
                     spec.slug,
                     original_screenshot.width,
                     original_screenshot.height,
+                    crop.x,
+                    crop.y,
+                    crop.x,
+                    crop.y,
+                    crop.right,
+                    crop.bottom,
+                    original_crop_width,
+                    original_crop_height,
                     original_width,
                     original_height,
                     composed_width,
                     composed_height,
                     _safe_bbox(current_banner_bbox),
+                    crop.margin_percent,
+                    crop.margin_min_pixels,
+                    crop.margin_x,
+                    crop.margin_y,
                     len(prompt),
                     _sha256_short(prompt),
                     _safe_debug_text(prompt),
@@ -171,20 +230,26 @@ class HeaderAuthGemmaClient:
                         source_image_width=original_screenshot.width,
                         source_image_height=original_screenshot.height,
                         confidence_threshold=self._confidence_threshold,
+                        crop=crop,
                     )
                     logger.info(
-                        "ocr_llm_response request_id=%s stage=%s attempt=%s validation_attempt=%s status=ok parse_success=%s passed=%s confidence=%.3f original_banner_bbox=%s inserted_creative_bbox=%s corrected_bbox=%s deltas=%s reason=%s response_text_length=%s response_text_sha256=%s response_text=%s",
+                        "ocr_llm_response request_id=%s stage=%s attempt=%s validation_attempt=%s status=ok parse_success=%s crop_mode=banner_bbox_margin crop_origin=%s,%s crop_size=%sx%s passed=%s confidence=%.3f original_banner_bbox=%s inserted_creative_bbox=%s corrected_bbox=%s deltas=%s coordinate_space=%s reason=%s response_text_length=%s response_text_sha256=%s response_text=%s",
                         request_id,
                         stage,
                         attempt,
                         validation_attempt,
                         True,
+                        crop.x,
+                        crop.y,
+                        crop.width,
+                        crop.height,
                         result.passed,
                         result.confidence,
                         _safe_bbox(result.original_banner_bbox),
                         _safe_bbox(result.inserted_creative_bbox),
                         _safe_bbox(result.corrected_bbox),
                         _safe_deltas(result.deltas),
+                        _safe_coordinate_space(result.raw_metadata),
                         _sanitize_log_text(result.reason, limit=180),
                         len(raw_text),
                         _sha256_short(raw_text),
@@ -207,7 +272,12 @@ class HeaderAuthGemmaClient:
                     if attempt < self._max_retries:
                         await asyncio.sleep(min(2 ** (attempt - 1), 8))
         finally:
-            for cleanup, path in ((cleanup_original, original_ocr_path), (cleanup_composed, composed_ocr_path)):
+            for cleanup, path in (
+                (cleanup_original_ocr, original_ocr_path),
+                (cleanup_composed_ocr, composed_ocr_path),
+                (cleanup_original_crop, original_crop_path),
+                (cleanup_composed_crop, composed_crop_path),
+            ):
                 if cleanup and path is not None:
                     try:
                         path.unlink(missing_ok=True)
@@ -375,6 +445,8 @@ def build_gemma_client_from_config(config: BotConfig | None) -> HeaderAuthGemmaC
         confidence_threshold=runtime_config.ocr_llm_confidence_threshold,
         ocr_image_max_width=runtime_config.ocr_image_max_width,
         ocr_image_max_pixels=runtime_config.ocr_image_max_pixels,
+        composition_validation_crop_margin_percent=runtime_config.composition_validation_crop_margin_percent,
+        composition_validation_crop_margin_min_pixels=runtime_config.composition_validation_crop_margin_min_pixels,
     )
 
 
@@ -405,8 +477,8 @@ def _banner_prompt(
     candidate_instruction = ""
     if _is_tgo_spec(spec):
         candidate_instruction = (
-            "For this TGO/text-image format, return multiple candidates where possible in a candidates array. "
-            "Each candidate must include role, bbox, confidence, reason, coordinate_space, image_width and image_height. "
+            "For text-image format, return multiple candidates where possible in a candidates array. "
+            "Each candidate must include role, bbox, confidence, reason (with relative position on screen), coordinate_space, image_width and image_height. "
             "Allowed candidate role labels include: full_ad_card, original_ad_slot, internal_image_asset, landing_area, browser_ui, unknown. "
             "Prefer full_ad_card or original_ad_slot for replacement; do not select internal_image_asset when the full ad card/container is visible. "
         )
@@ -417,13 +489,17 @@ def _banner_prompt(
         "Use the selected network/spec context, expected dimensions, aspect ratio, and placement hint. "
         f"Selected spec dimensions: {spec.dimensions_label}; expected aspect ratio: {_safe_aspect_ratio(spec)}. "
         f"Selected banner usually placement: {spec.placement_hint}. "
-        "You MUST identify the original ad slot matching this selected banner type and position hint; do NOT select the uploaded replacement creative, a floating preview, an editor overlay, or a landing/link/browser area. "
+        "You MUST identify the original ad slot EXACTLY matching this selected banner type and position hint; do NOT select the uploaded replacement creative, a floating preview, an editor overlay, or a landing/link/browser area. "
         "Select the full visible ad card/container including image, text and CTA, not only the internal image asset. "
         f"{candidate_instruction}"
         "Return ONLY JSON with either keys: bbox {x,y,width,height}, confidence 0..1, reason, coordinate_space, image_width, image_height; or candidates [...]. "
-        "Preferred output: coordinate_space='normalized' with bbox values as 0..1 fractions of the full OCR input image. "
-        "If you return source screenshot pixel coordinates, set coordinate_space='source_pixels'. "
-        "If you return pixel coordinates from the OCR input/resized image, set coordinate_space='resized_pixels' and include the exact image_width and image_height used for those coordinates. "
+        "Coordinate contract is strict and MUST NOT be mixed: "
+        "A) coordinate_space='normalized' means x,y,width,height are decimal fractions from 0.0 to 1.0 of the full OCR input image; NEVER put pixel numbers with coordinate_space='normalized'. "
+        "B) coordinate_space='source_pixels' means x,y,width,height are integer pixel coordinates in the original full source screenshot. "
+        "C) coordinate_space='resized_pixels' means x,y,width,height are integer pixel coordinates in the OCR input image and you MUST include image_width and image_height matching that coordinate image. "
+        "Preferred output: coordinate_space='source_pixels' with integer pixel coordinates in the original full source screenshot. "
+        "If you use normalized coordinates, every bbox value MUST be between 0 and 1 inclusive; values such as 707 or 116 are INVALID unless coordinate_space is source_pixels or resized_pixels. "
+        "If uncertain about coordinate_space, use source_pixels with coordinates measured on the full source screenshot. "
         f"The source screenshot is {screenshot.width}x{screenshot.height} pixels; the OCR input image sent to you is {ocr_width}x{ocr_height} pixels. "
         "The source and OCR input may differ; do not crop or reset the coordinate origin. "
         f"Selected spec slug: {spec.slug}. Selected spec name: {spec.display_name}. Network: {spec.network_display_name}. "
@@ -434,10 +510,12 @@ def _banner_prompt(
             "\nRetry feedback: "
             f"This is selection attempt {max(1, selection_attempt)}. "
             "The previous bbox candidate was rejected by deterministic validation. "
-            f"Previous validation feedback for this retry: {_sanitize_log_text(validation_feedback, limit=900)} "
+            f"Previous validation feedback for this retry: {validation_feedback} "
             "Do NOT repeat the previous invalid bbox or substantially the same visual area. "
             "Use this feedback only as correction context; the Base task instructions remain authoritative. "
-            "Choose a different original ad slot candidate that satisfies the coordinate contract, selected spec dimensions, aspect ratio, minimum size, and TGO/full-card policy. "
+            "On this retry, re-check the coordinate contract before answering: if bbox values are pixel-like numbers greater than 1, coordinate_space MUST be 'source_pixels' or 'resized_pixels', never 'normalized'. "
+            "If coordinate_space='normalized', all bbox values MUST be 0..1 fractions, for example x=0.70 not x=707. "
+            "Choose a different original ad slot candidate that satisfies the coordinate contract, selected spec dimensions, aspect ratio, and minimum size."
         )
     return base_task_instructions + feedback_instruction
 
@@ -481,6 +559,52 @@ def _prepare_image_input_copy(
             temp_path = Path(temp_file.name)
         image.save(temp_path, format="PNG", optimize=True)
         return temp_path, target_width, target_height, "image/png", True
+
+
+def _composition_validation_crop_rect(
+    *,
+    bbox: BoundingBox,
+    image_width: int,
+    image_height: int,
+    margin_percent: float = DEFAULT_COMPOSITION_VALIDATION_CROP_MARGIN_PERCENT,
+    margin_min_pixels: int = DEFAULT_COMPOSITION_VALIDATION_CROP_MARGIN_MIN_PIXELS,
+) -> CompositionValidationCrop:
+    if image_width <= 0 or image_height <= 0:
+        raise GemmaClientError("composition validation source image size is invalid")
+    if bbox.width <= 0 or bbox.height <= 0:
+        raise GemmaClientError("composition validation bbox size is invalid")
+    safe_percent = max(0.0, margin_percent)
+    safe_min_pixels = max(0, margin_min_pixels)
+    margin_x = max(safe_min_pixels, int(round(bbox.width * safe_percent)))
+    margin_y = max(safe_min_pixels, int(round(bbox.height * safe_percent)))
+    left = max(0, bbox.x - margin_x)
+    top = max(0, bbox.y - margin_y)
+    right = min(image_width, bbox.right + margin_x)
+    bottom = min(image_height, bbox.bottom + margin_y)
+    if right <= left or bottom <= top:
+        raise GemmaClientError("composition validation crop rect is empty")
+    return CompositionValidationCrop(
+        x=left,
+        y=top,
+        width=right - left,
+        height=bottom - top,
+        margin_x=margin_x,
+        margin_y=margin_y,
+        margin_percent=safe_percent,
+        margin_min_pixels=safe_min_pixels,
+    )
+
+
+def _crop_image_input_copy(*, image_path: Path, crop: CompositionValidationCrop) -> tuple[Path, int, int, str, bool]:
+    with Image.open(image_path) as raw_image:
+        image = raw_image.convert("RGB")
+        if crop.x < 0 or crop.y < 0 or crop.right > image.width or crop.bottom > image.height:
+            raise GemmaClientError("composition validation crop rect is out of image bounds")
+        cropped = image.crop((crop.x, crop.y, crop.right, crop.bottom))
+        with tempfile.NamedTemporaryFile(prefix="reports-ad-composition-crop-", suffix=".png", dir=image_path.parent, delete=False) as temp_file:
+            temp_path = Path(temp_file.name)
+        cropped.save(temp_path, format="PNG", optimize=True)
+        return temp_path, cropped.width, cropped.height, "image/png", True
 
 
 def _bounded_ocr_image_size(*, width: int, height: int, max_width: int, max_pixels: int) -> tuple[int, int]:
@@ -583,6 +707,7 @@ def _parse_composition_validation_result(
     source_image_width: int,
     source_image_height: int,
     confidence_threshold: float,
+    crop: CompositionValidationCrop | None = None,
 ) -> CompositionValidationResult:
     confidence = _normalize_confidence(payload.get("confidence"))
     raw_passed = _first_present(payload.get("verification_passed"), payload.get("passed"), payload.get("pass"), payload.get("is_exact_match"))
@@ -593,18 +718,21 @@ def _parse_composition_validation_result(
         keys=("original_banner_bbox", "original_bbox", "banner_bbox"),
         source_image_width=source_image_width,
         source_image_height=source_image_height,
+        crop=crop,
     )
     inserted_bbox = _optional_bbox_from_payload(
         payload,
         keys=("actual_inserted_creative_bbox", "inserted_creative_bbox", "actual_bbox", "inserted_bbox"),
         source_image_width=source_image_width,
         source_image_height=source_image_height,
+        crop=crop,
     )
     corrected_bbox = _optional_bbox_from_payload(
         payload,
         keys=("recommended_corrected_bbox", "corrected_bbox", "recommended_insert_bbox", "corrected_insert_parameters"),
         source_image_width=source_image_width,
         source_image_height=source_image_height,
+        crop=crop,
     )
     if original_bbox is None:
         raise GemmaClientError("composition validation JSON must include original_banner_bbox")
@@ -619,6 +747,8 @@ def _parse_composition_validation_result(
         corrected_bbox = original_bbox
     if not passed and corrected_bbox is None:
         raise GemmaClientError("composition validation mismatch must include recommended_corrected_bbox")
+    if corrected_bbox is not None:
+        _validate_source_bbox_bounds(bbox=corrected_bbox, source_image_width=source_image_width, source_image_height=source_image_height, label="recommended_corrected_bbox")
     reason = str(payload.get("reason") or payload.get("explanation") or "")[:300]
     if bool(raw_passed) and confidence < confidence_threshold:
         reason = (reason + "; " if reason else "") + "confidence below threshold"
@@ -636,6 +766,11 @@ def _parse_composition_validation_result(
             "exact_match": exact_match,
             "confidence_threshold": confidence_threshold,
             "coordinate_space": _sanitize_log_text(str(payload.get("coordinate_space", "source_pixels")), limit=32),
+            "crop_mode": "banner_bbox_margin" if crop is not None else "none",
+            "crop_origin_x": crop.x if crop is not None else None,
+            "crop_origin_y": crop.y if crop is not None else None,
+            "crop_width": crop.width if crop is not None else None,
+            "crop_height": crop.height if crop is not None else None,
         },
     )
 
@@ -646,6 +781,7 @@ def _optional_bbox_from_payload(
     keys: tuple[str, ...],
     source_image_width: int,
     source_image_height: int,
+    crop: CompositionValidationCrop | None = None,
 ) -> BoundingBox | None:
     for key in keys:
         value = payload.get(key)
@@ -658,7 +794,9 @@ def _optional_bbox_from_payload(
             payload={**payload, **value},
             source_image_width=source_image_width,
             source_image_height=source_image_height,
+            crop=crop,
         )
+        _validate_source_bbox_bounds(bbox=bbox, source_image_width=source_image_width, source_image_height=source_image_height, label=key)
         return bbox
     return None
 
@@ -690,6 +828,7 @@ def _coerce_bbox_to_source_pixels(
     payload: dict[str, object],
     source_image_width: int,
     source_image_height: int,
+    crop: CompositionValidationCrop | None = None,
 ) -> tuple[BoundingBox, dict[str, object]]:
     x = _require_number(bbox_payload, "x")
     y = _require_number(bbox_payload, "y")
@@ -709,7 +848,17 @@ def _coerce_bbox_to_source_pixels(
         "raw_image_height": coordinate_image_height,
         "raw_bbox": _safe_raw_bbox_values(x=x, y=y, width=width, height=height),
         "scaled_to_source": False,
+        "crop_origin_x": crop.x if crop is not None else None,
+        "crop_origin_y": crop.y if crop is not None else None,
     }
+
+    if coordinate_space in {"crop_pixels", "cropped_pixels", "crop"}:
+        if crop is None:
+            raise GemmaClientError("invalid_coordinate_space: coordinate_space=crop_pixels requires crop metadata")
+        bbox = _bbox_from_crop_pixels(x=x, y=y, width=width, height=height, crop=crop)
+        metadata["coordinate_space"] = "crop_pixels"
+        metadata["scaled_to_source"] = True
+        return bbox, metadata
 
     if coordinate_space == "normalized":
         if not _looks_normalized(x=x, y=y, width=width, height=height):
@@ -756,6 +905,11 @@ def _coerce_bbox_to_source_pixels(
         return bbox, metadata
 
     return BoundingBox(x=int(round(x)), y=int(round(y)), width=int(round(width)), height=int(round(height))), metadata
+
+
+def _validate_source_bbox_bounds(*, bbox: BoundingBox, source_image_width: int, source_image_height: int, label: str) -> None:
+    if bbox.x < 0 or bbox.y < 0 or bbox.width <= 0 or bbox.height <= 0 or bbox.right > source_image_width or bbox.bottom > source_image_height:
+        raise GemmaClientError(f"composition validation {label} is outside source image bounds")
 
 
 def _select_bbox_candidate(
@@ -882,16 +1036,27 @@ def _composition_validation_prompt(
     ocr_image_width: int,
     ocr_image_height: int,
     validation_attempt: int,
+    crop: CompositionValidationCrop | None = None,
 ) -> str:
+    crop_instruction = ""
+    if crop is not None:
+        crop_instruction = (
+            "Important crop context: you receive CROPPED images around the current banner candidate, not full screenshots. "
+            f"The crop rectangle in full source pixels is x={crop.x}, y={crop.y}, width={crop.width}, height={crop.height}, right={crop.right}, bottom={crop.bottom}; crop origin is ({crop.x},{crop.y}). "
+            f"The current insertion bbox in crop-local pixels is x={current_banner_bbox.x - crop.x}, y={current_banner_bbox.y - crop.y}, width={current_banner_bbox.width}, height={current_banner_bbox.height}. "
+            "Return full source screenshot pixel coordinates whenever possible and set coordinate_space='source_pixels'. "
+            "If you can only return crop-local pixel coordinates, set coordinate_space='crop_pixels' and keep image_width/image_height equal to the crop image size so the caller can convert using the crop origin. "
+        )
     return (
         "You are validating an advertising proof image after creative insertion. "
         "You receive two images in this order: Image 1 is the original source screenshot BEFORE insertion; Image 2 is the composed screenshot AFTER the uploaded creative was inserted. "
+        f"{crop_instruction}"
         "Compare the two images and verify whether the inserted creative fully and exactly covers the original ad banner/card area with pixel-level alignment: no x/y offset, incomplete coverage, overflow, extra margins, or width/height mismatch. "
         f"Current insertion bbox in source screenshot pixels: x={current_banner_bbox.x}, y={current_banner_bbox.y}, width={current_banner_bbox.width}, height={current_banner_bbox.height}. "
         f"Selected spec dimensions: {spec.dimensions_label}; expected aspect ratio: {_safe_aspect_ratio(spec)}; selected spec slug: {spec.slug}; network: {spec.network_display_name}. "
         f"Validation cycle: {max(1, validation_attempt)}. Source screenshot is {screenshot.width}x{screenshot.height} pixels; OCR input images sent to you are {ocr_image_width}x{ocr_image_height} pixels. "
         "Return ONLY strict JSON with keys: verification_passed boolean, original_banner_bbox {x,y,width,height}, actual_inserted_creative_bbox {x,y,width,height}, deltas {x,y,width,height}, recommended_corrected_bbox {x,y,width,height} or null, confidence 0..1, reason string, coordinate_space, image_width, image_height. "
-        "Use source screenshot pixel coordinates whenever possible and set coordinate_space='source_pixels'. If you return resized OCR-image pixels, set coordinate_space='resized_pixels' and include image_width and image_height. "
+        "Use source screenshot pixel coordinates whenever possible and set coordinate_space='source_pixels'. If you return crop-local coordinates, set coordinate_space='crop_pixels'. If you return resized OCR-image pixels, set coordinate_space='resized_pixels' and include image_width and image_height. "
         "If verification_passed is false, recommended_corrected_bbox must be the exact pixel bbox to use for the next insertion attempt."
     )
 
@@ -993,6 +1158,15 @@ def _bbox_from_resized_pixels(
         top=y * scale_y,
         right=(x + width) * scale_x,
         bottom=(y + height) * scale_y,
+    )
+
+
+def _bbox_from_crop_pixels(*, x: float, y: float, width: float, height: float, crop: CompositionValidationCrop) -> BoundingBox:
+    return _bbox_from_edges(
+        left=crop.x + x,
+        top=crop.y + y,
+        right=crop.x + x + width,
+        bottom=crop.y + y + height,
     )
 
 
