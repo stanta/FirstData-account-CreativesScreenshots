@@ -123,6 +123,19 @@ wheels = [
 ]
 
 [[package]]
+name = "kurigram"
+version = "2.2.24"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pyaes" },
+    { name = "python-socks" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/93/0a/6cd1ced210b02cabef151aa17c193418528c6d49f9d4368a2e0975d11f96/kurigram-2.2.24.tar.gz", hash = "sha256:535644dcb23696ae7d838a2f8c14675a5b3fa50906d51dc1434a29620d62813b", size = 602931, upload-time = "2026-07-11T11:29:54.136Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/54/59/e5f953421b8229805a9f63e55accaa215fce126f75cd66e0a909c1d5ff18/kurigram-2.2.24-py3-none-any.whl", hash = "sha256:ec8417c8f767d974bb54cd19966d0057871c1b63faeb096f7a674702e3531824", size = 5799272, upload-time = "2026-07-11T11:29:52.31Z" },
+]
+
+[[package]]
 name = "packaging"
 version = "26.2"
 source = { registry = "https://pypi.org/simple" }
@@ -226,6 +239,12 @@ wheels = [
 ]
 
 [[package]]
+name = "pyaes"
+version = "1.6.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/44/66/2c17bae31c906613795711fc78045c285048168919ace2220daa372c7d72/pyaes-1.6.1.tar.gz", hash = "sha256:02c1b1405c38d3c370b085fb952dd8bea3fadcee6411ad99f312cc129c536d8f", size = 28536, upload-time = "2017-09-20T21:17:54.23Z" }
+
+[[package]]
 name = "pygments"
 version = "2.20.0"
 source = { registry = "https://pypi.org/simple" }
@@ -261,6 +280,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/43/7c/d36d04db312ecf4298932ef77e6e4a9e8ad017906e24e34f0b0c361a2473/pytest_asyncio-1.4.0.tar.gz", hash = "sha256:c6c0d2259945122819f171a32ecea2c349ead889ee28176caaf492143424be42", size = 58514, upload-time = "2026-05-26T09:56:04.083Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/03/e2/08a497ef684b88559c9cc5f4ad53a37e7b99e727094a86d6ea32536d5d3c/pytest_asyncio-1.4.0-py3-none-any.whl", hash = "sha256:933ca923a23075a87fb7070c0ec272a6848489824d887c85c812670932835aa1", size = 16930, upload-time = "2026-05-26T09:56:02.576Z" },
+]
+
+[[package]]
+name = "python-socks"
+version = "2.8.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/36/0b/cd77011c1bc01b76404f7aba07fca18aca02a19c7626e329b40201217624/python_socks-2.8.1.tar.gz", hash = "sha256:698daa9616d46dddaffe65b87db222f2902177a2d2b2c0b9a9361df607ab3687", size = 38909, upload-time = "2026-02-16T05:24:00.745Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/15/fe/9a58cb6eec633ff6afae150ca53c16f8cc8b65862ccb3d088051efdfceb7/python_socks-2.8.1-py3-none-any.whl", hash = "sha256:28232739c4988064e725cdbcd15be194743dd23f1c910f784163365b9d7be035", size = 55087, upload-time = "2026-02-16T05:23:59.147Z" },
 ]
 
 [[package]]
@@ -302,10 +330,15 @@ dev = [
     { name = "pytest" },
     { name = "pytest-asyncio" },
 ]
+telegram-e2e = [
+    { name = "kurigram" },
+    { name = "tgcrypto" },
+]
 
 [package.metadata]
 requires-dist = [
     { name = "httpx", specifier = ">=0.27.0" },
+    { name = "kurigram", marker = "extra == 'telegram-e2e'", specifier = ">=2.1,<3" },
     { name = "pillow", specifier = ">=10.0.0" },
     { name = "pytest", specifier = ">=9.1.1" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
@@ -313,8 +346,9 @@ requires-dist = [
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23.0" },
     { name = "python-telegram-bot", specifier = ">=21.0,<23.0" },
     { name = "telegram-menu", specifier = ">=3.0.0,<4.0.0" },
+    { name = "tgcrypto", marker = "extra == 'telegram-e2e'", specifier = ">=1.2.5,<2" },
 ]
-provides-extras = ["dev"]
+provides-extras = ["dev", "telegram-e2e"]
 
 [[package]]
 name = "telegram-menu"
@@ -330,6 +364,23 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/2b/f0/7a800edbbb2107a2948e7e65478a84c1505858d588a0f6f2d01c62aa118f/telegram_menu-3.0.0.tar.gz", hash = "sha256:aa3f517baaac6c119ecf94535a819dc8754a968bac36922c0c6c00b233595790", size = 36373, upload-time = "2026-06-06T19:52:57.131Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/47/d9/37f51dfa0fd2b1110bacdb959ea25dcfd913b82c01512535332f63a26b70/telegram_menu-3.0.0-py3-none-any.whl", hash = "sha256:aa1b52c6fab5eedac0001c3f8c1dc0999b4d6c4bf1aefe49e0e10f7f0b107ca8", size = 30503, upload-time = "2026-06-06T19:52:55.829Z" },
+]
+
+[[package]]
+name = "tgcrypto"
+version = "1.2.5"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/33/59/7cf5ced989e3139a791d5452d58cb8994de589576b80f9267ba76d794f6c/TgCrypto-1.2.5.tar.gz", hash = "sha256:9bc2cac6fb9a12ef5b08f3dd500174fe374d89b660cce981f57e3138559cb682", size = 37280, upload-time = "2022-11-11T19:55:11.436Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/48/e6/07dc413e57f3677e0b887975b174d9cbc8170e92651dd35a784da9571d5f/TgCrypto-1.2.5-cp311-cp311-macosx_10_9_universal2.whl", hash = "sha256:59597cdb1c87eb1184088563d20b42a8f2e431e9334fed64926079044ad2a4af", size = 58988, upload-time = "2022-11-11T19:51:41.686Z" },
+    { url = "https://files.pythonhosted.org/packages/c1/fe/a418223ff6079184f50f5ad8c2dac37ec40adbb42b886c3ee44fdba2a540/TgCrypto-1.2.5-cp311-cp311-macosx_10_9_x86_64.whl", hash = "sha256:1283337ae75b02406dd700377b8b783e70033b548492517df6e6c4156b0ed69c", size = 43347, upload-time = "2022-11-11T19:51:43.662Z" },
+    { url = "https://files.pythonhosted.org/packages/39/0e/e861a9987c6d9d3ae04d156732311e018558f862490c466c369d73094807/TgCrypto-1.2.5-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:1735437df0023a40e5fdd95e6b09ce806ec8f2cd2f8879023818840dfae60cab", size = 43123, upload-time = "2022-11-11T19:51:45.094Z" },
+    { url = "https://files.pythonhosted.org/packages/0d/ce/d60e249ac4d31d591f4c8ca76e7bd537f4c54f1947b400a14ac3a1678b09/TgCrypto-1.2.5-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:cfa17a20206532c6d2442c9d7a7f6434120bd75896ad9a3e9b9277477afa084f", size = 60713, upload-time = "2022-11-11T19:51:46.411Z" },
+    { url = "https://files.pythonhosted.org/packages/27/55/50f81b1a557bd8f9b73f7fcda2381f8826665858750968394ceec0b01282/TgCrypto-1.2.5-cp311-cp311-manylinux_2_5_i686.manylinux1_i686.manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:48da3674474839e5619e7430ff1f98aed9f55369f3cfaef7f65511852869572e", size = 60418, upload-time = "2022-11-11T19:51:47.872Z" },
+    { url = "https://files.pythonhosted.org/packages/f3/55/7f5f5a024b71ef81b07c3fe15e79d03b634eb349b04bc79a62c8c3ed3376/TgCrypto-1.2.5-cp311-cp311-musllinux_1_1_i686.whl", hash = "sha256:b49e982e5b156be821a5235bd9102c00dc506a58607e2c8bd50ac872724a951f", size = 64397, upload-time = "2022-11-11T19:51:49.609Z" },
+    { url = "https://files.pythonhosted.org/packages/76/3e/8f059edce82de8ebbc1e513076c0f65a86fac95887fae21ae087440ef23a/TgCrypto-1.2.5-cp311-cp311-musllinux_1_1_x86_64.whl", hash = "sha256:9d9f13586065a6d86d05c16409054033a84be208acee29b49f6f194e27b08642", size = 64436, upload-time = "2022-11-11T19:51:51.414Z" },
+    { url = "https://files.pythonhosted.org/packages/eb/87/fe894eb7c4cce4b6f710223c24e0ca22f4107fe46f3f56091ceabd482de7/TgCrypto-1.2.5-cp311-cp311-win32.whl", hash = "sha256:10dd3870aecb1a783c6eafd3b164b2149dbc93a9ee13feb7e6f5c58f87c24cd0", size = 44723, upload-time = "2022-11-11T19:51:52.982Z" },
+    { url = "https://files.pythonhosted.org/packages/c1/fc/b918235b19b70a45f4a596c773fad2c379d941d2ac5005293e2ee18bdc63/TgCrypto-1.2.5-cp311-cp311-win_amd64.whl", hash = "sha256:a1beec47d6af8b509af7cf266e30f7703208076076594714005b42d2c25225b3", size = 45073, upload-time = "2022-11-11T19:51:54.724Z" },
 ]
 
 [[package]]
