@@ -215,6 +215,8 @@ def test_bot_config_reads_ocr_llm_env_names(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setenv("REPORTS_AD_OCR_IMAGE_MAX_PIXELS", "900000")
     monkeypatch.setenv("REPORTS_AD_COMPOSITION_VALIDATION_CROP_MARGIN_PERCENT", "0.25")
     monkeypatch.setenv("REPORTS_AD_COMPOSITION_VALIDATION_CROP_MARGIN_MIN_PIXELS", "80")
+    monkeypatch.setenv("REPORTS_AD_OCR_LOG_TEXT", "1")
+    monkeypatch.setenv("REPORTS_AD_OCR_LOG_TEXT_MAX_CHARS", "0")
 
     config = BotConfig.from_env()
 
@@ -228,6 +230,8 @@ def test_bot_config_reads_ocr_llm_env_names(monkeypatch: pytest.MonkeyPatch) -> 
     assert config.ocr_image_max_pixels == 900_000
     assert config.composition_validation_crop_margin_percent == 0.25
     assert config.composition_validation_crop_margin_min_pixels == 80
+    assert config.ocr_log_text is True
+    assert config.ocr_log_text_max_chars == 0
 
 
 def test_validate_creative_against_selected_spec_accepts_runtime_png(tmp_path: Path) -> None:

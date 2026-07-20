@@ -595,8 +595,9 @@ def test_tgo_banner_prompt_selects_full_visible_ad_card_container() -> None:
 
 
 @pytest.mark.asyncio
-async def test_ocr_request_response_logs_are_sanitized_and_bounded(tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("REPORTS_AD_OCR_LOG_TEXT", "1")
+async def test_ocr_request_response_text_logs_are_disabled_by_default(tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("REPORTS_AD_OCR_LOG_TEXT", raising=False)
+    monkeypatch.delenv("REPORTS_AD_OCR_LOG_TEXT_MAX_CHARS", raising=False)
     spec = get_spec("yandex-graphic-banners-300x250-image")
     assert spec is not None
     source_path = tmp_path / "source.png"
@@ -632,14 +633,165 @@ async def test_ocr_request_response_logs_are_sanitized_and_bounded(tmp_path: Pat
     assert result.bbox == BoundingBox(40, 60, 120, 120)
     assert "ocr_llm_request request_id=req-logs stage=banner_bbox" in log_text
     assert "ocr_llm_response request_id=req-logs stage=banner_bbox" in log_text
+    assert "ocr_llm_raw_response request_id=req-logs stage=banner_bbox" in log_text
     assert "prompt_sha256=" in log_text
     assert "response_text_sha256=" in log_text
-    assert spec.position_hint in log_text
+    assert "prompt_text=disabled" in log_text
+    assert "response_text=disabled" in log_text
     assert "Basic super-secret-token" not in log_text
     assert "raw-secret" not in log_text
     assert "Password=hidden" not in log_text
     assert "should-not-log" not in log_text
     assert "data:image" not in log_text
+
+
+@pytest.mark.asyncio
+async def test_ocr_request_response_logs_include_full_text_when_enabled(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    spec = get_spec("yandex-graphic-banners-300x250-image")
+    assert spec is not None
+    source_path = tmp_path / "source.png"
+    Image.new("RGB", (400, 300), "white").save(source_path)
+    screenshot = SourceScreenshotInfo(path=source_path, mime_type="image/png", width=400, height=300, size_bytes=source_path.stat().st_size)
+    raw_response = '{"bbox":{"x":0.1,"y":0.2,"width":0.3,"height":0.4},"confidence":0.91,"coordinate_space":"normalized","reason":"full-text-response-marker"}'
+    client = HeaderAuthGemmaClient(
+        base_url="http://ocr.example.test/v1",
+        model="test-model",
+        authorization_header="Basic super-secret-token",
+        max_retries=1,
+        ocr_log_text=True,
+        ocr_log_text_max_chars=0,
+    )
+
+    async def fake_execute_request(**kwargs):
+        return {"choices": [{"message": {"content": raw_response}}], "usage": {"prompt_tokens": 10}}
+
+    monkeypatch = pytest.MonkeyPatch()
+    try:
+        monkeypatch.setattr(client, "_execute_request", fake_execute_request)
+        with caplog.at_level("INFO", logger="reports_ad.gemma_client"):
+            await client.detect_banner_bbox(screenshot=screenshot, spec=spec, request_id="req-full-logs")
+    finally:
+        monkeypatch.undo()
+
+    log_text = "\n".join(record.getMessage() for record in caplog.records)
+    assert "prompt_text=disabled" not in log_text
+    assert "response_text=disabled" not in log_text
+    assert "truncated:" not in log_text
+    assert "Base task instructions: You are analyzing a placement screenshot" in log_text
+    assert "full-text-response-marker" in log_text
+    assert raw_response in log_text
+    assert "Basic super-secret-token" not in log_text
+    assert "data:image" not in log_text
+
+
+@pytest.mark.asyncio
+async def test_landing_bbox_logs_full_prompt_and_response_when_enabled(tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch) -> None:
+    spec = get_spec("yandex-graphic-banners-300x250-image")
+    assert spec is not None
+    source_path = tmp_path / "source.png"
+    Image.new("RGB", (400, 300), "white").save(source_path)
+    screenshot = SourceScreenshotInfo(path=source_path, mime_type="image/png", width=400, height=300, size_bytes=source_path.stat().st_size)
+    raw_response = '{"bbox":null,"confidence":0,"coordinate_space":"normalized","reason":"landing-full-response-marker"}'
+    client = HeaderAuthGemmaClient(
+        base_url="http://ocr.example.test/v1",
+        model="test-model",
+        authorization_header=None,
+        max_retries=1,
+        ocr_log_text=True,
+        ocr_log_text_max_chars=0,
+    )
+
+    async def fake_execute_request(**kwargs):
+        return {"choices": [{"message": {"content": raw_response}}]}
+
+    monkeypatch.setattr(client, "_execute_request", fake_execute_request)
+
+    with caplog.at_level("INFO", logger="reports_ad.gemma_client"):
+        await client.detect_landing_bbox(screenshot=screenshot, spec=spec, request_id="req-landing-logs")
+
+    log_text = "\n".join(record.getMessage() for record in caplog.records)
+    assert "ocr_llm_request request_id=req-landing-logs stage=landing_bbox" in log_text
+    assert "Find the browser/link/landing area template location" in log_text
+    assert "ocr_llm_raw_response request_id=req-landing-logs stage=landing_bbox" in log_text
+    assert raw_response in log_text
+    assert "landing-full-response-marker" in log_text
+    assert "disabled" not in log_text
+    assert "data:image" not in log_text
+
+
+@pytest.mark.asyncio
+async def test_composition_validation_logs_full_prompt_and_raw_response_when_enabled(tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch) -> None:
+    spec = get_spec("yandex-graphic-banners-300x250-image")
+    assert spec is not None
+    source_path = tmp_path / "source.png"
+    composed_path = tmp_path / "composed.png"
+    Image.new("RGB", (400, 300), "white").save(source_path)
+    Image.new("RGB", (400, 300), "white").save(composed_path)
+    screenshot = SourceScreenshotInfo(path=source_path, mime_type="image/png", width=400, height=300, size_bytes=source_path.stat().st_size)
+    raw_response = '{"verification_passed":true,"original_banner_bbox":{"x":20,"y":30,"width":100,"height":70},"actual_inserted_creative_bbox":{"x":20,"y":30,"width":100,"height":70},"deltas":{"x":0,"y":0,"width":0,"height":0},"recommended_corrected_bbox":null,"confidence":0.99,"reason":"composition-full-response-marker","coordinate_space":"source_pixels"}'
+    client = HeaderAuthGemmaClient(
+        base_url="http://ocr.example.test/v1",
+        model="test-model",
+        authorization_header=None,
+        max_retries=1,
+        ocr_log_text=True,
+        ocr_log_text_max_chars=0,
+    )
+
+    async def fake_execute_multimodal_request(**kwargs):
+        return {"choices": [{"message": {"content": raw_response}}]}
+
+    monkeypatch.setattr(client, "_execute_multimodal_request", fake_execute_multimodal_request)
+
+    with caplog.at_level("INFO", logger="reports_ad.gemma_client"):
+        await client.verify_composition_alignment(
+            original_screenshot=screenshot,
+            composed_screenshot_path=composed_path,
+            current_banner_bbox=BoundingBox(20, 30, 100, 70),
+            spec=spec,
+            request_id="req-composition-logs",
+        )
+
+    log_text = "\n".join(record.getMessage() for record in caplog.records)
+    assert "ocr_llm_request request_id=req-composition-logs stage=composition_validation" in log_text
+    assert "CROPPED images around the current banner candidate" in log_text
+    assert "ocr_llm_raw_response request_id=req-composition-logs stage=composition_validation" in log_text
+    assert "ocr_llm_response request_id=req-composition-logs stage=composition_validation" in log_text
+    assert raw_response in log_text
+    assert "composition-full-response-marker" in log_text
+    assert "disabled" not in log_text
+    assert "data:image" not in log_text
+
+
+@pytest.mark.asyncio
+async def test_ocr_request_response_text_logs_can_be_bounded(tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch) -> None:
+    spec = get_spec("yandex-graphic-banners-300x250-image")
+    assert spec is not None
+    source_path = tmp_path / "source.png"
+    Image.new("RGB", (400, 300), "white").save(source_path)
+    screenshot = SourceScreenshotInfo(path=source_path, mime_type="image/png", width=400, height=300, size_bytes=source_path.stat().st_size)
+    raw_response = '{"bbox":{"x":0.1,"y":0.2,"width":0.3,"height":0.4},"confidence":0.91,"coordinate_space":"normalized","reason":"bounded-response-marker-with-long-tail"}'
+    client = HeaderAuthGemmaClient(
+        base_url="http://ocr.example.test/v1",
+        model="test-model",
+        authorization_header=None,
+        max_retries=1,
+        ocr_log_text=True,
+        ocr_log_text_max_chars=80,
+    )
+
+    async def fake_execute_request(**kwargs):
+        return {"choices": [{"message": {"content": raw_response}}]}
+
+    monkeypatch.setattr(client, "_execute_request", fake_execute_request)
+
+    with caplog.at_level("INFO", logger="reports_ad.gemma_client"):
+        await client.detect_banner_bbox(screenshot=screenshot, spec=spec, request_id="req-bounded-logs")
+
+    log_text = "\n".join(record.getMessage() for record in caplog.records)
+    assert "prompt_text=Base task instructions: You are analyzing a placement screenshot for an advertis…[truncated:" in log_text
+    assert "response_text={\"bbox\":{\"x\":0.1,\"y\":0.2,\"width\":0.3,\"height\":0.4},\"confidence\":0.91,\"coordinate…[truncated:" in log_text
+    assert "bounded-response-marker-with-long-tail" not in log_text
 
 
 @pytest.mark.asyncio

@@ -51,6 +51,8 @@ class BotConfig:
     ocr_image_max_pixels: int = 2_000_000
     composition_validation_crop_margin_percent: float = 0.20
     composition_validation_crop_margin_min_pixels: int = 60
+    ocr_log_text: bool = False
+    ocr_log_text_max_chars: int = 0
 
     @classmethod
     def from_env(cls) -> "BotConfig":
@@ -91,6 +93,8 @@ class BotConfig:
             ocr_image_max_pixels=_int_from_env("REPORTS_AD_OCR_IMAGE_MAX_PIXELS", 2_000_000),
             composition_validation_crop_margin_percent=float(os.getenv("REPORTS_AD_COMPOSITION_VALIDATION_CROP_MARGIN_PERCENT", "0.20")),
             composition_validation_crop_margin_min_pixels=_int_from_env("REPORTS_AD_COMPOSITION_VALIDATION_CROP_MARGIN_MIN_PIXELS", 60),
+            ocr_log_text=_bool_from_env("REPORTS_AD_OCR_LOG_TEXT", False),
+            ocr_log_text_max_chars=max(0, _int_from_env("REPORTS_AD_OCR_LOG_TEXT_MAX_CHARS", 0)),
         )
 
 

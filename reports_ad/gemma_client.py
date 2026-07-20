@@ -22,7 +22,8 @@ from .validation import ValidationError
 
 logger = logging.getLogger(__name__)
 DETAILED_OCR_LOGGING_ENV = "REPORTS_AD_OCR_LOG_TEXT"
-MAX_LOG_TEXT_CHARS = 700
+DETAILED_OCR_LOGGING_MAX_CHARS_ENV = "REPORTS_AD_OCR_LOG_TEXT_MAX_CHARS"
+DEFAULT_MAX_LOG_TEXT_CHARS = 0
 DEFAULT_COMPOSITION_VALIDATION_CROP_MARGIN_PERCENT = 0.20
 DEFAULT_COMPOSITION_VALIDATION_CROP_MARGIN_MIN_PIXELS = 60
 
@@ -92,6 +93,8 @@ class HeaderAuthGemmaClient:
         ocr_image_max_pixels: int = 2_000_000,
         composition_validation_crop_margin_percent: float = DEFAULT_COMPOSITION_VALIDATION_CROP_MARGIN_PERCENT,
         composition_validation_crop_margin_min_pixels: int = DEFAULT_COMPOSITION_VALIDATION_CROP_MARGIN_MIN_PIXELS,
+        ocr_log_text: bool | None = None,
+        ocr_log_text_max_chars: int | None = None,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._model = model
@@ -103,6 +106,8 @@ class HeaderAuthGemmaClient:
         self._ocr_image_max_pixels = max(0, ocr_image_max_pixels)
         self._composition_validation_crop_margin_percent = max(0.0, composition_validation_crop_margin_percent)
         self._composition_validation_crop_margin_min_pixels = max(0, composition_validation_crop_margin_min_pixels)
+        self._ocr_log_text = _detailed_ocr_logging_enabled() if ocr_log_text is None else bool(ocr_log_text)
+        self._ocr_log_text_max_chars = _ocr_log_text_max_chars() if ocr_log_text_max_chars is None else max(0, int(ocr_log_text_max_chars))
 
     async def detect_banner_bbox(
         self,
@@ -213,7 +218,7 @@ class HeaderAuthGemmaClient:
                     crop.margin_y,
                     len(prompt),
                     _sha256_short(prompt),
-                    _safe_debug_text(prompt),
+                    self._safe_debug_text(prompt),
                 )
                 try:
                     payload = await self._execute_multimodal_request(
@@ -224,6 +229,16 @@ class HeaderAuthGemmaClient:
                         ],
                     )
                     raw_text = _extract_openai_compatible_text(payload)
+                    logger.info(
+                        "ocr_llm_raw_response request_id=%s stage=%s attempt=%s validation_attempt=%s response_text_length=%s response_text_sha256=%s response_text=%s",
+                        request_id,
+                        stage,
+                        attempt,
+                        validation_attempt,
+                        len(raw_text),
+                        _sha256_short(raw_text),
+                        self._safe_debug_text(raw_text),
+                    )
                     parsed = _loads_json_object(raw_text)
                     result = _parse_composition_validation_result(
                         parsed,
@@ -253,7 +268,7 @@ class HeaderAuthGemmaClient:
                         _sanitize_log_text(result.reason, limit=180),
                         len(raw_text),
                         _sha256_short(raw_text),
-                        _safe_debug_text(raw_text),
+                        self._safe_debug_text(raw_text),
                     )
                     return result
                 except (httpx.HTTPError, OSError, ValueError, TypeError, KeyError, GemmaClientError) as exc:
@@ -342,11 +357,20 @@ class HeaderAuthGemmaClient:
                     _sanitize_log_text(spec.placement_hint, limit=180),
                     len(prompt),
                     _sha256_short(prompt),
-                    _safe_debug_text(prompt),
+                    self._safe_debug_text(prompt),
                 )
                 try:
                     payload = await self._execute_request(prompt=prompt, image_path=ocr_image_path, mime_type=ocr_mime_type)
                     raw_text = _extract_openai_compatible_text(payload)
+                    logger.info(
+                        "ocr_llm_raw_response request_id=%s stage=%s attempt=%s response_text_length=%s response_text_sha256=%s response_text=%s",
+                        request_id,
+                        stage,
+                        attempt,
+                        len(raw_text),
+                        _sha256_short(raw_text),
+                        self._safe_debug_text(raw_text),
+                    )
                     parsed = _loads_json_object(raw_text)
                     logger.info(
                         "ocr_llm_bbox_payload request_id=%s stage=%s attempt=%s source_screenshot=%sx%s ocr_image=%sx%s raw_fields=%s",
@@ -380,7 +404,7 @@ class HeaderAuthGemmaClient:
                         _safe_bbox_metadata(result.raw_metadata),
                         len(raw_text),
                         _sha256_short(raw_text),
-                        _safe_debug_text(raw_text),
+                        self._safe_debug_text(raw_text),
                     )
                     return result
                 except (httpx.HTTPError, OSError, ValueError, TypeError, KeyError, GemmaClientError) as exc:
@@ -433,6 +457,11 @@ class HeaderAuthGemmaClient:
             response.raise_for_status()
             return response.json()
 
+    def _safe_debug_text(self, value: str) -> str:
+        if not self._ocr_log_text:
+            return "disabled"
+        return _sanitize_log_text(value, limit=self._ocr_log_text_max_chars)
+
 
 def build_gemma_client_from_config(config: BotConfig | None) -> HeaderAuthGemmaClient:
     runtime_config = _require_ocr_runtime_config(config)
@@ -447,6 +476,8 @@ def build_gemma_client_from_config(config: BotConfig | None) -> HeaderAuthGemmaC
         ocr_image_max_pixels=runtime_config.ocr_image_max_pixels,
         composition_validation_crop_margin_percent=runtime_config.composition_validation_crop_margin_percent,
         composition_validation_crop_margin_min_pixels=runtime_config.composition_validation_crop_margin_min_pixels,
+        ocr_log_text=runtime_config.ocr_log_text,
+        ocr_log_text_max_chars=runtime_config.ocr_log_text_max_chars,
     )
 
 
@@ -1303,14 +1334,18 @@ def _sha256_short(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8", errors="replace")).hexdigest()[:16]
 
 
-def _safe_debug_text(value: str) -> str:
-    if not _detailed_ocr_logging_enabled():
-        return "disabled"
-    return _sanitize_log_text(value, limit=MAX_LOG_TEXT_CHARS)
-
-
 def _detailed_ocr_logging_enabled() -> bool:
     return os.getenv(DETAILED_OCR_LOGGING_ENV, "").strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _ocr_log_text_max_chars() -> int:
+    raw = os.getenv(DETAILED_OCR_LOGGING_MAX_CHARS_ENV, "").strip()
+    if not raw:
+        return DEFAULT_MAX_LOG_TEXT_CHARS
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return DEFAULT_MAX_LOG_TEXT_CHARS
 
 
 def _sanitize_log_text(value: str, *, limit: int) -> str:
@@ -1326,6 +1361,8 @@ def _sanitize_log_text(value: str, *, limit: int) -> str:
         redacted,
     )
     redacted = re.sub(r"(?i)\b(Basic|Bearer)\s+[A-Za-z0-9._~+/=-]+", r"\1 <redacted>", redacted)
+    if limit <= 0:
+        return redacted
     if len(redacted) <= limit:
         return redacted
     return f"{redacted[:limit]}…[truncated:{len(redacted)}]"
