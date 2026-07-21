@@ -1,14 +1,14 @@
 from pathlib import Path
 
 import pytest
-from PIL import Image, ImageChops, ImageDraw
+from PIL import Image, ImageChops, ImageDraw, ImageFont
 
 from reports_ad.bot import build_application
 from reports_ad.config import BotConfig
 from reports_ad.gemma_client import GemmaClientError, HeaderAuthGemmaClient, _banner_prompt, _composition_validation_crop_rect, _composition_validation_prompt, _parse_bbox_result, _parse_composition_validation_result, build_gemma_client_from_config
 from reports_ad.models import BBoxDetectionResult, BoundingBox, CompositionValidationResult, CreativeInfo, Placement, ProofRequest, ProofResult, SourceScreenshotInfo
 from reports_ad.proof import compose_final_image
-from reports_ad.stage2_proof import compose_stage2_image, fallback_landing_bbox, generate_stage2_proof, validate_banner_bbox_semantics, select_valid_banner_bbox_with_feedback, compose_stage2_image_with_validation
+from reports_ad.stage2_proof import AD_MARK_LABEL, compose_stage2_image, fallback_landing_bbox, generate_stage2_proof, validate_banner_bbox_semantics, select_valid_banner_bbox_with_feedback, compose_stage2_image_with_validation, _address_bar_only_height, _load_cyrillic_font, _render_ad_mark_label
 from reports_ad.catalog import get_spec
 from reports_ad.validation import ValidationError
 
@@ -87,9 +87,44 @@ def test_stage2_compose_pastes_creative_into_exact_banner_region(tmp_path: Path)
         assert result.getpixel((130, 70)) == (20, 40, 220)
         assert result.getpixel((130, 105)) == (20, 40, 220)
         assert result.getpixel((79, 45)) == (255, 255, 255)
-        assert result.getpixel((140, 45)) == (255, 255, 255)
+        assert result.getpixel((150, 45)) == (255, 255, 255)
         assert result.getpixel((90, 29)) == (255, 255, 255)
         assert result.getpixel((90, 120)) == (255, 255, 255)
+
+
+def test_ad_mark_label_uses_cyrillic_capable_font_and_transparent_background() -> None:
+    font = _load_cyrillic_font(size=13)
+    label = _render_ad_mark_label(font=font)
+    alpha = label.getchannel("A")
+
+    assert font.getmask(AD_MARK_LABEL).getbbox() != ImageFont.load_default().getmask(AD_MARK_LABEL).getbbox()
+    assert alpha.getbbox() is not None
+    assert label.getpixel((0, 0))[3] == 0
+    assert label.getpixel((label.width - 1, label.height - 1))[3] == 0
+
+
+def test_stage2_compose_ad_mark_keeps_background_transparent_over_creative(tmp_path: Path) -> None:
+    source_path = tmp_path / "source.png"
+    creative_path = tmp_path / "creative.png"
+    banner_path = tmp_path / "banner.png"
+    output_path = tmp_path / "stage2.png"
+    bbox = BoundingBox(x=20, y=20, width=180, height=100)
+    Image.new("RGB", (240, 180), (255, 255, 255)).save(source_path)
+    Image.new("RGBA", (10, 10), (20, 40, 220, 255)).save(creative_path)
+
+    compose_stage2_image(
+        source_screenshot_path=source_path,
+        creative_path=creative_path,
+        effective_click_url="https://example.com/landing?utm_source=test&utm_medium=cpc",
+        banner_bbox=bbox,
+        landing_bbox=fallback_landing_bbox(image_width=240, image_height=180),
+        output_path=output_path,
+        banner_replaced_path=banner_path,
+    )
+
+    with Image.open(banner_path) as result:
+        assert result.getpixel((bbox.x + 6, bbox.y + 6)) == (20, 40, 220)
+        assert result.getpixel((bbox.x + 18, bbox.y + 12)) != (20, 40, 220)
 
 
 def test_validate_banner_bbox_semantics_rejects_right_sidebar_bbox_outside_right_third() -> None:
@@ -188,6 +223,36 @@ def test_fallback_landing_bbox_uses_lower_10_to_20_percent() -> None:
     assert bbox.width == 1000
     assert bbox.y == 672
     assert bbox.height == 128
+
+
+def test_landing_area_artifact_contains_only_address_bar_no_body_text(tmp_path: Path) -> None:
+    source_path = tmp_path / "source.png"
+    creative_path = tmp_path / "creative.png"
+    output_path = tmp_path / "stage2.png"
+    landing_path = tmp_path / "landing.png"
+    image_width = 500
+    image_height = 400
+    landing_bbox = fallback_landing_bbox(image_width=image_width, image_height=image_height)
+    Image.new("RGB", (image_width, image_height), "white").save(source_path)
+    Image.new("RGBA", (20, 20), (255, 0, 0, 255)).save(creative_path)
+
+    compose_stage2_image(
+        source_screenshot_path=source_path,
+        creative_path=creative_path,
+        effective_click_url="https://example.com/landing?utm_source=test&utm_medium=cpc",
+        banner_bbox=BoundingBox(x=50, y=40, width=120, height=80),
+        landing_bbox=landing_bbox,
+        output_path=output_path,
+        landing_area_path=landing_path,
+    )
+
+    address_bar_height = _address_bar_only_height(BoundingBox(0, 0, landing_bbox.width, landing_bbox.height))
+    with Image.open(landing_path) as landing:
+        assert landing.size == (landing_bbox.width, landing_bbox.height)
+        assert 42 <= address_bar_height <= 68
+        assert landing.getbbox() is not None
+        assert landing.getpixel((landing_bbox.width // 2, address_bar_height + 8)) == (244, 246, 248)
+        assert landing.getpixel((landing_bbox.width // 2, landing_bbox.height - 5)) == (244, 246, 248)
 
 
 def test_tgo_semantic_banner_bbox_rejects_wrong_internal_image_shape(caplog: pytest.LogCaptureFixture) -> None:

@@ -28,6 +28,14 @@ TOP_SLOT_MAX_CENTER_Y_RATIO = 1 / 3
 BOTTOM_SLOT_MIN_CENTER_Y_RATIO = 2 / 3
 MAX_BANNER_SELECTION_ATTEMPTS = 5
 MAX_COMPOSITION_VALIDATION_ATTEMPTS = 3
+AD_MARK_LABEL = "Реклама"
+CYRILLIC_FONT_CANDIDATES = (
+    "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+)
+ADDRESS_BAR_ONLY_MIN_HEIGHT = 42
+ADDRESS_BAR_ONLY_MAX_HEIGHT = 68
 
 
 @dataclass(frozen=True, slots=True)
@@ -800,26 +808,61 @@ def _trim_transparent_padding(image: Image.Image) -> Image.Image:
 
 
 def _draw_ad_mark(image: Image.Image, bbox: BoundingBox) -> None:
-    draw = ImageDraw.Draw(image)
-    font = ImageFont.load_default()
-    label = "Реклама"
-    text_bbox = draw.textbbox((0, 0), label, font=font)
+    font = _load_cyrillic_font(size=13)
+    label = AD_MARK_LABEL
     padding_x = 6
     padding_y = 4
-    width = text_bbox[2] - text_bbox[0] + padding_x * 2
-    height = text_bbox[3] - text_bbox[1] + padding_y * 2
+    label_image = _render_ad_mark_label(label=label, font=font, padding_x=padding_x, padding_y=padding_y)
     x = bbox.x + max(4, min(12, bbox.width // 20))
     y = bbox.y + max(4, min(12, bbox.height // 20))
-    draw.rounded_rectangle((x, y, x + width, y + height), radius=6, fill=(255, 255, 255, 220), outline=(170, 170, 170, 230))
-    draw.text((x + padding_x, y + padding_y), label, fill=(45, 45, 45, 255), font=font)
+    image.alpha_composite(label_image, dest=(x, y))
+
+
+def _render_ad_mark_label(*, label: str = AD_MARK_LABEL, font: ImageFont.ImageFont | None = None, padding_x: int = 6, padding_y: int = 4) -> Image.Image:
+    font = font or _load_cyrillic_font(size=13)
+    probe = Image.new("RGBA", (1, 1), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(probe)
+    text_bbox = draw.textbbox((0, 0), label, font=font)
+    width = text_bbox[2] - text_bbox[0] + padding_x * 2
+    height = text_bbox[3] - text_bbox[1] + padding_y * 2
+    label_image = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    label_draw = ImageDraw.Draw(label_image)
+    text_x = padding_x - text_bbox[0]
+    text_y = padding_y - text_bbox[1]
+    label_draw.text((text_x, text_y), label, fill=(45, 45, 45, 255), font=font)
+    return label_image
+
+
+def _load_cyrillic_font(*, size: int) -> ImageFont.ImageFont:
+    for candidate in CYRILLIC_FONT_CANDIDATES:
+        font_path = Path(candidate)
+        if not font_path.exists():
+            continue
+        try:
+            font = ImageFont.truetype(str(font_path), size=size)
+            if _font_supports_cyrillic(font):
+                return font
+        except OSError:
+            continue
+    logger.warning("cyrillic_font_fallback_default reason=no_candidate_available")
+    return ImageFont.load_default()
+
+
+def _font_supports_cyrillic(font: ImageFont.ImageFont) -> bool:
+    try:
+        fallback_probe = ImageFont.load_default().getmask(AD_MARK_LABEL).getbbox()
+        candidate_probe = font.getmask(AD_MARK_LABEL).getbbox()
+    except Exception:
+        return False
+    return candidate_probe is not None and candidate_probe != fallback_probe
 
 
 def _draw_landing_area(image: Image.Image, bbox: BoundingBox, effective_click_url: str) -> None:
     draw = ImageDraw.Draw(image)
-    font = ImageFont.load_default()
+    font = _load_cyrillic_font(size=12)
     draw.rectangle((bbox.x, bbox.y, bbox.right, bbox.bottom), fill=(244, 246, 248, 255))
     draw.line((bbox.x, bbox.y, bbox.right, bbox.y), fill=(190, 190, 190, 255), width=2)
-    toolbar_height = max(42, min(68, bbox.height // 3))
+    toolbar_height = _address_bar_only_height(bbox)
     toolbar_bottom = bbox.y + toolbar_height
     draw.rectangle((bbox.x, bbox.y, bbox.right, toolbar_bottom), fill=(231, 234, 238, 255))
     for idx, color in enumerate(((234, 82, 82, 255), (246, 190, 64, 255), (82, 180, 91, 255))):
@@ -832,9 +875,15 @@ def _draw_landing_area(image: Image.Image, bbox: BoundingBox, effective_click_ur
     address_right = bbox.right - 18
     draw.rounded_rectangle((address_x, address_y, address_right, address_y + address_h), radius=10, fill=(255, 255, 255, 255), outline=(205, 210, 216, 255))
     safe_url = _truncate_middle(effective_click_url, max(24, (address_right - address_x) // 7))
-    draw.text((address_x + 12, address_y + max(4, (address_h - 12) // 2)), safe_url, fill=(32, 70, 120, 255), font=font)
-    caption = "Целевая ссылка с UTM-метками (сайт не открывался)"
-    draw.text((bbox.x + 18, toolbar_bottom + 14), caption, fill=(60, 60, 60, 255), font=font)
+    text_bbox = draw.textbbox((0, 0), safe_url, font=font)
+    text_h = text_bbox[3] - text_bbox[1]
+    draw.text((address_x + 12, address_y + max(2, (address_h - text_h) // 2) - text_bbox[1]), safe_url, fill=(32, 70, 120, 255), font=font)
+    if toolbar_bottom < bbox.bottom:
+        draw.rectangle((bbox.x, toolbar_bottom, bbox.right, bbox.bottom), fill=(244, 246, 248, 255))
+
+
+def _address_bar_only_height(bbox: BoundingBox) -> int:
+    return min(bbox.height, max(ADDRESS_BAR_ONLY_MIN_HEIGHT, min(ADDRESS_BAR_ONLY_MAX_HEIGHT, bbox.height)))
 
 
 def _validate_bbox_for_compose(bbox: BoundingBox, *, image: Image.Image, label: str) -> None:
