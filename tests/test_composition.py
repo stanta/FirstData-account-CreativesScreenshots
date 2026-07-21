@@ -8,7 +8,7 @@ from reports_ad.config import BotConfig
 from reports_ad.gemma_client import GemmaClientError, HeaderAuthGemmaClient, _banner_prompt, _composition_validation_crop_rect, _composition_validation_prompt, _parse_bbox_result, _parse_composition_validation_result, build_gemma_client_from_config
 from reports_ad.models import BBoxDetectionResult, BoundingBox, CompositionValidationResult, CreativeInfo, Placement, ProofRequest, ProofResult, SourceScreenshotInfo
 from reports_ad.proof import compose_final_image
-from reports_ad.stage2_proof import compose_stage2_image, fallback_landing_bbox, generate_stage2_proof, validate_banner_bbox_semantics, select_valid_banner_bbox_with_feedback
+from reports_ad.stage2_proof import compose_stage2_image, fallback_landing_bbox, generate_stage2_proof, validate_banner_bbox_semantics, select_valid_banner_bbox_with_feedback, compose_stage2_image_with_validation
 from reports_ad.catalog import get_spec
 from reports_ad.validation import ValidationError
 
@@ -381,6 +381,43 @@ def test_parse_composition_validation_result_detects_exact_pass_and_correction()
     assert failed.deltas == {"x": -20, "y": -20, "width": -20, "height": -10}
 
 
+def test_parse_composition_validation_result_overrides_false_pass_flag_for_safe_exact_match() -> None:
+    result = _parse_composition_validation_result(
+        {
+            "verification_passed": False,
+            "original_banner_bbox": {"x": 20, "y": 30, "width": 100, "height": 70},
+            "actual_inserted_creative_bbox": {"x": 20, "y": 30, "width": 100, "height": 70},
+            "deltas": {"x": 0, "y": 0, "width": 0, "height": 0},
+            "corner_deltas": {
+                "top_left": {"dx": 0, "dy": 0},
+                "top_right": {"dx": 0, "dy": 0},
+                "bottom_right": {"dx": 0, "dy": 0},
+                "bottom_left": {"dx": 0, "dy": 0},
+            },
+            "recommended_corrected_bbox": {"x": 20, "y": 30, "width": 100, "height": 70},
+            "confidence": 1.0,
+            "reason": "the creative exactly covered the original banner",
+        },
+        source_image_width=400,
+        source_image_height=300,
+        confidence_threshold=0.45,
+    )
+
+    assert result.passed is True
+    assert result.original_banner_bbox == BoundingBox(20, 30, 100, 70)
+    assert result.inserted_creative_bbox == BoundingBox(20, 30, 100, 70)
+    assert result.corrected_bbox == BoundingBox(20, 30, 100, 70)
+    assert result.deltas == {"x": 0, "y": 0, "width": 0, "height": 0}
+    assert result.corner_deltas == {
+        "top_left": {"dx": 0, "dy": 0},
+        "top_right": {"dx": 0, "dy": 0},
+        "bottom_right": {"dx": 0, "dy": 0},
+        "bottom_left": {"dx": 0, "dy": 0},
+    }
+    assert result.raw_metadata["raw_passed"] is False
+    assert result.raw_metadata["model_pass_flag_contradicted_exact_match"] is True
+
+
 def test_composition_validation_crop_rect_expands_and_clamps_bbox() -> None:
     crop = _composition_validation_crop_rect(
         bbox=BoundingBox(20, 30, 100, 70),
@@ -395,33 +432,28 @@ def test_composition_validation_crop_rect_expands_and_clamps_bbox() -> None:
     assert (crop.margin_x, crop.margin_y) == (60, 60)
 
 
-def test_composition_validation_prompt_declares_crop_coordinate_contract() -> None:
+def test_composition_validation_prompt_declares_full_screenshot_corner_delta_contract() -> None:
     spec = get_spec("yandex-graphic-banners-300x250-image")
     assert spec is not None
     screenshot = SourceScreenshotInfo(path=Path("source.png"), mime_type="image/png", width=400, height=300, size_bytes=123)
     bbox = BoundingBox(80, 70, 120, 80)
-    crop = _composition_validation_crop_rect(
-        bbox=bbox,
-        image_width=400,
-        image_height=300,
-        margin_percent=0.20,
-        margin_min_pixels=40,
-    )
 
     prompt = _composition_validation_prompt(
         screenshot=screenshot,
         spec=spec,
         current_banner_bbox=bbox,
-        ocr_image_width=crop.width,
-        ocr_image_height=crop.height,
+        ocr_image_width=400,
+        ocr_image_height=300,
         validation_attempt=1,
-        crop=crop,
+        crop=None,
     )
 
-    assert "CROPPED images around the current banner candidate" in prompt
-    assert "crop origin is" in prompt
-    assert "coordinate_space='crop_pixels'" in prompt
-    assert "Return full source screenshot pixel coordinates" in prompt
+    assert "FULL original source screenshot" in prompt
+    assert "FULL composed screenshot" in prompt
+    assert "corner_deltas" in prompt
+    assert "top_left, top_right, bottom_right, bottom_left" in prompt
+    assert "dx = original_corner_x - inserted_creative_corner_x" in prompt
+    assert "dy = original_corner_y - inserted_creative_corner_y" in prompt
 
 
 def test_parse_composition_validation_result_converts_crop_pixels_to_source_space() -> None:
@@ -489,6 +521,61 @@ def test_parse_composition_validation_result_preserves_source_pixel_crop_respons
     assert result.passed is True
     assert result.corrected_bbox == BoundingBox(80, 70, 120, 80)
     assert result.raw_metadata["crop_width"] == crop.width
+
+
+def test_parse_composition_validation_result_normalizes_corner_deltas() -> None:
+    result = _parse_composition_validation_result(
+        {
+            "verification_passed": False,
+            "original_banner_bbox": {"x": 40, "y": 50, "width": 120, "height": 80},
+            "actual_inserted_creative_bbox": {"x": 20, "y": 30, "width": 100, "height": 70},
+            "corner_deltas": {
+                "top_left": {"dx": 20.2, "dy": 19.8},
+                "top_right": {"dx": 40, "dy": 20},
+                "bottom_right": {"dx": 40, "dy": 30},
+                "bottom_left": {"dx": 20, "dy": 30},
+            },
+            "recommended_corrected_bbox": {"x": 40, "y": 50, "width": 120, "height": 80},
+            "confidence": 0.95,
+            "reason": "corner displacement mismatch",
+            "coordinate_space": "source_pixels",
+        },
+        source_image_width=400,
+        source_image_height=300,
+        confidence_threshold=0.45,
+    )
+
+    assert result.passed is False
+    assert result.corner_deltas == {
+        "top_left": {"dx": 20, "dy": 20},
+        "top_right": {"dx": 40, "dy": 20},
+        "bottom_right": {"dx": 40, "dy": 30},
+        "bottom_left": {"dx": 20, "dy": 30},
+    }
+
+
+def test_parse_composition_validation_result_defaults_corner_deltas_from_bboxes() -> None:
+    result = _parse_composition_validation_result(
+        {
+            "verification_passed": False,
+            "original_banner_bbox": {"x": 40, "y": 50, "width": 120, "height": 80},
+            "actual_inserted_creative_bbox": {"x": 20, "y": 30, "width": 100, "height": 70},
+            "recommended_corrected_bbox": {"x": 40, "y": 50, "width": 120, "height": 80},
+            "confidence": 0.95,
+            "reason": "legacy response without corner deltas",
+            "coordinate_space": "source_pixels",
+        },
+        source_image_width=400,
+        source_image_height=300,
+        confidence_threshold=0.45,
+    )
+
+    assert result.corner_deltas == {
+        "top_left": {"dx": 20, "dy": 20},
+        "top_right": {"dx": 40, "dy": 20},
+        "bottom_right": {"dx": 40, "dy": 30},
+        "bottom_left": {"dx": 20, "dy": 30},
+    }
 
 
 def test_tgo_candidates_choose_full_ad_card_over_internal_image_asset() -> None:
@@ -760,7 +847,7 @@ async def test_composition_validation_logs_full_prompt_and_raw_response_when_ena
     Image.new("RGB", (400, 300), "white").save(source_path)
     Image.new("RGB", (400, 300), "white").save(composed_path)
     screenshot = SourceScreenshotInfo(path=source_path, mime_type="image/png", width=400, height=300, size_bytes=source_path.stat().st_size)
-    raw_response = '{"verification_passed":true,"original_banner_bbox":{"x":20,"y":30,"width":100,"height":70},"actual_inserted_creative_bbox":{"x":20,"y":30,"width":100,"height":70},"deltas":{"x":0,"y":0,"width":0,"height":0},"recommended_corrected_bbox":null,"confidence":0.99,"reason":"composition-full-response-marker","coordinate_space":"source_pixels"}'
+    raw_response = '{"verification_passed":true,"original_banner_bbox":{"x":20,"y":30,"width":100,"height":70},"actual_inserted_creative_bbox":{"x":20,"y":30,"width":100,"height":70},"deltas":{"x":0,"y":0,"width":0,"height":0},"corner_deltas":{"top_left":{"dx":0,"dy":0},"top_right":{"dx":0,"dy":0},"bottom_right":{"dx":0,"dy":0},"bottom_left":{"dx":0,"dy":0}},"recommended_corrected_bbox":null,"confidence":0.99,"reason":"composition-full-response-marker","coordinate_space":"source_pixels"}'
     client = HeaderAuthGemmaClient(
         base_url="http://ocr.example.test/v1",
         model="test-model",
@@ -786,12 +873,14 @@ async def test_composition_validation_logs_full_prompt_and_raw_response_when_ena
 
     log_text = "\n".join(record.getMessage() for record in caplog.records)
     assert "ocr_llm_request request_id=req-composition-logs stage=composition_validation" in log_text
-    assert "CROPPED images around the current banner candidate" in log_text
+    assert "FULL original source screenshot" in log_text
+    assert "corner_deltas" in log_text
     assert "ocr_llm_raw_response request_id=req-composition-logs stage=composition_validation" in log_text
     assert "ocr_llm_response request_id=req-composition-logs stage=composition_validation" in log_text
     assert raw_response in log_text
     assert "composition-full-response-marker" in log_text
-    assert "disabled" not in log_text
+    assert "prompt_text=disabled" not in log_text
+    assert "response_text=disabled" not in log_text
     assert "data:image" not in log_text
 
 
@@ -872,7 +961,7 @@ async def test_ocr_downscale_copy_is_used_and_resized_bbox_maps_to_source(tmp_pa
 
 
 @pytest.mark.asyncio
-async def test_composition_validation_sends_crop_sized_images_instead_of_full_screenshots(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_composition_validation_sends_full_screenshots_through_100_percent_crop(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     spec = get_spec("yandex-graphic-banners-300x250-image")
     assert spec is not None
     source_path = tmp_path / "source.png"
@@ -893,15 +982,18 @@ async def test_composition_validation_sends_crop_sized_images_instead_of_full_sc
     async def fake_execute_multimodal_request(**kwargs):
         captured["prompt"] = kwargs["prompt"]
         sizes = []
+        paths = []
         for image_path, _mime_type in kwargs["images"]:
+            paths.append(image_path)
             with Image.open(image_path) as sent:
                 sizes.append(sent.size)
         captured["sent_sizes"] = sizes
+        captured["sent_paths"] = paths
         return {
             "choices": [
                 {
                     "message": {
-                        "content": '{"verification_passed":true,"original_banner_bbox":{"x":20,"y":30,"width":100,"height":70},"actual_inserted_creative_bbox":{"x":20,"y":30,"width":100,"height":70},"deltas":{"x":0,"y":0,"width":0,"height":0},"recommended_corrected_bbox":null,"confidence":0.99,"reason":"exact","coordinate_space":"source_pixels"}'
+                        "content": '{"verification_passed":true,"original_banner_bbox":{"x":20,"y":30,"width":100,"height":70},"actual_inserted_creative_bbox":{"x":20,"y":30,"width":100,"height":70},"deltas":{"x":0,"y":0,"width":0,"height":0},"corner_deltas":{"top_left":{"dx":0,"dy":0},"top_right":{"dx":0,"dy":0},"bottom_right":{"dx":0,"dy":0},"bottom_left":{"dx":0,"dy":0}},"recommended_corrected_bbox":null,"confidence":0.99,"reason":"exact","coordinate_space":"crop_pixels","image_width":400,"image_height":300}'
                     }
                 }
             ]
@@ -918,9 +1010,20 @@ async def test_composition_validation_sends_crop_sized_images_instead_of_full_sc
     )
 
     assert result.passed is True
-    assert captured["sent_sizes"] == [(180, 160), (180, 160)]
-    assert "CROPPED images around the current banner candidate" in captured["prompt"]
-    assert "crop rectangle in full source pixels is x=0, y=0, width=180, height=160" in captured["prompt"]
+    assert captured["sent_sizes"] == [(400, 300), (400, 300)]
+    assert captured["sent_paths"] != [source_path, composed_path]
+    assert all(Path(sent_path).exists() is False for sent_path in captured["sent_paths"])
+    assert result.raw_metadata["crop_mode"] == "full_image_100_percent"
+    assert result.raw_metadata["crop_origin_x"] == 0
+    assert result.raw_metadata["crop_origin_y"] == 0
+    assert result.raw_metadata["crop_width"] == 400
+    assert result.raw_metadata["crop_height"] == 300
+    assert "composition-validation crop/preparation pipeline is active" in captured["prompt"]
+    assert "crop is 100% of the image" in captured["prompt"]
+    assert "FULL original source screenshot" in captured["prompt"]
+    assert "FULL composed screenshot" in captured["prompt"]
+    assert "CROPPED images around the current banner candidate" not in captured["prompt"]
+    assert "crop rectangle in full source pixels is x=0, y=0, width=400, height=300" in captured["prompt"]
 
 
 def test_gemma_client_builder_rejects_missing_runtime_config() -> None:
@@ -1064,6 +1167,77 @@ async def test_stage2_generate_corrects_composition_after_validation_offset(tmp_
 
 
 @pytest.mark.asyncio
+async def test_stage2_generate_corrects_composition_from_corner_deltas_when_corrected_bbox_unchanged(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    spec = get_spec("yandex-graphic-banners-300x250-image")
+    assert spec is not None
+    source_path = tmp_path / "source.png"
+    creative_path = tmp_path / "creative.png"
+    Image.new("RGB", (400, 300), "white").save(source_path)
+    Image.new("RGB", (300, 250), "blue").save(creative_path)
+    request = ProofRequest(
+        request_id="req-stage2-corner-deltas",
+        network_display_name="Яндекс",
+        network_slug="yandex_graphic_banners",
+        spec=spec,
+        banner_type=spec.display_name,
+        source_screenshot=SourceScreenshotInfo(path=source_path, mime_type="image/png", width=400, height=300, size_bytes=source_path.stat().st_size),
+        creative=CreativeInfo(path=creative_path, mime_type="image/png", width=300, height=250, size_bytes=creative_path.stat().st_size),
+        landing_url="https://example.com/landing",
+        utm_params={"utm_source": "test"},
+        placement=Placement(mode="template", value="screenshot-detected"),
+        output_path=tmp_path / "final.png",
+    )
+
+    class MockGemma:
+        def __init__(self) -> None:
+            self.validation_bboxes: list[BoundingBox] = []
+
+        async def detect_banner_bbox(self, **kwargs):
+            return BBoxDetectionResult(bbox=BoundingBox(20, 110, 100, 70), confidence=0.9, source="mock")
+
+        async def detect_landing_bbox(self, **kwargs):
+            return BBoxDetectionResult(bbox=None, confidence=0.0, source="mock")
+
+        async def verify_composition_alignment(self, **kwargs):
+            bbox = kwargs["current_banner_bbox"]
+            self.validation_bboxes.append(bbox)
+            if len(self.validation_bboxes) == 1:
+                return CompositionValidationResult(
+                    passed=False,
+                    original_banner_bbox=BoundingBox(20, 30, 100, 70),
+                    inserted_creative_bbox=bbox,
+                    corrected_bbox=bbox,
+                    deltas={"x": 0, "y": 80, "width": 0, "height": 0},
+                    corner_deltas={
+                        "top_left": {"dx": 0, "dy": -80},
+                        "top_right": {"dx": 0, "dy": -80},
+                        "bottom_right": {"dx": 0, "dy": -80},
+                        "bottom_left": {"dx": 0, "dy": -80},
+                    },
+                    confidence=0.95,
+                    reason="uniform vertical offset",
+                    source="mock",
+                )
+            return CompositionValidationResult(
+                passed=True,
+                original_banner_bbox=bbox,
+                inserted_creative_bbox=bbox,
+                corrected_bbox=bbox,
+                confidence=0.98,
+                reason="exact match after corner correction",
+                source="mock",
+            )
+
+    client = MockGemma()
+    with caplog.at_level("INFO", logger="reports_ad.stage2_proof"):
+        result = await generate_stage2_proof(request, gemma_client=client)
+
+    assert result.banner_bbox == BoundingBox(20, 30, 100, 70)
+    assert client.validation_bboxes == [BoundingBox(20, 110, 100, 70), BoundingBox(20, 30, 100, 70)]
+    assert "correction_source=corner_deltas" in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_stage2_generate_fails_after_three_unsuccessful_composition_validations(tmp_path: Path) -> None:
     spec = get_spec("yandex-graphic-banners-300x250-image")
     assert spec is not None
@@ -1117,6 +1291,78 @@ async def test_stage2_generate_fails_after_three_unsuccessful_composition_valida
     if not diagnostics:
         diagnostics = list(Path("reports_ad/tmp").glob("stage2-req-stage2-uncorrected-*.composition-validation-failed.json"))
     assert diagnostics
+
+
+@pytest.mark.asyncio
+async def test_stage2_composition_validation_fails_when_all_correction_sources_unchanged_or_invalid(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    spec = get_spec("yandex-graphic-banners-300x250-image")
+    assert spec is not None
+    source_path = tmp_path / "source.png"
+    creative_path = tmp_path / "creative.png"
+    output_path = tmp_path / "final.png"
+    artifact_base = tmp_path / "stage2-unchanged"
+    source_copy_path = tmp_path / "source-copy.png"
+    banner_replaced_path = tmp_path / "banner.png"
+    landing_area_path = tmp_path / "landing.png"
+    Image.new("RGB", (400, 300), "white").save(source_path)
+    Image.new("RGB", (300, 250), "blue").save(creative_path)
+    request = ProofRequest(
+        request_id="req-stage2-unchanged-correction",
+        network_display_name="Яндекс",
+        network_slug="yandex_graphic_banners",
+        spec=spec,
+        banner_type=spec.display_name,
+        source_screenshot=SourceScreenshotInfo(path=source_path, mime_type="image/png", width=400, height=300, size_bytes=source_path.stat().st_size),
+        creative=CreativeInfo(path=creative_path, mime_type="image/png", width=300, height=250, size_bytes=creative_path.stat().st_size),
+        landing_url="https://example.com/landing",
+        utm_params={"utm_source": "test"},
+        placement=Placement(mode="template", value="screenshot-detected"),
+        output_path=output_path,
+    )
+
+    class MockGemma:
+        def __init__(self) -> None:
+            self.validation_bboxes: list[BoundingBox] = []
+
+        async def verify_composition_alignment(self, **kwargs):
+            bbox = kwargs["current_banner_bbox"]
+            self.validation_bboxes.append(bbox)
+            return CompositionValidationResult(
+                passed=False,
+                original_banner_bbox=bbox,
+                inserted_creative_bbox=bbox,
+                corrected_bbox=bbox,
+                deltas={"x": 0, "y": 0, "width": 0, "height": 0},
+                corner_deltas={
+                    "top_left": {"dx": 0, "dy": 0},
+                    "top_right": {"dx": 0, "dy": 0},
+                    "bottom_right": {"dx": 0, "dy": 0},
+                    "bottom_left": {"dx": 0, "dy": 0},
+                },
+                confidence=0.8,
+                reason="no usable correction",
+                source="mock",
+            )
+
+    client = MockGemma()
+    with caplog.at_level("INFO", logger="reports_ad.stage2_proof"), pytest.raises(ValidationError, match="точно совместить"):
+        await compose_stage2_image_with_validation(
+            client=client,
+            request=request,
+            effective_click_url="https://example.com/landing?utm_source=test",
+            initial_banner_bbox=BoundingBox(20, 30, 100, 70),
+            landing_bbox=fallback_landing_bbox(image_width=400, image_height=300),
+            output_path=output_path,
+            artifact_base=artifact_base,
+            source_copy_path=source_copy_path,
+            banner_replaced_path=banner_replaced_path,
+            landing_area_path=landing_area_path,
+            max_attempts=3,
+        )
+
+    assert client.validation_bboxes == [BoundingBox(20, 30, 100, 70)]
+    assert "rejection=unchanged_bbox" in caplog.text
+    assert (tmp_path / "stage2-unchanged.composition-validation-failed.json").exists()
 
 
 @pytest.mark.asyncio

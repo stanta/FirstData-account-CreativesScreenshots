@@ -73,6 +73,7 @@ class CompositionValidationResult:
     original_banner_bbox: BoundingBox | None
     inserted_creative_bbox: BoundingBox | None
     deltas: dict[str, int] = field(default_factory=dict)
+    corner_deltas: dict[str, dict[str, int]] = field(default_factory=dict)
     corrected_bbox: BoundingBox | None = None
     confidence: float = 0.0
     reason: str = ""

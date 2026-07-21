@@ -36,6 +36,12 @@ class _BannerValidationFeedback:
     reason_codes: tuple[str, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class _CompositionCorrection:
+    bbox: BoundingBox
+    source: str
+
+
 async def generate_stage2_proof(request: ProofRequest, *, gemma_client: GemmaBBoxClient | None = None, config: BotConfig | None = None) -> ProofResult:
     """Generate a proof image from a user-uploaded screenshot without browser loading."""
 
@@ -179,11 +185,12 @@ async def compose_stage2_image_with_validation(
                 "reason": _safe_feedback_text(validation.reason, max_length=240),
                 "corrected_bbox": _bbox_dict(validation.corrected_bbox),
                 "deltas": dict(validation.deltas),
+                "corner_deltas": dict(validation.corner_deltas),
                 "validation_metadata": _safe_validation_metadata(validation.raw_metadata),
             }
         )
         logger.info(
-            "stage2_composition_validation_attempt request_id=%s attempt=%s max_attempts=%s current_bbox=%s passed=%s confidence=%.3f original_banner_bbox=%s inserted_creative_bbox=%s corrected_bbox=%s deltas=%s reason=%s",
+            "stage2_composition_validation_attempt request_id=%s attempt=%s max_attempts=%s current_bbox=%s passed=%s confidence=%.3f original_banner_bbox=%s inserted_creative_bbox=%s corrected_bbox=%s deltas=%s corner_deltas=%s reason=%s",
             request.request_id,
             attempt,
             bounded_attempts,
@@ -194,6 +201,7 @@ async def compose_stage2_image_with_validation(
             _safe_bbox(validation.inserted_creative_bbox),
             _safe_bbox(validation.corrected_bbox),
             _safe_deltas(validation.deltas),
+            _safe_corner_deltas(validation.corner_deltas),
             _safe_feedback_text(validation.reason, max_length=240),
         )
         if validation.passed:
@@ -201,8 +209,13 @@ async def compose_stage2_image_with_validation(
                 shutil.copyfile(banner_attempt_path, banner_replaced_path)
             return width, height, current_bbox, banner_replaced_path
 
-        corrected_bbox = validation.corrected_bbox
-        if corrected_bbox is None:
+        correction = _select_next_composition_bbox(
+            validation=validation,
+            current_bbox=current_bbox,
+            request=request,
+            attempt=attempt,
+        )
+        if correction is None:
             logger.info(
                 "stage2_composition_validation_no_correction request_id=%s attempt=%s reason=%s",
                 request.request_id,
@@ -210,30 +223,17 @@ async def compose_stage2_image_with_validation(
                 _safe_feedback_text(validation.reason, max_length=240),
             )
             break
-        try:
-            corrected_bbox = validate_bbox_within_image(
-                corrected_bbox,
-                image_width=request.source_screenshot.width,
-                image_height=request.source_screenshot.height,
-                label="исправленная область баннера",
-            )
-            corrected_bbox = validate_banner_bbox_semantics(
-                corrected_bbox,
-                spec=request.spec,
-                image_width=request.source_screenshot.width,
-                image_height=request.source_screenshot.height,
-                request_id=request.request_id,
-            )
-        except ValidationError as exc:
-            logger.info(
-                "stage2_composition_validation_invalid_correction request_id=%s attempt=%s corrected_bbox=%s validation_error=%s",
-                request.request_id,
-                attempt,
-                _safe_bbox(corrected_bbox),
-                _safe_feedback_text(exc.safe_message, max_length=240),
-            )
-            break
-        current_bbox = corrected_bbox
+        logger.info(
+            "stage2_composition_validation_next_bbox request_id=%s attempt=%s correction_source=%s previous_bbox=%s next_bbox=%s deltas=%s corner_deltas=%s",
+            request.request_id,
+            attempt,
+            correction.source,
+            _safe_bbox(current_bbox),
+            _safe_bbox(correction.bbox),
+            _safe_deltas(validation.deltas),
+            _safe_corner_deltas(validation.corner_deltas),
+        )
+        current_bbox = correction.bbox
 
     diagnostics_path = _save_composition_validation_diagnostics(
         request=request,
@@ -437,6 +437,139 @@ def validate_banner_bbox_semantics(
     if not accepted:
         raise ValidationError("ИИ нашел неправдоподобную область баннера на скриншоте. Загрузите более четкий скриншот, где весь рекламный блок виден полностью.")
     return bbox
+
+
+def _select_next_composition_bbox(
+    *,
+    validation: CompositionValidationResult,
+    current_bbox: BoundingBox,
+    request: ProofRequest,
+    attempt: int,
+) -> _CompositionCorrection | None:
+    mismatch_present = _has_non_zero_deltas(validation.deltas) or _has_non_zero_corner_deltas(validation.corner_deltas)
+    candidates: list[tuple[str, BoundingBox | None]] = []
+
+    if validation.corrected_bbox is not None:
+        if validation.corrected_bbox != current_bbox or not mismatch_present:
+            candidates.append(("corrected_bbox", validation.corrected_bbox))
+        else:
+            logger.info(
+                "stage2_composition_validation_correction_unchanged request_id=%s attempt=%s correction_source=corrected_bbox current_bbox=%s mismatch_present=%s",
+                request.request_id,
+                attempt,
+                _safe_bbox(current_bbox),
+                mismatch_present,
+            )
+
+    candidates.extend(
+        (
+            ("corner_deltas", _bbox_from_corner_deltas(current_bbox=current_bbox, corner_deltas=validation.corner_deltas)),
+            ("deltas", _bbox_from_deltas(current_bbox=current_bbox, deltas=validation.deltas)),
+            ("original_banner_bbox", validation.original_banner_bbox),
+        )
+    )
+
+    for source, candidate in candidates:
+        if candidate is None:
+            continue
+        if candidate == current_bbox:
+            logger.info(
+                "stage2_composition_validation_candidate_rejected request_id=%s attempt=%s correction_source=%s candidate_bbox=%s rejection=unchanged_bbox mismatch_present=%s",
+                request.request_id,
+                attempt,
+                source,
+                _safe_bbox(candidate),
+                mismatch_present,
+            )
+            continue
+        try:
+            validated = validate_bbox_within_image(
+                candidate,
+                image_width=request.source_screenshot.width,
+                image_height=request.source_screenshot.height,
+                label="исправленная область баннера",
+            )
+            validated = validate_banner_bbox_semantics(
+                validated,
+                spec=request.spec,
+                image_width=request.source_screenshot.width,
+                image_height=request.source_screenshot.height,
+                request_id=request.request_id,
+            )
+        except ValidationError as exc:
+            logger.info(
+                "stage2_composition_validation_candidate_rejected request_id=%s attempt=%s correction_source=%s candidate_bbox=%s rejection=validation_error validation_error=%s",
+                request.request_id,
+                attempt,
+                source,
+                _safe_bbox(candidate),
+                _safe_feedback_text(exc.safe_message, max_length=240),
+            )
+            continue
+        return _CompositionCorrection(bbox=validated, source=source)
+
+    return None
+
+
+def _bbox_from_corner_deltas(*, current_bbox: BoundingBox, corner_deltas: dict[str, dict[str, int]]) -> BoundingBox | None:
+    if not _has_non_zero_corner_deltas(corner_deltas):
+        return None
+
+    top_left = corner_deltas.get("top_left", {})
+    top_right = corner_deltas.get("top_right", {})
+    bottom_right = corner_deltas.get("bottom_right", {})
+    bottom_left = corner_deltas.get("bottom_left", {})
+
+    left = current_bbox.x + _average_present_delta((top_left, bottom_left), "dx")
+    top = current_bbox.y + _average_present_delta((top_left, top_right), "dy")
+    right = current_bbox.right + _average_present_delta((top_right, bottom_right), "dx")
+    bottom = current_bbox.bottom + _average_present_delta((bottom_left, bottom_right), "dy")
+
+    rounded_left = int(round(left))
+    rounded_top = int(round(top))
+    rounded_right = int(round(right))
+    rounded_bottom = int(round(bottom))
+    return BoundingBox(
+        x=rounded_left,
+        y=rounded_top,
+        width=rounded_right - rounded_left,
+        height=rounded_bottom - rounded_top,
+    )
+
+
+def _bbox_from_deltas(*, current_bbox: BoundingBox, deltas: dict[str, int]) -> BoundingBox | None:
+    if not _has_non_zero_deltas(deltas):
+        return None
+
+    delta_x = int(deltas.get("x", 0))
+    delta_y = int(deltas.get("y", 0))
+    delta_width = int(deltas.get("width", 0))
+    delta_height = int(deltas.get("height", 0))
+    return BoundingBox(
+        x=current_bbox.x - delta_x,
+        y=current_bbox.y - delta_y,
+        width=current_bbox.width - delta_width,
+        height=current_bbox.height - delta_height,
+    )
+
+
+def _average_present_delta(corners: tuple[dict[str, int], ...], axis: str) -> float:
+    values = [float(corner[axis]) for corner in corners if axis in corner]
+    if not values:
+        return 0.0
+    return sum(values) / len(values)
+
+
+def _has_non_zero_deltas(deltas: dict[str, int]) -> bool:
+    return any(int(deltas.get(key, 0)) != 0 for key in ("x", "y", "width", "height"))
+
+
+def _has_non_zero_corner_deltas(corner_deltas: dict[str, dict[str, int]]) -> bool:
+    return any(
+        int(corner_deltas.get(corner, {}).get(axis, 0)) != 0
+        for corner in ("top_left", "top_right", "bottom_right", "bottom_left")
+        for axis in ("dx", "dy")
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -774,6 +907,14 @@ def _safe_validation_metadata(raw_metadata: dict[str, object]) -> dict[str, obje
 
 def _safe_deltas(deltas: dict[str, int]) -> str:
     return ",".join(f"{key}={int(deltas.get(key, 0))}" for key in ("x", "y", "width", "height"))
+
+
+def _safe_corner_deltas(corner_deltas: dict[str, dict[str, int]]) -> str:
+    parts = []
+    for corner in ("top_left", "top_right", "bottom_right", "bottom_left"):
+        delta = corner_deltas.get(corner, {})
+        parts.append(f"{corner}.dx={int(delta.get('dx', 0))},{corner}.dy={int(delta.get('dy', 0))}")
+    return ";".join(parts)
 
 
 def _save_composition_validation_diagnostics(

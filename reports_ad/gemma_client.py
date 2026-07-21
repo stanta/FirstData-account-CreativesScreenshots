@@ -144,40 +144,20 @@ class HeaderAuthGemmaClient:
             raise GemmaClientError("OCR LLM endpoint is not configured")
 
         last_error: BaseException | None = None
-        original_crop_path: Path | None = None
-        composed_crop_path: Path | None = None
         original_ocr_path: Path | None = None
         composed_ocr_path: Path | None = None
-        cleanup_original_crop = False
-        cleanup_composed_crop = False
         cleanup_original_ocr = False
         cleanup_composed_ocr = False
         stage = "composition_validation"
         try:
-            crop = _composition_validation_crop_rect(
-                bbox=current_banner_bbox,
-                image_width=original_screenshot.width,
-                image_height=original_screenshot.height,
-                margin_percent=self._composition_validation_crop_margin_percent,
-                margin_min_pixels=self._composition_validation_crop_margin_min_pixels,
-            )
-            original_crop_path, original_crop_width, original_crop_height, original_crop_mime_type, cleanup_original_crop = _crop_image_input_copy(
+            crop = _full_image_composition_validation_crop(image_width=original_screenshot.width, image_height=original_screenshot.height)
+            original_ocr_path, original_width, original_height, original_mime_type, cleanup_original_ocr = _crop_image_input_copy(
                 image_path=original_screenshot.path,
                 crop=crop,
             )
-            composed_crop_path, composed_crop_width, composed_crop_height, composed_crop_mime_type, cleanup_composed_crop = _crop_image_input_copy(
+            composed_ocr_path, composed_width, composed_height, composed_mime_type, cleanup_composed_ocr = _crop_image_input_copy(
                 image_path=composed_screenshot_path,
                 crop=crop,
-            )
-            original_ocr_path, original_width, original_height, original_mime_type, cleanup_original_ocr = _prepare_image_input_copy(
-                image_path=original_crop_path,
-                max_width=self._ocr_image_max_width,
-                max_pixels=self._ocr_image_max_pixels,
-            )
-            composed_ocr_path, composed_width, composed_height, composed_mime_type, cleanup_composed_ocr = _prepare_image_input_copy(
-                image_path=composed_crop_path,
-                max_width=self._ocr_image_max_width,
-                max_pixels=self._ocr_image_max_pixels,
             )
             prompt = _composition_validation_prompt(
                 screenshot=original_screenshot,
@@ -188,34 +168,28 @@ class HeaderAuthGemmaClient:
                 validation_attempt=validation_attempt,
                 crop=crop,
             )
+            crop_mode = _composition_validation_crop_mode(crop=crop, source_image_width=original_screenshot.width, source_image_height=original_screenshot.height)
             for attempt in range(1, self._max_retries + 1):
                 logger.info(
-                    "ocr_llm_request request_id=%s stage=%s attempt=%s validation_attempt=%s model=%s spec_slug=%s crop_mode=banner_bbox_margin source_screenshot=%sx%s crop_origin=%s,%s crop_bounds=%s,%s,%s,%s crop_size=%sx%s original_ocr_image=%sx%s composed_ocr_image=%sx%s current_banner_bbox=%s crop_margin_percent=%.3f crop_margin_min_pixels=%s crop_margin_x=%s crop_margin_y=%s prompt_length=%s prompt_sha256=%s prompt_text=%s",
+                    "ocr_llm_request request_id=%s stage=%s attempt=%s validation_attempt=%s model=%s spec_slug=%s crop_mode=%s source_screenshot=%sx%s original_ocr_image=%sx%s composed_ocr_image=%sx%s crop_rect=x=%s,y=%s,width=%s,height=%s current_banner_bbox=%s prompt_length=%s prompt_sha256=%s prompt_text=%s",
                     request_id,
                     stage,
                     attempt,
                     validation_attempt,
                     self._model,
                     spec.slug,
+                    crop_mode,
                     original_screenshot.width,
                     original_screenshot.height,
-                    crop.x,
-                    crop.y,
-                    crop.x,
-                    crop.y,
-                    crop.right,
-                    crop.bottom,
-                    original_crop_width,
-                    original_crop_height,
                     original_width,
                     original_height,
                     composed_width,
                     composed_height,
+                    crop.x,
+                    crop.y,
+                    crop.width,
+                    crop.height,
                     _safe_bbox(current_banner_bbox),
-                    crop.margin_percent,
-                    crop.margin_min_pixels,
-                    crop.margin_x,
-                    crop.margin_y,
                     len(prompt),
                     _sha256_short(prompt),
                     self._safe_debug_text(prompt),
@@ -248,22 +222,20 @@ class HeaderAuthGemmaClient:
                         crop=crop,
                     )
                     logger.info(
-                        "ocr_llm_response request_id=%s stage=%s attempt=%s validation_attempt=%s status=ok parse_success=%s crop_mode=banner_bbox_margin crop_origin=%s,%s crop_size=%sx%s passed=%s confidence=%.3f original_banner_bbox=%s inserted_creative_bbox=%s corrected_bbox=%s deltas=%s coordinate_space=%s reason=%s response_text_length=%s response_text_sha256=%s response_text=%s",
+                        "ocr_llm_response request_id=%s stage=%s attempt=%s validation_attempt=%s status=ok parse_success=%s crop_mode=%s passed=%s confidence=%.3f original_banner_bbox=%s inserted_creative_bbox=%s corrected_bbox=%s deltas=%s corner_deltas=%s coordinate_space=%s reason=%s response_text_length=%s response_text_sha256=%s response_text=%s",
                         request_id,
                         stage,
                         attempt,
                         validation_attempt,
                         True,
-                        crop.x,
-                        crop.y,
-                        crop.width,
-                        crop.height,
+                        crop_mode,
                         result.passed,
                         result.confidence,
                         _safe_bbox(result.original_banner_bbox),
                         _safe_bbox(result.inserted_creative_bbox),
                         _safe_bbox(result.corrected_bbox),
                         _safe_deltas(result.deltas),
+                        _safe_corner_deltas(result.corner_deltas),
                         _safe_coordinate_space(result.raw_metadata),
                         _sanitize_log_text(result.reason, limit=180),
                         len(raw_text),
@@ -290,8 +262,6 @@ class HeaderAuthGemmaClient:
             for cleanup, path in (
                 (cleanup_original_ocr, original_ocr_path),
                 (cleanup_composed_ocr, composed_ocr_path),
-                (cleanup_original_crop, original_crop_path),
-                (cleanup_composed_crop, composed_crop_path),
             ):
                 if cleanup and path is not None:
                     try:
@@ -629,6 +599,27 @@ def _composition_validation_crop_rect(
     )
 
 
+def _full_image_composition_validation_crop(*, image_width: int, image_height: int) -> CompositionValidationCrop:
+    if image_width <= 0 or image_height <= 0:
+        raise GemmaClientError("composition validation source image size is invalid")
+    return CompositionValidationCrop(
+        x=0,
+        y=0,
+        width=image_width,
+        height=image_height,
+        margin_x=0,
+        margin_y=0,
+        margin_percent=1.0,
+        margin_min_pixels=0,
+    )
+
+
+def _composition_validation_crop_mode(*, crop: CompositionValidationCrop, source_image_width: int, source_image_height: int) -> str:
+    if crop.x == 0 and crop.y == 0 and crop.width == source_image_width and crop.height == source_image_height:
+        return "full_image_100_percent"
+    return "banner_bbox_margin"
+
+
 def _crop_image_input_copy(*, image_path: Path, crop: CompositionValidationCrop) -> tuple[Path, int, int, str, bool]:
     with Image.open(image_path) as raw_image:
         image = raw_image.convert("RGB")
@@ -773,8 +764,15 @@ def _parse_composition_validation_result(
     if inserted_bbox is None:
         raise GemmaClientError("composition validation JSON must include actual_inserted_creative_bbox")
     deltas = _parse_bbox_deltas(payload.get("deltas") or payload.get("mismatches") or payload.get("delta"), original_bbox=original_bbox, inserted_bbox=inserted_bbox)
-    exact_match = all(deltas.get(key, 0) == 0 for key in ("x", "y", "width", "height"))
-    passed = bool(raw_passed) and exact_match and confidence >= confidence_threshold
+    corner_deltas = _parse_corner_deltas(
+        _first_present(payload.get("corner_deltas"), payload.get("creative_corner_deltas"), payload.get("per_corner_deltas"), payload.get("corner_displacement_deltas")),
+        original_bbox=original_bbox,
+        inserted_bbox=inserted_bbox,
+    )
+    bbox_exact_match = original_bbox == inserted_bbox
+    exact_match = bbox_exact_match and all(deltas.get(key, 0) == 0 for key in ("x", "y", "width", "height")) and _corner_deltas_exact_match(corner_deltas)
+    model_pass_flag_contradicted_exact_match = not bool(raw_passed) and exact_match and confidence >= confidence_threshold
+    passed = (bool(raw_passed) or model_pass_flag_contradicted_exact_match) and exact_match and confidence >= confidence_threshold
     if bool(raw_passed) and not exact_match:
         corrected_bbox = corrected_bbox or original_bbox
     if passed and corrected_bbox is None:
@@ -791,16 +789,19 @@ def _parse_composition_validation_result(
         original_banner_bbox=original_bbox,
         inserted_creative_bbox=inserted_bbox,
         deltas=deltas,
+        corner_deltas=corner_deltas,
         corrected_bbox=corrected_bbox,
         confidence=confidence,
         reason=reason,
         source="gemma",
         raw_metadata={
             "raw_passed": raw_passed,
+            "bbox_exact_match": bbox_exact_match,
             "exact_match": exact_match,
+            "model_pass_flag_contradicted_exact_match": model_pass_flag_contradicted_exact_match,
             "confidence_threshold": confidence_threshold,
             "coordinate_space": _sanitize_log_text(str(payload.get("coordinate_space", "source_pixels")), limit=32),
-            "crop_mode": "banner_bbox_margin" if crop is not None else "none",
+            "crop_mode": _composition_validation_crop_mode(crop=crop, source_image_width=source_image_width, source_image_height=source_image_height) if crop is not None else "none",
             "crop_origin_x": crop.x if crop is not None else None,
             "crop_origin_y": crop.y if crop is not None else None,
             "crop_width": crop.width if crop is not None else None,
@@ -854,6 +855,60 @@ def _parse_bbox_deltas(value: object, *, original_bbox: BoundingBox, inserted_bb
         except (TypeError, ValueError):
             deltas[key] = computed[key]
     return deltas
+
+
+def _parse_corner_deltas(value: object, *, original_bbox: BoundingBox, inserted_bbox: BoundingBox) -> dict[str, dict[str, int]]:
+    computed = _computed_corner_deltas(original_bbox=original_bbox, inserted_bbox=inserted_bbox)
+    if not isinstance(value, dict):
+        return computed
+    parsed: dict[str, dict[str, int]] = {}
+    for corner in ("top_left", "top_right", "bottom_right", "bottom_left"):
+        raw_corner = _first_present(value.get(corner), value.get(corner.replace("_", "-")), value.get(corner.replace("_", "")))
+        parsed[corner] = _parse_corner_delta(raw_corner, fallback=computed[corner])
+    return parsed
+
+
+def _parse_corner_delta(value: object, *, fallback: dict[str, int]) -> dict[str, int]:
+    if not isinstance(value, dict):
+        return dict(fallback)
+    return {
+        "dx": _coerce_delta_int(_first_present(value.get("dx"), value.get("x"), value.get("delta_x")), fallback=fallback["dx"]),
+        "dy": _coerce_delta_int(_first_present(value.get("dy"), value.get("y"), value.get("delta_y")), fallback=fallback["dy"]),
+    }
+
+
+def _coerce_delta_int(value: object, *, fallback: int) -> int:
+    if isinstance(value, bool):
+        return fallback
+    try:
+        return int(round(float(value)))
+    except (TypeError, ValueError):
+        return fallback
+
+
+def _computed_corner_deltas(*, original_bbox: BoundingBox, inserted_bbox: BoundingBox) -> dict[str, dict[str, int]]:
+    original_corners = _bbox_corners(original_bbox)
+    inserted_corners = _bbox_corners(inserted_bbox)
+    return {
+        corner: {
+            "dx": original_corners[corner][0] - inserted_corners[corner][0],
+            "dy": original_corners[corner][1] - inserted_corners[corner][1],
+        }
+        for corner in ("top_left", "top_right", "bottom_right", "bottom_left")
+    }
+
+
+def _bbox_corners(bbox: BoundingBox) -> dict[str, tuple[int, int]]:
+    return {
+        "top_left": (bbox.x, bbox.y),
+        "top_right": (bbox.right, bbox.y),
+        "bottom_right": (bbox.right, bbox.bottom),
+        "bottom_left": (bbox.x, bbox.bottom),
+    }
+
+
+def _corner_deltas_exact_match(corner_deltas: dict[str, dict[str, int]]) -> bool:
+    return all(corner_deltas.get(corner, {}).get(axis, 0) == 0 for corner in ("top_left", "top_right", "bottom_right", "bottom_left") for axis in ("dx", "dy"))
 
 
 def _coerce_bbox_to_source_pixels(
@@ -1074,13 +1129,25 @@ def _composition_validation_prompt(
 ) -> str:
     crop_instruction = ""
     if crop is not None:
-        crop_instruction = (
-            "Important crop context: you receive CROPPED images around the current banner candidate, not full screenshots. "
-            f"The crop rectangle in full source pixels is x={crop.x}, y={crop.y}, width={crop.width}, height={crop.height}, right={crop.right}, bottom={crop.bottom}; crop origin is ({crop.x},{crop.y}). "
-            f"The current insertion bbox in crop-local pixels is x={current_banner_bbox.x - crop.x}, y={current_banner_bbox.y - crop.y}, width={current_banner_bbox.width}, height={current_banner_bbox.height}. "
-            "Return full source screenshot pixel coordinates whenever possible and set coordinate_space='source_pixels'. "
-            "If you can only return crop-local pixel coordinates, set coordinate_space='crop_pixels' and keep image_width/image_height equal to the crop image size so the caller can convert using the crop origin. "
-        )
+        if crop.x == 0 and crop.y == 0 and crop.width == screenshot.width and crop.height == screenshot.height:
+            crop_instruction = (
+                "Important crop context: the composition-validation crop/preparation pipeline is active, but this crop is 100% of the image. "
+                "You receive the FULL original source screenshot and the FULL composed screenshot with the inserted creative; no visual content has been removed. "
+                f"The crop rectangle in full source pixels is x={crop.x}, y={crop.y}, width={crop.width}, height={crop.height}, right={crop.right}, bottom={crop.bottom}; crop origin is ({crop.x},{crop.y}). "
+                f"The current insertion bbox in crop-local pixels is x={current_banner_bbox.x - crop.x}, y={current_banner_bbox.y - crop.y}, width={current_banner_bbox.width}, height={current_banner_bbox.height}. "
+                "Return full source screenshot pixel coordinates whenever possible and set coordinate_space='source_pixels'. "
+                "If you return crop-local pixel coordinates, set coordinate_space='crop_pixels'; because this is a 100% crop with origin (0,0), crop-local pixels equal full source pixels. "
+            )
+        else:
+            crop_instruction = (
+                "Important crop context: you receive CROPPED images around the current banner candidate, not full screenshots. "
+                f"The crop rectangle in full source pixels is x={crop.x}, y={crop.y}, width={crop.width}, height={crop.height}, right={crop.right}, bottom={crop.bottom}; crop origin is ({crop.x},{crop.y}). "
+                f"The current insertion bbox in crop-local pixels is x={current_banner_bbox.x - crop.x}, y={current_banner_bbox.y - crop.y}, width={current_banner_bbox.width}, height={current_banner_bbox.height}. "
+                "Return full source screenshot pixel coordinates whenever possible and set coordinate_space='source_pixels'. "
+                "If you can only return crop-local pixel coordinates, set coordinate_space='crop_pixels' and keep image_width/image_height equal to the crop image size so the caller can convert using the crop origin. "
+            )
+    else:
+        crop_instruction = "Important image context: you receive the FULL original source screenshot and the FULL composed screenshot with the inserted creative; no composition-validation crop has been applied. "
     return (
         "You are validating an advertising proof image after creative insertion. "
         "You receive two images in this order: Image 1 is the original source screenshot BEFORE insertion; Image 2 is the composed screenshot AFTER the uploaded creative was inserted. "
@@ -1089,7 +1156,10 @@ def _composition_validation_prompt(
         f"Current insertion bbox in source screenshot pixels: x={current_banner_bbox.x}, y={current_banner_bbox.y}, width={current_banner_bbox.width}, height={current_banner_bbox.height}. "
         f"Selected spec dimensions: {spec.dimensions_label}; expected aspect ratio: {_safe_aspect_ratio(spec)}; selected spec slug: {spec.slug}; network: {spec.network_display_name}. "
         f"Validation cycle: {max(1, validation_attempt)}. Source screenshot is {screenshot.width}x{screenshot.height} pixels; OCR input images sent to you are {ocr_image_width}x{ocr_image_height} pixels. "
-        "Return ONLY strict JSON with keys: verification_passed boolean, original_banner_bbox {x,y,width,height}, actual_inserted_creative_bbox {x,y,width,height}, deltas {x,y,width,height}, recommended_corrected_bbox {x,y,width,height} or null, confidence 0..1, reason string, coordinate_space, image_width, image_height. "
+        "Return ONLY strict JSON with keys: verification_passed boolean, original_banner_bbox {x,y,width,height}, actual_inserted_creative_bbox {x,y,width,height}, deltas {x,y,width,height}, corner_deltas, recommended_corrected_bbox {x,y,width,height} or null, confidence 0..1, reason string, coordinate_space, image_width, image_height. "
+        "corner_deltas MUST be an object with exactly these corner keys: top_left, top_right, bottom_right, bottom_left. Each corner value MUST be an object with deterministic numeric dx and dy fields. "
+        "For each corner, dx and dy describe how to move that INSERTED CREATIVE corner so it glues precisely to the matching ORIGINAL SCREENSHOT ad-slot corner: dx = original_corner_x - inserted_creative_corner_x; dy = original_corner_y - inserted_creative_corner_y. "
+        "Example zero-alignment corner_deltas: {\"top_left\":{\"dx\":0,\"dy\":0},\"top_right\":{\"dx\":0,\"dy\":0},\"bottom_right\":{\"dx\":0,\"dy\":0},\"bottom_left\":{\"dx\":0,\"dy\":0}}. "
         "Use source screenshot pixel coordinates whenever possible and set coordinate_space='source_pixels'. If you return crop-local coordinates, set coordinate_space='crop_pixels'. If you return resized OCR-image pixels, set coordinate_space='resized_pixels' and include image_width and image_height. "
         "If verification_passed is false, recommended_corrected_bbox must be the exact pixel bbox to use for the next insertion attempt."
     )
@@ -1235,6 +1305,14 @@ def _safe_bbox(bbox: BoundingBox | None) -> str:
 
 def _safe_deltas(deltas: dict[str, int]) -> str:
     return ",".join(f"{key}={int(deltas.get(key, 0))}" for key in ("x", "y", "width", "height"))
+
+
+def _safe_corner_deltas(corner_deltas: dict[str, dict[str, int]]) -> str:
+    parts = []
+    for corner in ("top_left", "top_right", "bottom_right", "bottom_left"):
+        delta = corner_deltas.get(corner, {})
+        parts.append(f"{corner}.dx={int(delta.get('dx', 0))},{corner}.dy={int(delta.get('dy', 0))}")
+    return ";".join(parts)
 
 
 def _safe_response_metadata(payload: object) -> str:
