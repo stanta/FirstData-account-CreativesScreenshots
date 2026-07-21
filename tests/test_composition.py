@@ -8,7 +8,7 @@ from reports_ad.config import BotConfig
 from reports_ad.gemma_client import GemmaClientError, HeaderAuthGemmaClient, _banner_prompt, _composition_validation_crop_rect, _composition_validation_prompt, _parse_bbox_result, _parse_composition_validation_result, build_gemma_client_from_config
 from reports_ad.models import BBoxDetectionResult, BoundingBox, CompositionValidationResult, CreativeInfo, Placement, ProofRequest, ProofResult, SourceScreenshotInfo
 from reports_ad.proof import compose_final_image
-from reports_ad.stage2_proof import compose_stage2_image, fallback_landing_bbox, generate_stage2_proof, validate_banner_bbox_semantics
+from reports_ad.stage2_proof import compose_stage2_image, fallback_landing_bbox, generate_stage2_proof, validate_banner_bbox_semantics, select_valid_banner_bbox_with_feedback
 from reports_ad.catalog import get_spec
 from reports_ad.validation import ValidationError
 
@@ -90,6 +90,38 @@ def test_stage2_compose_pastes_creative_into_exact_banner_region(tmp_path: Path)
         assert result.getpixel((140, 45)) == (255, 255, 255)
         assert result.getpixel((90, 29)) == (255, 255, 255)
         assert result.getpixel((90, 120)) == (255, 255, 255)
+
+
+def test_validate_banner_bbox_semantics_rejects_right_sidebar_bbox_outside_right_third() -> None:
+    spec = get_spec("first-data-rtb-banners-240x400-image")
+    assert spec is not None
+
+    with pytest.raises(ValidationError, match="неправдоподобную область"):
+        validate_banner_bbox_semantics(
+            BoundingBox(x=707, y=197, width=240, height=400),
+            spec=spec,
+            image_width=1280,
+            image_height=719,
+            request_id="req-off-target",
+        )
+
+
+def test_validate_banner_bbox_semantics_accepts_right_sidebar_bbox_in_right_third() -> None:
+    spec = get_spec("first-data-rtb-banners-240x400-image")
+    assert spec is not None
+
+    bbox = BoundingBox(x=874, y=146, width=240, height=400)
+
+    assert (
+        validate_banner_bbox_semantics(
+            bbox,
+            spec=spec,
+            image_width=1280,
+            image_height=719,
+            request_id="req-right-target",
+        )
+        == bbox
+    )
 
 
 def test_stage2_compose_trims_transparent_padding_before_stretching_to_slot(tmp_path: Path) -> None:
@@ -1081,7 +1113,9 @@ async def test_stage2_generate_fails_after_three_unsuccessful_composition_valida
         await generate_stage2_proof(request, gemma_client=client)
 
     assert client.validation_calls == 3
-    diagnostics = list(Path("reports_ad/tmp").glob("stage2-req-stage2-uncorrected-*.composition-validation-failed.json"))
+    diagnostics = list(Path("tmp").glob("stage2-req-stage2-uncorrected-*.composition-validation-failed.json"))
+    if not diagnostics:
+        diagnostics = list(Path("reports_ad/tmp").glob("stage2-req-stage2-uncorrected-*.composition-validation-failed.json"))
     assert diagnostics
 
 

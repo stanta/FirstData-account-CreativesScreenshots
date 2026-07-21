@@ -22,6 +22,10 @@ DEFAULT_BANNER_ASPECT_RATIO_DEVIATION_THRESHOLD = 0.35
 MIN_BANNER_AREA_RATIO = 0.002
 MIN_BANNER_DIMENSION_PIXELS = 16
 MIN_BANNER_SPEC_DIMENSION_RATIO = 0.20
+RIGHT_COLUMN_MIN_CENTER_X_RATIO = 2 / 3
+LEFT_COLUMN_MAX_CENTER_X_RATIO = 1 / 3
+TOP_SLOT_MAX_CENTER_Y_RATIO = 1 / 3
+BOTTOM_SLOT_MIN_CENTER_Y_RATIO = 2 / 3
 MAX_BANNER_SELECTION_ATTEMPTS = 5
 MAX_COMPOSITION_VALIDATION_ATTEMPTS = 3
 
@@ -395,7 +399,9 @@ def validate_banner_bbox_semantics(
     min_width, min_height = _minimum_banner_dimensions(spec=spec)
     too_small = bbox.width < min_width or bbox.height < min_height or area_ratio < MIN_BANNER_AREA_RATIO
     ratio_invalid = ratio_deviation > max_aspect_ratio_deviation
-    accepted = not (ratio_invalid or too_small)
+    position_feedback = _banner_position_feedback(bbox=bbox, spec=spec, image_width=image_width, image_height=image_height)
+    position_invalid = not position_feedback.accepted
+    accepted = not (ratio_invalid or too_small or position_invalid)
     reason_codes = _semantic_reject_reason_codes(
         bbox=bbox,
         ratio_invalid=ratio_invalid,
@@ -405,10 +411,11 @@ def validate_banner_bbox_semantics(
         area_ratio=area_ratio,
         image_width=image_width,
         image_height=image_height,
+        position_invalid=position_invalid,
     )
 
     logger.info(
-        "stage2_banner_bbox_semantic_validation request_id=%s spec_slug=%s bbox=%s bbox_ratio=%.3f expected_ratio=%.3f ratio_deviation=%.3f area_ratio=%.5f min_width=%s min_height=%s decision=%s reason_codes=%s",
+        "stage2_banner_bbox_semantic_validation request_id=%s spec_slug=%s bbox=%s bbox_ratio=%.3f expected_ratio=%.3f ratio_deviation=%.3f area_ratio=%.5f min_width=%s min_height=%s center_ratio=x=%.3f,y=%.3f zone=%s placement_guard=%s placement_hint=%s decision=%s reason_codes=%s",
         request_id,
         spec.slug,
         _safe_bbox(bbox),
@@ -418,6 +425,11 @@ def validate_banner_bbox_semantics(
         area_ratio,
         min_width,
         min_height,
+        position_feedback.center_x_ratio,
+        position_feedback.center_y_ratio,
+        position_feedback.zone,
+        position_feedback.reason,
+        _safe_feedback_text(spec.placement_hint, max_length=120),
         "accepted" if accepted else "rejected",
         ",".join(reason_codes) if reason_codes else "none",
     )
@@ -425,6 +437,49 @@ def validate_banner_bbox_semantics(
     if not accepted:
         raise ValidationError("ИИ нашел неправдоподобную область баннера на скриншоте. Загрузите более четкий скриншот, где весь рекламный блок виден полностью.")
     return bbox
+
+
+@dataclass(frozen=True, slots=True)
+class _BannerPositionFeedback:
+    accepted: bool
+    reason: str
+    center_x_ratio: float
+    center_y_ratio: float
+    zone: str
+
+
+def _banner_position_feedback(*, bbox: BoundingBox, spec: CreativeSpec, image_width: int, image_height: int) -> _BannerPositionFeedback:
+    if image_width <= 0 or image_height <= 0:
+        return _BannerPositionFeedback(accepted=True, reason="image_size_unavailable", center_x_ratio=0.0, center_y_ratio=0.0, zone="unknown")
+
+    center_x_ratio = (bbox.x + bbox.width / 2) / image_width
+    center_y_ratio = (bbox.y + bbox.height / 2) / image_height
+    hint = spec.placement_hint.lower()
+    zone = _bbox_zone(bbox=bbox, image_width=image_width, image_height=image_height)
+    checks: list[tuple[str, bool]] = []
+
+    if "right" in hint or "right-column" in hint:
+        checks.append((f"right_column_center_x>={RIGHT_COLUMN_MIN_CENTER_X_RATIO:.3f}", center_x_ratio >= RIGHT_COLUMN_MIN_CENTER_X_RATIO))
+    elif "left" in hint:
+        checks.append((f"left_column_center_x<={LEFT_COLUMN_MAX_CENTER_X_RATIO:.3f}", center_x_ratio <= LEFT_COLUMN_MAX_CENTER_X_RATIO))
+
+    if _has_top_slot_hint(hint):
+        checks.append((f"top_slot_center_y<={TOP_SLOT_MAX_CENTER_Y_RATIO:.3f}", center_y_ratio <= TOP_SLOT_MAX_CENTER_Y_RATIO))
+    elif "bottom" in hint or "footer" in hint:
+        checks.append((f"bottom_slot_center_y>={BOTTOM_SLOT_MIN_CENTER_Y_RATIO:.3f}", center_y_ratio >= BOTTOM_SLOT_MIN_CENTER_Y_RATIO))
+
+    if not checks:
+        return _BannerPositionFeedback(accepted=True, reason="no_position_guard", center_x_ratio=center_x_ratio, center_y_ratio=center_y_ratio, zone=zone)
+
+    failed = [name for name, passed in checks if not passed]
+    reason = "passed:" + ",".join(name for name, _ in checks) if not failed else "failed:" + ",".join(failed)
+    return _BannerPositionFeedback(accepted=not failed, reason=reason, center_x_ratio=center_x_ratio, center_y_ratio=center_y_ratio, zone=zone)
+
+
+def _has_top_slot_hint(hint: str) -> bool:
+    if "bottom" in hint:
+        return False
+    return "header" in hint or "top-of-page" in hint or "top of page" in hint or "above main content" in hint
 
 
 def _banner_validation_feedback(
@@ -461,7 +516,8 @@ def _banner_validation_feedback(
         area_ratio = bbox.width * bbox.height / (image_width * image_height) if image_width > 0 and image_height > 0 else 0.0
         center_x = bbox.x + bbox.width / 2
         center_y = bbox.y + bbox.height / 2
-        zone = _bbox_zone(bbox=bbox, image_width=image_width, image_height=image_height)
+        position_feedback = _banner_position_feedback(bbox=bbox, spec=spec, image_width=image_width, image_height=image_height)
+        zone = position_feedback.zone
         reason_codes.extend(
             _semantic_reject_reason_codes(
                 bbox=bbox,
@@ -472,6 +528,7 @@ def _banner_validation_feedback(
                 area_ratio=area_ratio,
                 image_width=image_width,
                 image_height=image_height,
+                position_invalid=not position_feedback.accepted,
             )
         )
         if bbox.x < 0 or bbox.y < 0 or bbox.width <= 0 or bbox.height <= 0:
@@ -482,7 +539,9 @@ def _banner_validation_feedback(
             [
                 f"previous_invalid_bbox={_safe_bbox(bbox)}",
                 f"previous_invalid_center=x={center_x:.1f},y={center_y:.1f}",
+                f"previous_invalid_center_ratio=x={position_feedback.center_x_ratio:.3f},y={position_feedback.center_y_ratio:.3f}",
                 f"previous_invalid_zone={zone}",
+                f"placement_guard={position_feedback.reason}",
                 "avoid_previous_invalid_area=true",
                 "do_not_repeat_previous_invalid_bbox=true",
                 f"bbox_ratio={bbox_ratio:.3f}",
@@ -507,12 +566,15 @@ def _semantic_reject_reason_codes(
     area_ratio: float,
     image_width: int,
     image_height: int,
+    position_invalid: bool = False,
 ) -> list[str]:
     reasons: list[str] = []
     if bbox.x < 0 or bbox.y < 0 or bbox.width <= 0 or bbox.height <= 0 or bbox.right > image_width or bbox.bottom > image_height:
         reasons.append("out_of_bounds")
     if ratio_invalid:
         reasons.append("aspect_ratio_deviation")
+    if position_invalid:
+        reasons.append("placement_position_mismatch")
     if bbox.width < min_width:
         reasons.append("min_width")
     if bbox.height < min_height:
