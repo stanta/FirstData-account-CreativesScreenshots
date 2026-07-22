@@ -382,12 +382,11 @@ def compose_stage2_image(
 
         result = source.copy()
         creative_source = _trim_transparent_padding(creative_raw.convert("RGBA"))
-        creative = creative_source.resize((banner_bbox.width, banner_bbox.height), Image.Resampling.LANCZOS)
         if full_cover_replacement:
             background_crop = Image.new("RGBA", (banner_bbox.width, banner_bbox.height), (255, 255, 255, 255))
         else:
             background_crop = result.crop((banner_bbox.x, banner_bbox.y, banner_bbox.right, banner_bbox.bottom))
-        blended = Image.alpha_composite(background_crop, creative)
+        blended = _fit_creative_to_banner_crop(creative_source, background_crop)
         result.paste(blended, (banner_bbox.x, banner_bbox.y))
         _draw_ad_mark(result, banner_bbox)
 
@@ -861,6 +860,24 @@ def _trim_transparent_padding(image: Image.Image) -> Image.Image:
     if alpha_bbox == (0, 0, image.width, image.height):
         return image
     return image.crop(alpha_bbox)
+
+
+def _fit_creative_to_banner_crop(creative: Image.Image, background_crop: Image.Image) -> Image.Image:
+    """Fit creative into the banner crop without changing its source aspect ratio."""
+
+    target_width, target_height = background_crop.size
+    if creative.width <= 0 or creative.height <= 0 or target_width <= 0 or target_height <= 0:
+        raise ScreenshotGenerationError("Невозможно пропорционально изменить размер креатива для области баннера.")
+
+    scale = min(target_width / creative.width, target_height / creative.height)
+    resized_width = min(target_width, max(1, round(creative.width * scale)))
+    resized_height = min(target_height, max(1, round(creative.height * scale)))
+    fitted = creative.resize((resized_width, resized_height), Image.Resampling.LANCZOS)
+    composed = background_crop.copy()
+    offset_x = (target_width - resized_width) // 2
+    offset_y = (target_height - resized_height) // 2
+    composed.alpha_composite(fitted, dest=(offset_x, offset_y))
+    return composed
 
 
 def _draw_ad_mark(image: Image.Image, bbox: BoundingBox) -> None:

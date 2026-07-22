@@ -36,14 +36,14 @@ def test_compose_final_image_uses_landing_bottom_band(tmp_path: Path) -> None:
         assert result.getpixel((50, 90)) == (0, 128, 0)
 
 
-def test_stage2_compose_stretches_creative_draws_landing_and_ad_mark(tmp_path: Path) -> None:
+def test_stage2_compose_fits_creative_proportionally_draws_landing_and_ad_mark(tmp_path: Path) -> None:
     source_path = tmp_path / "source.png"
     creative_path = tmp_path / "creative.png"
     output_path = tmp_path / "stage2.png"
     banner_path = tmp_path / "banner.png"
     landing_path = tmp_path / "landing.png"
     Image.new("RGB", (400, 300), "white").save(source_path)
-    Image.new("RGBA", (20, 20), (255, 0, 0, 180)).save(creative_path)
+    Image.new("RGBA", (30, 20), (255, 0, 0, 180)).save(creative_path)
 
     width, height = compose_stage2_image(
         source_screenshot_path=source_path,
@@ -65,7 +65,7 @@ def test_stage2_compose_stretches_creative_draws_landing_and_ad_mark(tmp_path: P
         assert result.getpixel((200, 285)) != (255, 255, 255)
 
 
-def test_stage2_compose_pastes_creative_into_exact_banner_region(tmp_path: Path) -> None:
+def test_stage2_compose_centers_proportionally_fitted_creative_in_banner_region(tmp_path: Path) -> None:
     source_path = tmp_path / "source.png"
     creative_path = tmp_path / "creative.png"
     output_path = tmp_path / "stage2.png"
@@ -84,12 +84,49 @@ def test_stage2_compose_pastes_creative_into_exact_banner_region(tmp_path: Path)
     )
 
     with Image.open(banner_path) as result:
-        assert result.getpixel((130, 70)) == (20, 40, 220)
-        assert result.getpixel((130, 105)) == (20, 40, 220)
+        assert result.getpixel((110, 60)) == (20, 40, 220)
+        assert result.getpixel((110, 104)) == (20, 40, 220)
+        assert result.getpixel((110, 44)) == (255, 255, 255)
+        assert result.getpixel((110, 105)) == (255, 255, 255)
         assert result.getpixel((79, 45)) == (255, 255, 255)
-        assert result.getpixel((150, 45)) == (255, 255, 255)
+        assert result.getpixel((142, 75)) == (255, 255, 255)
         assert result.getpixel((90, 29)) == (255, 255, 255)
         assert result.getpixel((90, 120)) == (255, 255, 255)
+
+
+def test_stage2_compose_preserves_original_creative_aspect_ratio_when_slot_ratio_differs(tmp_path: Path) -> None:
+    source_path = tmp_path / "source.png"
+    creative_path = tmp_path / "creative.png"
+    banner_path = tmp_path / "banner.png"
+    output_path = tmp_path / "stage2.png"
+    source_size = (240, 180)
+    bbox = BoundingBox(x=40, y=30, width=120, height=80)
+    Image.new("RGB", source_size, (255, 255, 255)).save(source_path)
+    Image.new("RGBA", (20, 10), (10, 120, 220, 255)).save(creative_path)
+
+    compose_stage2_image(
+        source_screenshot_path=source_path,
+        creative_path=creative_path,
+        effective_click_url="https://example.com/landing?utm_source=test&utm_medium=cpc",
+        banner_bbox=bbox,
+        landing_bbox=fallback_landing_bbox(image_width=source_size[0], image_height=source_size[1]),
+        output_path=output_path,
+        banner_replaced_path=banner_path,
+    )
+
+    with Image.open(source_path) as source_raw, Image.open(banner_path) as result_raw:
+        diff_bbox = ImageChops.difference(source_raw.convert("RGB"), result_raw.convert("RGB")).getbbox()
+
+    assert diff_bbox is not None
+    inserted_width = diff_bbox[2] - diff_bbox[0]
+    inserted_height = diff_bbox[3] - diff_bbox[1]
+    source_ratio = 20 / 10
+    inserted_ratio = inserted_width / inserted_height
+    assert abs(inserted_ratio - source_ratio) <= 0.065
+    assert diff_bbox[0] == bbox.x
+    assert diff_bbox[2] == bbox.right
+    assert bbox.y <= diff_bbox[1] <= bbox.y + 10
+    assert bbox.y + 70 <= diff_bbox[3] <= bbox.bottom
 
 
 def test_stage2_compose_full_cover_replacement_overwrites_old_bbox_pixels(tmp_path: Path) -> None:
@@ -114,6 +151,8 @@ def test_stage2_compose_full_cover_replacement_overwrites_old_bbox_pixels(tmp_pa
 
     with Image.open(banner_path) as result:
         assert result.getpixel((bbox.x + bbox.width // 2, bbox.y + bbox.height // 2)) == (255, 255, 255)
+        assert result.getpixel((bbox.x + 2, bbox.y + bbox.height // 2)) == (255, 255, 255)
+        assert result.getpixel((bbox.x + bbox.width - 3, bbox.y + bbox.height // 2)) == (255, 255, 255)
         assert result.getpixel((bbox.x - 1, bbox.y + bbox.height // 2)) == (0, 255, 0)
 
 
@@ -147,9 +186,10 @@ def test_stage2_compose_ad_mark_keeps_background_transparent_over_creative(tmp_p
         banner_replaced_path=banner_path,
     )
 
+    fitted_left = bbox.x + (bbox.width - bbox.height) // 2
     with Image.open(banner_path) as result:
-        assert result.getpixel((bbox.x + 6, bbox.y + 6)) == (20, 40, 220)
-        assert result.getpixel((bbox.x + 18, bbox.y + 12)) != (20, 40, 220)
+        assert result.getpixel((fitted_left + 6, bbox.y + 6)) == (20, 40, 220)
+        assert result.getpixel((fitted_left + 18, bbox.y + 12)) != (20, 40, 220)
 
 
 def test_validate_banner_bbox_semantics_rejects_right_sidebar_bbox_outside_right_third() -> None:
@@ -184,7 +224,7 @@ def test_validate_banner_bbox_semantics_accepts_right_sidebar_bbox_in_right_thir
     )
 
 
-def test_stage2_compose_trims_transparent_padding_before_stretching_to_slot(tmp_path: Path) -> None:
+def test_stage2_compose_trims_transparent_padding_before_proportional_fit(tmp_path: Path) -> None:
     source_path = tmp_path / "source.png"
     creative_path = tmp_path / "creative.png"
     output_path = tmp_path / "stage2.png"
@@ -208,15 +248,17 @@ def test_stage2_compose_trims_transparent_padding_before_stretching_to_slot(tmp_
     )
 
     with Image.open(banner_path) as result:
-        assert result.getpixel((bbox.x, bbox.y)) == (15, 35, 210)
-        assert result.getpixel((bbox.right - 1, bbox.y)) == (15, 35, 210)
-        assert result.getpixel((bbox.x, bbox.bottom - 1)) == (15, 35, 210)
-        assert result.getpixel((bbox.right - 1, bbox.bottom - 1)) == (15, 35, 210)
+        assert result.getpixel((bbox.x + 5, bbox.y)) == (15, 35, 210)
+        assert result.getpixel((bbox.right - 6, bbox.y)) == (15, 35, 210)
+        assert result.getpixel((bbox.x + 5, bbox.bottom - 1)) == (15, 35, 210)
+        assert result.getpixel((bbox.right - 6, bbox.bottom - 1)) == (15, 35, 210)
+        assert result.getpixel((bbox.x, bbox.y + 10)) == (255, 255, 255)
+        assert result.getpixel((bbox.right - 1, bbox.y + 10)) == (255, 255, 255)
         assert result.getpixel((bbox.x - 1, bbox.y + 10)) == (255, 255, 255)
         assert result.getpixel((bbox.right, bbox.y + 10)) == (255, 255, 255)
 
 
-def test_stage2_compose_changed_region_matches_target_banner_bbox(tmp_path: Path) -> None:
+def test_stage2_compose_changed_region_matches_proportionally_fitted_creative_and_ad_mark(tmp_path: Path) -> None:
     source_path = tmp_path / "source.png"
     creative_path = tmp_path / "creative.png"
     banner_path = tmp_path / "banner.png"
@@ -238,7 +280,15 @@ def test_stage2_compose_changed_region_matches_target_banner_bbox(tmp_path: Path
     with Image.open(source_path) as source_raw, Image.open(banner_path) as result_raw:
         diff_bbox = ImageChops.difference(source_raw.convert("RGB"), result_raw.convert("RGB")).getbbox()
 
-    assert diff_bbox == (bbox.x, bbox.y, bbox.right, bbox.bottom)
+    assert diff_bbox is not None
+    expected_fit_height = bbox.height
+    expected_fit_width = bbox.height
+    expected_fit_left = bbox.x + (bbox.width - expected_fit_width) // 2
+    inserted_width = diff_bbox[2] - expected_fit_left
+    inserted_height = diff_bbox[3] - diff_bbox[1]
+    assert diff_bbox[0] <= expected_fit_left
+    assert diff_bbox[1:] == (bbox.y, expected_fit_left + expected_fit_width, bbox.y + expected_fit_height)
+    assert abs((inserted_width / inserted_height) - 1.0) <= 0.08
 
 
 def test_fallback_landing_bbox_uses_lower_10_to_20_percent() -> None:
@@ -1346,7 +1396,8 @@ async def test_stage2_generate_corrects_composition_after_validation_offset(tmp_
     assert result.banner_bbox == BoundingBox(40, 50, 120, 80)
     assert client.validation_bboxes == [BoundingBox(20, 30, 100, 70), BoundingBox(40, 50, 120, 80)]
     with Image.open(result.intermediate_screenshot_path) as result_image:
-        assert result_image.getpixel((45, 55)) != (255, 255, 255)
+        assert result_image.getpixel((60, 60)) != (255, 255, 255)
+        assert result_image.getpixel((45, 55)) == (255, 255, 255)
         assert result_image.getpixel((25, 35)) == (255, 255, 255)
 
 

@@ -250,7 +250,7 @@ def test_media_type_inference_defaults_static_png_jpeg_specs_to_banner() -> None
     assert infer_media_type_from_spec(spec) == "banner"
 
 
-def test_validate_creative_against_selected_spec_allows_non_matching_dimensions_for_stage2_stretch(tmp_path: Path) -> None:
+def test_validate_creative_against_selected_spec_allows_non_matching_dimensions_for_stage2_proportional_fit(tmp_path: Path) -> None:
     spec = get_spec("yandex-graphic-banners-300x250-image")
     assert spec is not None
     image_path = tmp_path / "creative.png"
