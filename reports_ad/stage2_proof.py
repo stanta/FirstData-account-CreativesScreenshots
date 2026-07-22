@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import json
+import os
 import re
 import shutil
 import time
@@ -26,8 +27,21 @@ RIGHT_COLUMN_MIN_CENTER_X_RATIO = 2 / 3
 LEFT_COLUMN_MAX_CENTER_X_RATIO = 1 / 3
 TOP_SLOT_MAX_CENTER_Y_RATIO = 1 / 3
 BOTTOM_SLOT_MIN_CENTER_Y_RATIO = 2 / 3
-MAX_BANNER_SELECTION_ATTEMPTS = 5
-MAX_COMPOSITION_VALIDATION_ATTEMPTS = 3
+
+
+def _positive_int_from_env(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        logger.warning("invalid_positive_int_env name=%s value=%r default=%s", name, raw, default)
+        return default
+
+
+MAX_BANNER_SELECTION_ATTEMPTS = _positive_int_from_env("REPORTS_AD_MAX_BANNER_SELECTION_ATTEMPTS", 5)
+MAX_COMPOSITION_VALIDATION_ATTEMPTS = _positive_int_from_env("REPORTS_AD_MAX_COMPOSITION_VALIDATION_ATTEMPTS", 5)
 AD_MARK_LABEL = "Реклама"
 CYRILLIC_FONT_CANDIDATES = (
     "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",

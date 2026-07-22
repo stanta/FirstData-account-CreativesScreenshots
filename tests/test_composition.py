@@ -1303,7 +1303,7 @@ async def test_stage2_generate_corrects_composition_from_corner_deltas_when_corr
 
 
 @pytest.mark.asyncio
-async def test_stage2_generate_fails_after_three_unsuccessful_composition_validations(tmp_path: Path) -> None:
+async def test_stage2_generate_fails_after_default_unsuccessful_composition_validations(tmp_path: Path) -> None:
     spec = get_spec("yandex-graphic-banners-300x250-image")
     assert spec is not None
     source_path = tmp_path / "source.png"
@@ -1351,7 +1351,7 @@ async def test_stage2_generate_fails_after_three_unsuccessful_composition_valida
     with pytest.raises(ValidationError, match="точно совместить"):
         await generate_stage2_proof(request, gemma_client=client)
 
-    assert client.validation_calls == 3
+    assert client.validation_calls == 5
     diagnostics = list(Path("tmp").glob("stage2-req-stage2-uncorrected-*.composition-validation-failed.json"))
     if not diagnostics:
         diagnostics = list(Path("reports_ad/tmp").glob("stage2-req-stage2-uncorrected-*.composition-validation-failed.json"))
