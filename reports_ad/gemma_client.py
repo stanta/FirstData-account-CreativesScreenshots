@@ -488,7 +488,7 @@ def _banner_prompt(
         "You are analyzing a placement screenshot for an advertising proof generator. "
         "Find the visible original ad slot area that must be replaced by the uploaded creative. "
         "Use the selected network/spec context, expected dimensions, aspect ratio, and placement hint. "
-        f"Selected spec dimensions: {spec.dimensions_label}; expected aspect ratio: {_safe_aspect_ratio(spec)}. "
+        f"Selected expected aspect ratio (width/height): {_safe_aspect_ratio(spec)}. "
         f"Selected banner usually placement: {spec.placement_hint}. "
         "The selected spec dimensions are the creative content (like picture, picture and text) size, not only empty white page area with the same geometry is an ad slot. "
         "You MUST identify the visible original ad content/card already present in the screenshot and return the bbox that with precision and accuracy overlaps that EXACTLY visible advertising content. "
