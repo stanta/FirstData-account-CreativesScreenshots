@@ -1,7 +1,9 @@
 from pathlib import Path
 
+import httpx
 import pytest
 from PIL import Image
+from telegram.error import NetworkError, TimedOut
 
 from reports_ad.bot import (
     CREATIVE,
@@ -12,9 +14,14 @@ from reports_ad.bot import (
     SCREENSHOT,
     SPEC_MENU_PROMPT,
     TELEGRAM_KEYBOARD_BUTTON_TEXT_LIMIT,
+    TELEGRAM_SEND_MAX_ATTEMPTS,
     _menu_label,
     _menu_value,
+    _reply_document_with_retry,
+    _reply_photo_with_retry,
+    _reply_text_with_retry,
     _review_text,
+    _telegram_send_with_retry,
     collect_banner_type,
     collect_creative,
     collect_network,
@@ -120,6 +127,14 @@ def test_catalog_loads_runtime_png_jpeg_specs() -> None:
     assert {"image/png", "image/jpeg"}.issuperset(specs[0].runtime_allowed_mime_types)
 
 
+def test_catalog_loads_spec_position_hint_from_json() -> None:
+    spec = get_spec("yandex-graphic-banners-300x250-image")
+
+    assert spec is not None
+    assert "Medium rectangle display banner" in spec.position_hint
+    assert spec.placement_hint == spec.position_hint
+
+
 def test_placement_sites_json_loads_by_media_type() -> None:
     assert list_placement_sites("video") == [
         "yandex.ru",
@@ -190,12 +205,18 @@ def test_bot_config_uses_extended_overall_timeout_and_shorter_candidate_timeout(
 
 def test_bot_config_reads_ocr_llm_env_names(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("REPORTS_AD_TELEGRAM_TOKEN", "test-token")
-    monkeypatch.setenv("REPORTS_AD_OCR_LLM_BASE_URL", "http://gemma.firstdata.io/v1/")
-    monkeypatch.setenv("REPORTS_AD_OCR_LLM_MODEL", "cyankiwi/gemma-4-26B-A4B-it-AWQ-4bit")
-    monkeypatch.setenv("REPORTS_AD_OCR_LLM_HEADER_AUTHORISATION", "Basic placeholder")
-    monkeypatch.setenv("REPORTS_AD_OCR_LLM_TIMEOUT_SECONDS", "20")
-    monkeypatch.setenv("REPORTS_AD_OCR_LLM_MAX_RETRIES", "3")
-    monkeypatch.setenv("REPORTS_AD_OCR_LLM_CONFIDENCE_THRESHOLD", "0.6")
+    monkeypatch.setenv("OCR_LLM_BASE_URL", "http://gemma.firstdata.io/v1/")
+    monkeypatch.setenv("OCR_LLM_MODEL", "cyankiwi/gemma-4-26B-A4B-it-AWQ-4bit")
+    monkeypatch.setenv("OCR_LLM_HEADER_AUTHORISATION", "Basic placeholder")
+    monkeypatch.setenv("OCR_LLM_TIMEOUT_SECONDS", "20")
+    monkeypatch.setenv("OCR_LLM_MAX_RETRIES", "3")
+    monkeypatch.setenv("OCR_LLM_CONFIDENCE_THRESHOLD", "0.6")
+    monkeypatch.setenv("REPORTS_AD_OCR_IMAGE_MAX_WIDTH", "1024")
+    monkeypatch.setenv("REPORTS_AD_OCR_IMAGE_MAX_PIXELS", "900000")
+    monkeypatch.setenv("REPORTS_AD_COMPOSITION_VALIDATION_CROP_MARGIN_PERCENT", "0.25")
+    monkeypatch.setenv("REPORTS_AD_COMPOSITION_VALIDATION_CROP_MARGIN_MIN_PIXELS", "80")
+    monkeypatch.setenv("REPORTS_AD_OCR_LOG_TEXT", "1")
+    monkeypatch.setenv("REPORTS_AD_OCR_LOG_TEXT_MAX_CHARS", "0")
 
     config = BotConfig.from_env()
 
@@ -205,6 +226,12 @@ def test_bot_config_reads_ocr_llm_env_names(monkeypatch: pytest.MonkeyPatch) -> 
     assert config.ocr_llm_timeout_seconds == 20
     assert config.ocr_llm_max_retries == 3
     assert config.ocr_llm_confidence_threshold == 0.6
+    assert config.ocr_image_max_width == 1024
+    assert config.ocr_image_max_pixels == 900_000
+    assert config.composition_validation_crop_margin_percent == 0.25
+    assert config.composition_validation_crop_margin_min_pixels == 80
+    assert config.ocr_log_text is True
+    assert config.ocr_log_text_max_chars == 0
 
 
 def test_validate_creative_against_selected_spec_accepts_runtime_png(tmp_path: Path) -> None:
@@ -307,6 +334,127 @@ def test_review_menu_action_maps_all_russian_labels_and_legacy_fallbacks() -> No
     assert review_menu_action("edit landing") == "landing"
     assert review_menu_action("edit utm") == "utm"
     assert {action for action in REVIEW_MENU_ACTIONS.values() if action != "generate"} == set(EDIT_TARGETS) - {"banner", "screen"}
+
+
+@pytest.mark.asyncio
+async def test_telegram_send_retry_success_on_first_attempt() -> None:
+    calls = 0
+    sleeps: list[float] = []
+
+    async def send_call() -> str:
+        nonlocal calls
+        calls += 1
+        return "sent"
+
+    async def fake_sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    result = await _telegram_send_with_retry(send_call, operation="test.reply_text", sleep=fake_sleep)
+
+    assert result == "sent"
+    assert calls == 1
+    assert sleeps == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("exc", [TimedOut("read timed out"), NetworkError("connect failed")])
+async def test_telegram_send_retry_then_success_for_telegram_transient_errors(exc: Exception) -> None:
+    calls = 0
+    sleeps: list[float] = []
+
+    async def send_call() -> str:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise exc
+        return "sent-after-retry"
+
+    async def fake_sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    result = await _telegram_send_with_retry(send_call, operation="test.reply_text", sleep=fake_sleep)
+
+    assert result == "sent-after-retry"
+    assert calls == 2
+    assert sleeps == [0.25]
+
+
+@pytest.mark.asyncio
+async def test_telegram_send_retry_then_success_for_httpx_connect_error() -> None:
+    calls = 0
+    sleeps: list[float] = []
+
+    async def send_call() -> str:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise httpx.ConnectError("All connection attempts failed for https://api.telegram.org/bot123:SECRET/sendMessage")
+        return "sent-after-connect-retry"
+
+    async def fake_sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    result = await _telegram_send_with_retry(send_call, operation="test.reply_text", sleep=fake_sleep)
+
+    assert result == "sent-after-connect-retry"
+    assert calls == 2
+    assert sleeps == [0.25]
+
+
+@pytest.mark.asyncio
+async def test_telegram_send_final_failure_after_five_attempts(caplog: pytest.LogCaptureFixture) -> None:
+    calls = 0
+    sleeps: list[float] = []
+
+    async def send_call() -> None:
+        nonlocal calls
+        calls += 1
+        raise TimedOut("read timeout at https://api.telegram.org/bot123:SECRET/sendMessage")
+
+    async def fake_sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    with caplog.at_level("WARNING", logger="reports_ad.bot"):
+        with pytest.raises(TimedOut):
+            await _telegram_send_with_retry(send_call, operation="test.reply_text", sleep=fake_sleep)
+
+    assert calls == TELEGRAM_SEND_MAX_ATTEMPTS
+    assert sleeps == [0.25, 0.5, 1.0, 2.0]
+    assert "telegram_send_retry_exhausted" in caplog.text
+    assert "attempt=5" in caplog.text
+    assert "max_attempts=5" in caplog.text
+    assert "<url-redacted>" in caplog.text
+    assert "SECRET" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_reply_photo_and_document_wrappers_use_retry() -> None:
+    message = _FakeMessage("Запустить")
+    message.photo_failures_remaining = 1
+    message.document_failures_remaining = 1
+    sleeps: list[float] = []
+
+    async def fake_sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    photo_result = await _reply_photo_with_retry(message, operation="test.reply_photo", sleep=fake_sleep, photo=b"png", caption="photo")
+    document_result = await _reply_document_with_retry(message, operation="test.reply_document", sleep=fake_sleep, document=b"png", filename="proof.png", caption="doc")
+
+    assert photo_result == {"photo": b"png", "caption": "photo"}
+    assert document_result == {"document": b"png", "filename": "proof.png", "caption": "doc"}
+    assert len(message.photos) == 1
+    assert len(message.documents) == 1
+    assert sleeps == [0.25, 0.25]
+
+
+@pytest.mark.asyncio
+async def test_reply_text_wrapper_returns_underlying_result() -> None:
+    message = _FakeMessage("/start")
+
+    result = await _reply_text_with_retry(message, "hello", operation="test.reply_text")
+
+    assert result == {"text": "hello", "reply_markup": None}
+    assert message.replies == [{"text": "hello", "reply_markup": None}]
 
 
 @pytest.mark.asyncio
@@ -464,15 +612,33 @@ class _FakeMessage:
         self.replies: list[dict] = []
         self.photos: list[dict] = []
         self.documents: list[dict] = []
+        self.text_failures_remaining = 0
+        self.photo_failures_remaining = 0
+        self.document_failures_remaining = 0
 
-    async def reply_text(self, text: str, reply_markup=None) -> None:
-        self.replies.append({"text": text, "reply_markup": reply_markup})
+    async def reply_text(self, text: str, reply_markup=None) -> dict:
+        if self.text_failures_remaining:
+            self.text_failures_remaining -= 1
+            raise TimedOut("reply_text timed out")
+        reply = {"text": text, "reply_markup": reply_markup}
+        self.replies.append(reply)
+        return reply
 
-    async def reply_photo(self, photo, caption: str | None = None) -> None:
-        self.photos.append({"photo": photo, "caption": caption})
+    async def reply_photo(self, photo, caption: str | None = None) -> dict:
+        if self.photo_failures_remaining:
+            self.photo_failures_remaining -= 1
+            raise NetworkError("reply_photo network error")
+        reply = {"photo": photo, "caption": caption}
+        self.photos.append(reply)
+        return reply
 
-    async def reply_document(self, document, filename: str | None = None, caption: str | None = None) -> None:
-        self.documents.append({"document": document, "filename": filename, "caption": caption})
+    async def reply_document(self, document, filename: str | None = None, caption: str | None = None) -> dict:
+        if self.document_failures_remaining:
+            self.document_failures_remaining -= 1
+            raise TimedOut("reply_document timed out")
+        reply = {"document": document, "filename": filename, "caption": caption}
+        self.documents.append(reply)
+        return reply
 
 
 class _FakeUser:

@@ -52,6 +52,49 @@ python -m reports_ad
 reports-ad-bot
 ```
 
+## Live Telegram E2E tests
+
+Automated user-facing Telegram E2E tests live under `tests/e2e` and are skipped by default. They use Kurigram as an external user driver and do not replace the production `python-telegram-bot` polling runtime.
+
+Install test-only dependencies when you intentionally need the live suite:
+
+```bash
+cd /512-2/FD/reports_ad
+pip install -e ".[dev,telegram-e2e]"
+```
+
+Run the production bot separately with a dedicated test bot token; only one polling process may use that token:
+
+```bash
+cd /512-2/FD/reports_ad
+export REPORTS_AD_TELEGRAM_TOKEN="<dedicated-test-bot-token>"
+export REPORTS_AD_ALLOW_LOCAL_CREATIVE_PATH=0
+python -m reports_ad
+```
+
+In another shell, enable and run the live E2E suite with a dedicated Telegram user account session:
+
+```bash
+cd /512-2/FD/reports_ad
+export TELEGRAM_E2E=1
+export TELEGRAM_API_ID="<telegram-api-id>"
+export TELEGRAM_API_HASH="<telegram-api-hash>"
+export TELEGRAM_SESSION_STRING="<kurigram-string-session>"
+export TELEGRAM_BOT_USERNAME="@<dedicated-test-bot-username>"
+export TELEGRAM_E2E_TIMEOUT=180
+pytest -m telegram_e2e tests/e2e
+```
+
+Optional variables:
+
+| Variable                     |                      Default | Purpose                                                       |
+| ---------------------------- | ---------------------------: | ------------------------------------------------------------- |
+| `TELEGRAM_E2E_ARTIFACT_DIR`  | `tmp/telegram-e2e-artifacts` | Directory for downloaded proof documents/photos.              |
+| `TELEGRAM_E2E_POLL_INTERVAL` |                        `1.0` | Poll interval while waiting for bot responses.                |
+| `TELEGRAM_E2E_CLEANUP`       |                          `1` | Delete sent/received test messages where Telegram permits it. |
+
+The live harness redacts Telegram bot tokens, API hashes, string sessions, chat/user IDs, file IDs, and full UTM URLs from timeout diagnostics. Normal `pytest` runs do not require Telegram credentials; without `TELEGRAM_E2E=1`, live scenarios are collected as skipped tests.
+
 ## Docker
 
 Контейнерный runtime рассчитан на polling-бота и headless Playwright Chromium внутри Linux-контейнера. Браузер и системные зависимости устанавливаются на этапе сборки образа, поэтому интерактивный `playwright install` при старте контейнера не нужен.
@@ -127,21 +170,23 @@ docker compose down
 | `REPORTS_AD_LOCALE`                         |                                `ru-RU` | locale browser context                                                                                                     |
 | `REPORTS_AD_TIMEZONE`                       |                        `Europe/Moscow` | timezone browser context                                                                                                   |
 | `REPORTS_AD_TEMP_ROOT`                      |                                    нет | корневая директория временных файлов; в Docker используется tmpfs                                                          |
-| `REPORTS_AD_OCR_LLM_BASE_URL`               |                                    нет | OpenAI-compatible base URL для Stage 2 OCR/vision модели                                                                   |
-| `REPORTS_AD_OCR_LLM_MODEL`                  | `cyankiwi/gemma-4-26B-A4B-it-AWQ-4bit` | имя OCR/vision модели; фактическая модель может быть Gemma                                                                 |
-| `REPORTS_AD_OCR_LLM_TIMEOUT_SECONDS`        |                                   `20` | timeout OCR LLM request                                                                                                    |
-| `REPORTS_AD_OCR_LLM_MAX_RETRIES`            |                                    `5` | количество попыток OCR LLM request / JSON parsing                                                                          |
-| `REPORTS_AD_OCR_LLM_CONFIDENCE_THRESHOLD`   |                                 `0.45` | минимальная confidence для принятия bbox                                                                                   |
-| `REPORTS_AD_OCR_LLM_HEADER_AUTHORISATION`   |                                    нет | опциональный raw Authorization header; имеет приоритет над user/password                                                   |
-| `REPORTS_AD_OCR_LLM_USER`                   |                                    нет | опциональный basic-auth username для OCR LLM                                                                               |
-| `REPORTS_AD_OCR_LLM_PASSWORD`               |                                    нет | опциональный basic-auth password для OCR LLM                                                                               |
-| `REPORTS_AD_OCR_LLM_API_KEY`                |                                    нет | зарезервировано для Gemini-style OCR config parity; текущий OpenAI-compatible клиент его не использует                     |
+| `OCR_LLM_BASE_URL`                          |                                    нет | OpenAI-compatible base URL для Stage 2 OCR/vision модели                                                                   |
+| `OCR_LLM_MODEL`                             | `cyankiwi/gemma-4-26B-A4B-it-AWQ-4bit` | имя OCR/vision модели; фактическая модель может быть Gemma                                                                 |
+| `OCR_LLM_TIMEOUT_SECONDS`                   |                                   `20` | timeout OCR LLM request                                                                                                    |
+| `OCR_LLM_MAX_RETRIES`                       |                                    `5` | количество попыток OCR LLM request / JSON parsing                                                                          |
+| `OCR_LLM_CONFIDENCE_THRESHOLD`              |                                 `0.45` | минимальная confidence для принятия bbox                                                                                   |
+| `REPORTS_AD_OCR_IMAGE_MAX_WIDTH`            |                                 `1280` | максимальная ширина отдельной OCR-копии скриншота; исходный скриншот для композиции не изменяется                          |
+| `REPORTS_AD_OCR_IMAGE_MAX_PIXELS`           |                              `2000000` | максимальное число пикселей отдельной OCR-копии скриншота перед отправкой в OCR endpoint                                   |
+| `OCR_LLM_HEADER_AUTHORISATION`              |                                    нет | опциональный raw Authorization header; имеет приоритет над user/password                                                   |
+| `OCR_LLM_USER`                              |                                    нет | опциональный basic-auth username для OCR LLM                                                                               |
+| `OCR_LLM_PASSWORD`                          |                                    нет | опциональный basic-auth password для OCR LLM                                                                               |
+| `OCR_LLM_API_KEY`                           |                                    нет | зарезервировано для Gemini-style OCR config parity; текущий OpenAI-compatible клиент его не использует                     |
 
 `REPORTS_AD_REQUEST_TIMEOUT_SECONDS=300` и `REPORTS_AD_PAGE_LOAD_TIMEOUT_MS=12000` являются согласованной парой: общий timeout достаточно длинный для перебора fallback-площадок, а timeout одного кандидата ограничивает зависание плохих площадок. Площадки, которые по Docker logs не дают пригодную загрузку в пределах 30 секунд, исключаются из активной fallback-итерации в каталоге, но остаются в JSON с `enabled: false` и `disabled_reason` для traceability.
 
-Stage 2 LLM/OCR public configuration uses `REPORTS_AD_OCR_LLM_*` names by analogy with `validator-ai` `OCR_LLM_*`: `BASE_URL`, `MODEL`, `TIMEOUT_SECONDS`, `HEADER_AUTHORISATION`, `USER`, `PASSWORD` and optional `API_KEY`. This naming is intentionally OCR-style even when the actual OpenAI-compatible vision model is Gemma. Legacy `REPORTS_AD_GEMMA_*` names are not read by the runtime.
+Stage 2 LLM/OCR public configuration uses `OCR_LLM_*` names by analogy with `validator-ai` `OCR_LLM_*`: `BASE_URL`, `MODEL`, `TIMEOUT_SECONDS`, `HEADER_AUTHORISATION`, `USER`, `PASSWORD` and optional `API_KEY`. This naming is intentionally OCR-style even when the actual OpenAI-compatible vision model is Gemma. Legacy `REPORTS_AD_GEMMA_*` names are not read by the runtime.
 
-Начиная с bugfix 2026-07-14, Stage 2 screenshot-only flow получает runtime config напрямую из Telegram runtime path. Если OCR runtime не инициализирован или не заполнен `REPORTS_AD_OCR_LLM_BASE_URL`, бот возвращает явную безопасную ошибку конфигурации вместо `AttributeError`.
+Начиная с bugfix 2026-07-14, Stage 2 screenshot-only flow получает runtime config напрямую из Telegram runtime path. Если OCR runtime не инициализирован или не заполнен `OCR_LLM_BASE_URL`, бот возвращает явную безопасную ошибку конфигурации вместо `AttributeError`.
 
 ## Диагностика timeout/no-result
 

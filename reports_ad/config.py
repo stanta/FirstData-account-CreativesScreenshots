@@ -47,6 +47,12 @@ class BotConfig:
     ocr_llm_timeout_seconds: float = 120.0
     ocr_llm_max_retries: int = 5
     ocr_llm_confidence_threshold: float = 0.45
+    ocr_image_max_width: int = 1280
+    ocr_image_max_pixels: int = 2_000_000
+    composition_validation_crop_margin_percent: float = 0.20
+    composition_validation_crop_margin_min_pixels: int = 60
+    ocr_log_text: bool = False
+    ocr_log_text_max_chars: int = 0
 
     @classmethod
     def from_env(cls) -> "BotConfig":
@@ -77,21 +83,27 @@ class BotConfig:
             locale=os.getenv("REPORTS_AD_LOCALE", "ru-RU"),
             timezone_id=os.getenv("REPORTS_AD_TIMEZONE", "Europe/Moscow"),
             temp_root=temp_root,
-            ocr_llm_base_url=os.getenv("REPORTS_AD_OCR_LLM_BASE_URL", "").strip().rstrip("/"),
-            ocr_llm_model=os.getenv("REPORTS_AD_OCR_LLM_MODEL", "cyankiwi/gemma-4-26B-A4B-it-AWQ-4bit").strip(),
+            ocr_llm_base_url=os.getenv("OCR_LLM_BASE_URL", "").strip().rstrip("/"),
+            ocr_llm_model=os.getenv("OCR_LLM_MODEL", "cyankiwi/gemma-4-26B-A4B-it-AWQ-4bit").strip(),
             ocr_llm_authorization_header=_resolve_ocr_llm_authorization_header(),
-            ocr_llm_timeout_seconds=float(os.getenv("REPORTS_AD_OCR_LLM_TIMEOUT_SECONDS", "20")),
-            ocr_llm_max_retries=_int_from_env("REPORTS_AD_OCR_LLM_MAX_RETRIES", 5),
-            ocr_llm_confidence_threshold=float(os.getenv("REPORTS_AD_OCR_LLM_CONFIDENCE_THRESHOLD", "0.45")),
+            ocr_llm_timeout_seconds=float(os.getenv("OCR_LLM_TIMEOUT_SECONDS", "20")),
+            ocr_llm_max_retries=_int_from_env("OCR_LLM_MAX_RETRIES", 5),
+            ocr_llm_confidence_threshold=float(os.getenv("OCR_LLM_CONFIDENCE_THRESHOLD", "0.45")),
+            ocr_image_max_width=_int_from_env("REPORTS_AD_OCR_IMAGE_MAX_WIDTH", 1280),
+            ocr_image_max_pixels=_int_from_env("REPORTS_AD_OCR_IMAGE_MAX_PIXELS", 2_000_000),
+            composition_validation_crop_margin_percent=float(os.getenv("REPORTS_AD_COMPOSITION_VALIDATION_CROP_MARGIN_PERCENT", "0.20")),
+            composition_validation_crop_margin_min_pixels=_int_from_env("REPORTS_AD_COMPOSITION_VALIDATION_CROP_MARGIN_MIN_PIXELS", 60),
+            ocr_log_text=_bool_from_env("REPORTS_AD_OCR_LOG_TEXT", False),
+            ocr_log_text_max_chars=max(0, _int_from_env("REPORTS_AD_OCR_LOG_TEXT_MAX_CHARS", 0)),
         )
 
 
 def _resolve_ocr_llm_authorization_header() -> str | None:
-    explicit = os.getenv("REPORTS_AD_OCR_LLM_HEADER_AUTHORISATION") or os.getenv("REPORTS_AD_OCR_LLM_HEADER_AUTHORIZATION")
+    explicit = os.getenv("OCR_LLM_HEADER_AUTHORISATION") or os.getenv("OCR_LLM_HEADER_AUTHORIZATION")
     if explicit and explicit.strip():
         return explicit.strip()
-    user = os.getenv("REPORTS_AD_OCR_LLM_USER")
-    password = os.getenv("REPORTS_AD_OCR_LLM_PASSWORD")
+    user = os.getenv("OCR_LLM_USER")
+    password = os.getenv("OCR_LLM_PASSWORD")
     if user and password:
         token = base64.b64encode(f"{user}:{password}".encode("utf-8")).decode("ascii")
         return f"Basic {token}"

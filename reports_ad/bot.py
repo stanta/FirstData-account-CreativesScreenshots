@@ -4,12 +4,15 @@ import asyncio
 import hashlib
 import inspect
 import logging
+import re
 import tempfile
 import uuid
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
+import httpx
 from telegram import ReplyKeyboardMarkup, ReplyKeyboardRemove, Update
+from telegram.error import NetworkError, TimedOut
 from telegram.ext import (
     Application,
     ApplicationBuilder,
@@ -67,6 +70,20 @@ NETWORK_MENU_PROMPT = "Выберите рекламную сеть кнопко
 SPEC_MENU_PROMPT = "Теперь выберите тип баннера/spec кнопкой меню telegram_menu:"
 REVIEW_MENU_PROMPT = "Выберите действие кнопкой меню telegram_menu:"
 TELEGRAM_KEYBOARD_BUTTON_TEXT_LIMIT = 64
+TELEGRAM_SEND_MAX_ATTEMPTS = 5
+TELEGRAM_SEND_INITIAL_BACKOFF_SECONDS = 0.25
+TELEGRAM_SEND_MAX_BACKOFF_SECONDS = 2.0
+TELEGRAM_SAFE_MESSAGE_REDACTIONS = (
+    (re.compile(r"bot[0-9]+:[A-Za-z0-9_-]+"), "bot<REDACTED>"),
+    (re.compile(r"https?://[^/?\s\"']+[^\s\"']*"), "<url-redacted>"),
+)
+TELEGRAM_RETRYABLE_EXCEPTIONS = (
+    TimedOut,
+    NetworkError,
+    httpx.TimeoutException,
+    httpx.ConnectError,
+    httpx.NetworkError,
+)
 
 
 class ReportsAdMenuMessage(BaseMessage):
@@ -105,13 +122,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await _cleanup_state(context.user_data)
     context.user_data.clear()
     context.user_data["request_id"] = uuid.uuid4().hex[:12]
-    await update.effective_message.reply_text(
+    await _reply_text_with_retry(
+        update.effective_message,
         "Я сформирую proof-скриншот рекламного размещения.\n\n"
         "Выберите: рекламную сеть → тип баннера → готовый PNG/JPEG-скриншот площадки с рекламой → PNG/JPEG-креатив → landing URL → UTM → review/edit → старт.\n"
         "Сайты площадки и landing не открываются: замена выполняется по загруженному скриншоту средствами Pillow.\n\n"
         f"{NETWORK_MENU_PROMPT}\n"
         f"{catalog_summary()}\n\n"
         "Команда /cancel отменяет текущую заявку.",
+        operation="start.reply_text",
         reply_markup=network_menu_keyboard(),
     )
     return NETWORK
@@ -120,7 +139,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await _cleanup_state(context.user_data)
     context.user_data.clear()
-    await update.effective_message.reply_text("Заявка отменена, временные файлы удалены.", reply_markup=ReplyKeyboardRemove())
+    await _reply_text_with_retry(update.effective_message, "Заявка отменена, временные файлы удалены.", operation="cancel.reply_text", reply_markup=ReplyKeyboardRemove())
     return ConversationHandler.END
 
 
@@ -129,8 +148,10 @@ async def collect_network(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     try:
         network_slug = validate_network_slug(_menu_value(update.effective_message.text), allowed)
     except ValidationError as exc:
-        await update.effective_message.reply_text(
+        await _reply_text_with_retry(
+            update.effective_message,
             f"{exc.safe_message}\n\n{NETWORK_MENU_PROMPT}\n{catalog_summary()}",
+            operation="collect_network.invalid.reply_text",
             reply_markup=network_menu_keyboard(),
         )
         return NETWORK
@@ -140,9 +161,11 @@ async def collect_network(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     context.user_data["network_display_name"] = network.get("display_name", network_slug)
     if "spec" in context.user_data and context.user_data["spec"].network_slug != network_slug:
         _clear_from(context.user_data, "spec")
-    await update.effective_message.reply_text(
+    await _reply_text_with_retry(
+        update.effective_message,
         f"Сеть выбрана: {context.user_data['network_display_name']}.\n"
         f"{spec_menu_prompt(network_slug)}",
+        operation="collect_network.accepted.reply_text",
         reply_markup=spec_menu_keyboard(network_slug),
     )
     return BANNER_TYPE
@@ -151,8 +174,10 @@ async def collect_network(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 async def collect_banner_type(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     network_slug = context.user_data.get("network_slug")
     if not network_slug:
-        await update.effective_message.reply_text(
+        await _reply_text_with_retry(
+            update.effective_message,
             f"Сначала выберите рекламную сеть.\n{NETWORK_MENU_PROMPT}\n{catalog_summary()}",
+            operation="collect_banner_type.missing_network.reply_text",
             reply_markup=network_menu_keyboard(),
         )
         return NETWORK
@@ -162,16 +187,20 @@ async def collect_banner_type(update: Update, context: ContextTypes.DEFAULT_TYPE
     try:
         spec_slug = validate_spec_slug(_menu_value(update.effective_message.text), allowed)
     except ValidationError as exc:
-        await update.effective_message.reply_text(
+        await _reply_text_with_retry(
+            update.effective_message,
             f"{exc.safe_message}\n\n{spec_menu_prompt(network_slug)}",
+            operation="collect_banner_type.invalid.reply_text",
             reply_markup=spec_menu_keyboard(network_slug),
         )
         return BANNER_TYPE
 
     spec = get_spec(spec_slug)
     if spec is None or not spec.runtime_upload_supported:
-        await update.effective_message.reply_text(
+        await _reply_text_with_retry(
+            update.effective_message,
             "Выбранный формат не поддерживается runtime. Выберите PNG/JPEG spec из меню.",
+            operation="collect_banner_type.unsupported.reply_text",
             reply_markup=spec_menu_keyboard(network_slug),
         )
         return BANNER_TYPE
@@ -182,9 +211,11 @@ async def collect_banner_type(update: Update, context: ContextTypes.DEFAULT_TYPE
     context.user_data.pop("creative", None)
     if "landing_url" in context.user_data or "utm_params" in context.user_data:
         _clear_from(context.user_data, "landing_url")
-    await update.effective_message.reply_text(
+    await _reply_text_with_retry(
+        update.effective_message,
         f"Тип баннера выбран: {spec.display_name}\n"
         "Отправьте готовый скриншот площадки с уже размещенной рекламой. Поддерживаются PNG/JPEG до 10 МБ.",
+        operation="collect_banner_type.accepted.reply_text",
         reply_markup=ReplyKeyboardRemove(),
     )
     return SCREENSHOT
@@ -196,13 +227,15 @@ async def collect_screenshot(update: Update, context: ContextTypes.DEFAULT_TYPE)
     try:
         screenshot_info = await _save_and_validate_screenshot(message, context, config)
     except ValidationError as exc:
-        await message.reply_text(f"Скриншот не подходит: {exc.safe_message}\nОтправьте PNG/JPEG-скриншот площадки до 10 МБ еще раз.")
+        await _reply_text_with_retry(message, f"Скриншот не подходит: {exc.safe_message}\nОтправьте PNG/JPEG-скриншот площадки до 10 МБ еще раз.", operation="collect_screenshot.invalid.reply_text")
         return SCREENSHOT
 
     context.user_data["source_screenshot"] = screenshot_info
-    await message.reply_text(
+    await _reply_text_with_retry(
+        message,
         f"Скриншот принят: {screenshot_info.mime_type}, {screenshot_info.width}×{screenshot_info.height}, {screenshot_info.size_bytes} байт.\n"
-        f"{creative_upload_prompt(context.user_data['spec'])}"
+        f"{creative_upload_prompt(context.user_data['spec'])}",
+        operation="collect_screenshot.accepted.reply_text",
     )
     return CREATIVE
 
@@ -213,14 +246,14 @@ async def collect_creative(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     try:
         creative_info = await _save_and_validate_creative(message, context, config)
     except ValidationError as exc:
-        await message.reply_text(f"Креатив не подходит: {exc.safe_message}\nОтправьте PNG/JPEG-креатив для выбранного spec еще раз.")
+        await _reply_text_with_retry(message, f"Креатив не подходит: {exc.safe_message}\nОтправьте PNG/JPEG-креатив для выбранного spec еще раз.", operation="collect_creative.invalid.reply_text")
         return CREATIVE
 
     context.user_data["creative"] = creative_info
     if "source_screenshot" in context.user_data and "landing_url" in context.user_data and "utm_params" in context.user_data:
         await _reply_review(message, context.user_data)
         return REVIEW
-    await message.reply_text("Креатив принят. Введите landing URL, который нужно показать в нижней области proof-скриншота.")
+    await _reply_text_with_retry(message, "Креатив принят. Введите landing URL, который нужно показать в нижней области proof-скриншота.", operation="collect_creative.accepted.reply_text")
     return LANDING_URL
 
 
@@ -229,13 +262,13 @@ async def collect_landing_url(update: Update, context: ContextTypes.DEFAULT_TYPE
     try:
         context.user_data["landing_url"] = normalize_public_url(update.effective_message.text, allow_local=config.allow_local_urls)
     except ValidationError as exc:
-        await update.effective_message.reply_text(exc.safe_message)
+        await _reply_text_with_retry(update.effective_message, exc.safe_message, operation="validation_error.reply_text")
         return LANDING_URL
 
     if "utm_params" in context.user_data:
         await _reply_review(update.effective_message, context.user_data)
         return REVIEW
-    await update.effective_message.reply_text("Введите UTM-строку, например: utm_source=telegram&utm_medium=cpc&utm_campaign=test")
+    await _reply_text_with_retry(update.effective_message, "Введите UTM-строку, например: utm_source=telegram&utm_medium=cpc&utm_campaign=test", operation="collect_landing_url.accepted.reply_text")
     return UTM
 
 
@@ -245,7 +278,7 @@ async def collect_utm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         utm_params = parse_utm_params(update.effective_message.text)
         merge_url_with_utm(context.user_data["landing_url"], utm_params, allow_local=config.allow_local_urls)
     except ValidationError as exc:
-        await update.effective_message.reply_text(exc.safe_message)
+        await _reply_text_with_retry(update.effective_message, exc.safe_message, operation="collect_utm.invalid.reply_text")
         return UTM
 
     context.user_data["utm_params"] = utm_params
@@ -260,13 +293,15 @@ async def review_or_generate(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     if action in EDIT_TARGETS:
         _clear_for_edit(context.user_data, action)
-        await update.effective_message.reply_text(_edit_prompt(action, context.user_data), reply_markup=_edit_reply_markup(action, context.user_data))
+        await _reply_text_with_retry(update.effective_message, _edit_prompt(action, context.user_data), operation=f"review.edit.{action}.reply_text", reply_markup=_edit_reply_markup(action, context.user_data))
         return EDIT_TARGETS[action]
 
     if action == "unknown_edit":
-        await update.effective_message.reply_text(
+        await _reply_text_with_retry(
+            update.effective_message,
             "Неизвестное поле для редактирования. Выберите действие кнопкой меню или используйте fallback: "
             "edit network, edit spec, edit screenshot, edit creative, edit landing, edit utm.",
+            operation="review.unknown_edit.reply_text",
             reply_markup=review_menu_keyboard(),
         )
         return REVIEW
@@ -281,12 +316,14 @@ async def _generate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     chat_id = effective_chat.id if effective_chat else 0
     lock = _user_lock(context, user_id)
     if lock.locked():
-        await update.effective_message.reply_text("У вас уже выполняется генерация. Дождитесь завершения или отмените текущую заявку.")
+        await _reply_text_with_retry(update.effective_message, "У вас уже выполняется генерация. Дождитесь завершения или отмените текущую заявку.", operation="generate.busy.reply_text")
         return REVIEW
 
     async with lock:
-        await update.effective_message.reply_text(
+        await _reply_text_with_retry(
+            update.effective_message,
             "Генерирую proof-скриншот. Это может занять до 5 минут, если включается fallback-цепочка площадок.",
+            operation="generate.started.reply_text",
             reply_markup=ReplyKeyboardRemove(),
         )
         request_id = context.user_data.get("request_id", uuid.uuid4().hex[:12])
@@ -299,7 +336,7 @@ async def _generate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             output_path = _ensure_temp_dir(context.user_data, config) / "proof-result.png"
             request = _build_proof_request(context.user_data, config, output_path)
             logger.info(
-                "proof_generation_request_built request_id=%s user=%s chat=%s landing_host=%s network=%s spec=%s dimensions=%s screenshot=%sx%s timeout_seconds=%s",
+                "proof_generation_request_built request_id=%s user=%s chat=%s landing_host=%s network=%s spec=%s dimensions=%s screenshot=%sx%s placement_hint_present=%s timeout_seconds=%s",
                 request_id,
                 user_hash,
                 chat_hash,
@@ -309,6 +346,7 @@ async def _generate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 request.spec.dimensions_label,
                 request.source_screenshot.width,
                 request.source_screenshot.height,
+                bool(request.spec.position_hint.strip()),
                 config.request_timeout_seconds,
             )
             proof_generator: ProofGenerator = context.bot_data["proof_generator"]
@@ -317,9 +355,9 @@ async def _generate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             send_started = asyncio.get_running_loop().time()
             logger.info("proof_telegram_send_started request_id=%s user=%s chat=%s elapsed_ms=%s", request_id, user_hash, chat_hash, _loop_elapsed_ms(send_started))
             with result.output_path.open("rb") as image_file:
-                await update.effective_message.reply_photo(photo=image_file, caption="Proof-скриншот готов.")
+                await _reply_photo_with_retry(update.effective_message, operation="proof_result.reply_photo", photo=image_file, caption="Proof-скриншот готов.")
             with result.output_path.open("rb") as image_file:
-                await update.effective_message.reply_document(document=image_file, filename=result.output_path.name, caption="Proof-скриншот как документ без сжатия.")
+                await _reply_document_with_retry(update.effective_message, operation="proof_result.reply_document", document=image_file, filename=result.output_path.name, caption="Proof-скриншот как документ без сжатия.")
             if result.intermediate_screenshot_path:
                 logger.info(
                     "proof_intermediate_screenshot_saved request_id=%s user=%s chat=%s artifact_path=%s",
@@ -341,7 +379,7 @@ async def _generate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 type(exc).__name__,
                 _safe_exception_message(exc),
             )
-            await update.effective_message.reply_text("Истекло время генерации proof-скриншота. Попробуйте позже или упростите страницу/селектор.")
+            await _reply_text_with_retry(update.effective_message, "Истекло время генерации proof-скриншота. Попробуйте позже или упростите страницу/селектор.", operation="generate.timeout.reply_text")
         except (ValidationError, ScreenshotGenerationError) as exc:
             logger.warning(
                 "proof_generation_failed request_id=%s user=%s chat=%s elapsed_ms=%s reason=%s exception_message=%s",
@@ -352,10 +390,10 @@ async def _generate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 type(exc).__name__,
                 _safe_exception_message(exc),
             )
-            await update.effective_message.reply_text(exc.safe_message)
+            await _reply_text_with_retry(update.effective_message, exc.safe_message, operation="generate.validation_or_screenshot_error.reply_text")
         except Exception as exc:
             logger.exception("proof_generation_unexpected request_id=%s user=%s chat=%s elapsed_ms=%s exception_class=%s", request_id, user_hash, chat_hash, _loop_elapsed_ms(started), type(exc).__name__)
-            await update.effective_message.reply_text("Не удалось сформировать proof-скриншот. Проверьте входные данные и попробуйте снова.")
+            await _reply_text_with_retry(update.effective_message, "Не удалось сформировать proof-скриншот. Проверьте входные данные и попробуйте снова.", operation="generate.unexpected.reply_text")
         finally:
             await _cleanup_state(context.user_data)
             context.user_data.clear()
@@ -513,7 +551,71 @@ async def _reply_review(message: Any, user_data: dict[str, Any], *, prefix: str 
     text = _review_text(user_data)
     if prefix:
         text = f"{prefix}\n\n{text}"
-    await message.reply_text(text, reply_markup=review_menu_keyboard())
+    await _reply_text_with_retry(message, text, operation="review.reply_text", reply_markup=review_menu_keyboard())
+
+
+async def _reply_text_with_retry(message: Any, text: str, *, operation: str, **kwargs: Any) -> Any:
+    return await _telegram_send_with_retry(lambda: message.reply_text(text, **kwargs), operation=operation)
+
+
+async def _reply_photo_with_retry(
+    message: Any,
+    *,
+    operation: str,
+    sleep: Callable[[float], Awaitable[Any]] = asyncio.sleep,
+    **kwargs: Any,
+) -> Any:
+    return await _telegram_send_with_retry(lambda: message.reply_photo(**kwargs), operation=operation, sleep=sleep)
+
+
+async def _reply_document_with_retry(
+    message: Any,
+    *,
+    operation: str,
+    sleep: Callable[[float], Awaitable[Any]] = asyncio.sleep,
+    **kwargs: Any,
+) -> Any:
+    return await _telegram_send_with_retry(lambda: message.reply_document(**kwargs), operation=operation, sleep=sleep)
+
+
+async def _telegram_send_with_retry(
+    send_call: Callable[[], Awaitable[Any]],
+    *,
+    operation: str,
+    max_attempts: int = TELEGRAM_SEND_MAX_ATTEMPTS,
+    initial_backoff_seconds: float = TELEGRAM_SEND_INITIAL_BACKOFF_SECONDS,
+    sleep: Callable[[float], Awaitable[Any]] = asyncio.sleep,
+) -> Any:
+    if max_attempts < 1:
+        raise ValueError("max_attempts must be at least 1")
+
+    for attempt in range(1, max_attempts + 1):
+        try:
+            return await send_call()
+        except TELEGRAM_RETRYABLE_EXCEPTIONS as exc:
+            if attempt >= max_attempts:
+                logger.warning(
+                    "telegram_send_retry_exhausted operation=%s attempt=%s max_attempts=%s exception_class=%s exception_message=%s",
+                    operation,
+                    attempt,
+                    max_attempts,
+                    type(exc).__name__,
+                    _safe_telegram_exception_message(exc),
+                )
+                raise
+            delay = min(initial_backoff_seconds * (2 ** (attempt - 1)), TELEGRAM_SEND_MAX_BACKOFF_SECONDS)
+            logger.warning(
+                "telegram_send_retry operation=%s attempt=%s max_attempts=%s retry_delay_seconds=%.2f exception_class=%s exception_message=%s",
+                operation,
+                attempt,
+                max_attempts,
+                delay,
+                type(exc).__name__,
+                _safe_telegram_exception_message(exc),
+            )
+            await sleep(delay)
+
+    raise RuntimeError("unreachable telegram retry state")
 
 
 def network_menu_keyboard() -> ReplyKeyboardMarkup:
@@ -707,6 +809,13 @@ def _safe_host(url: str) -> str:
 
 def _safe_exception_message(exc: BaseException) -> str:
     return str(exc).replace("\n", " ")[:240]
+
+
+def _safe_telegram_exception_message(exc: BaseException) -> str:
+    message = _safe_exception_message(exc)
+    for pattern, replacement in TELEGRAM_SAFE_MESSAGE_REDACTIONS:
+        message = pattern.sub(replacement, message)
+    return message
 
 
 def _loop_elapsed_ms(started: float) -> int:

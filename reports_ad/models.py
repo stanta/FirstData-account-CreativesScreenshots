@@ -68,6 +68,20 @@ class BBoxDetectionResult:
 
 
 @dataclass(frozen=True, slots=True)
+class CompositionValidationResult:
+    passed: bool
+    original_banner_bbox: BoundingBox | None
+    inserted_creative_bbox: BoundingBox | None
+    deltas: dict[str, int] = field(default_factory=dict)
+    corner_deltas: dict[str, dict[str, int]] = field(default_factory=dict)
+    corrected_bbox: BoundingBox | None = None
+    confidence: float = 0.0
+    reason: str = ""
+    source: str = "gemma"
+    raw_metadata: dict[str, object] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
 class GeneratedProofArtifacts:
     source_copy_path: Path | None = None
     banner_replaced_path: Path | None = None
@@ -94,12 +108,18 @@ class CreativeSpec:
     requires_ad_marking: bool = False
     runtime_upload_supported: bool = False
     runtime_restriction_note: str = ""
+    position_hint: str = ""
 
     @property
     def dimensions_label(self) -> str:
         if self.width and self.height:
             return f"{self.width}×{self.height}"
         return self.format_slug
+
+    @property
+    def placement_hint(self) -> str:
+        hint = self.position_hint.strip()
+        return hint if hint else "No additional placement hint is available."
 
     @property
     def label(self) -> str:

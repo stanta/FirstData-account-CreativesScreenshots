@@ -1,21 +1,30 @@
+# syntax=docker/dockerfile:1.7
+# DOCKER_BUILDKIT=1 docker build -f reports_ad/Dockerfile reports_ad --progress=plain
 #FROM mcr.microsoft.com/playwright/python:v1.61.0-noble
 FROM python:3.14-slim-bookworm
+
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1
+    PIP_DISABLE_PIP_VERSION_CHECK=1
 
 WORKDIR /app
 
-COPY pyproject.toml uv.lock README.md ./
+COPY pyproject.toml README.md ./
+
+RUN --mount=type=cache,target=/root/.cache/pip \
+    python -m pip install --upgrade pip setuptools wheel \
+    && python -c 'import tomllib; from pathlib import Path; project = tomllib.loads(Path("pyproject.toml").read_text()); print("\n".join(dep.strip() for dep in project["project"].get("dependencies", []) if dep.strip() and not dep.strip().startswith("#")))' > /tmp/requirements.txt
+
+RUN --mount=type=cache,target=/root/.cache/pip \
+    python -m pip install -r /tmp/requirements.txt
+
 COPY reports_ad ./reports_ad
 
-RUN pip install --upgrade pip uv \
-    && uv sync --frozen --no-dev \
-    && mkdir -p /tmp/reports-ad \
-    && rm -rf /root/.cache/pip
+RUN --mount=type=cache,target=/root/.cache/pip \
+    python -m pip install --no-deps . \
+    && mkdir -p /tmp/reports-ad
 
-ENV PATH="/app/.venv/bin:${PATH}" \
-    REPORTS_AD_HEADLESS=1 \
+ENV REPORTS_AD_HEADLESS=1 \
     REPORTS_AD_TEMP_ROOT=/tmp/reports-ad
 
 CMD ["python", "-m", "reports_ad"]

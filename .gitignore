@@ -4,3 +4,4 @@ docs/examples
 tests/__pycache__/
 .env
 tmp/
+tests/e2e/__pycache__/

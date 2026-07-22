@@ -242,4 +242,5 @@ def _spec_from_raw(raw: dict) -> CreativeSpec:
         requires_ad_marking=bool(raw.get("requires_ad_marking", False)),
         runtime_upload_supported=bool(raw.get("runtime_upload_supported", False)),
         runtime_restriction_note=raw.get("runtime_restriction_note", ""),
+        position_hint=str(raw.get("position", "")).strip(),
     )
