@@ -62,6 +62,7 @@ class _BannerValidationFeedback:
 class _CompositionCorrection:
     bbox: BoundingBox
     source: str
+    full_cover_replacement: bool = False
 
 
 async def generate_stage2_proof(request: ProofRequest, *, gemma_client: GemmaBBoxClient | None = None, config: BotConfig | None = None) -> ProofResult:
@@ -174,8 +175,12 @@ async def compose_stage2_image_with_validation(
     attempts: list[dict[str, object]] = []
     last_validation: CompositionValidationResult | None = None
     last_banner_attempt_path = banner_replaced_path
+    full_cover_attempted_bboxes: set[BoundingBox] = set()
+    use_full_cover_replacement = False
 
     for attempt in range(1, bounded_attempts + 1):
+        attempt_full_cover_replacement = use_full_cover_replacement
+        use_full_cover_replacement = False
         banner_attempt_path = artifact_base.with_suffix(f".banner-attempt-{attempt}.png")
         last_banner_attempt_path = banner_attempt_path
         width, height = compose_stage2_image(
@@ -188,6 +193,7 @@ async def compose_stage2_image_with_validation(
             source_copy_path=source_copy_path if attempt == 1 else None,
             banner_replaced_path=banner_attempt_path,
             landing_area_path=landing_area_path,
+            full_cover_replacement=attempt_full_cover_replacement,
         )
         validation = await _verify_stage2_composition(
             client=client,
@@ -202,6 +208,7 @@ async def compose_stage2_image_with_validation(
                 "attempt": attempt,
                 "bbox": _bbox_dict(current_bbox),
                 "banner_attempt_path": banner_attempt_path.name,
+                "full_cover_replacement": attempt_full_cover_replacement,
                 "passed": validation.passed,
                 "confidence": validation.confidence,
                 "reason": _safe_feedback_text(validation.reason, max_length=240),
@@ -236,6 +243,7 @@ async def compose_stage2_image_with_validation(
             current_bbox=current_bbox,
             request=request,
             attempt=attempt,
+            full_cover_already_used=current_bbox in full_cover_attempted_bboxes,
         )
         if correction is None:
             logger.info(
@@ -245,17 +253,21 @@ async def compose_stage2_image_with_validation(
                 _safe_feedback_text(validation.reason, max_length=240),
             )
             break
+        if correction.full_cover_replacement:
+            full_cover_attempted_bboxes.add(correction.bbox)
         logger.info(
-            "stage2_composition_validation_next_bbox request_id=%s attempt=%s correction_source=%s previous_bbox=%s next_bbox=%s deltas=%s corner_deltas=%s",
+            "stage2_composition_validation_next_bbox request_id=%s attempt=%s correction_source=%s previous_bbox=%s next_bbox=%s full_cover_replacement=%s deltas=%s corner_deltas=%s",
             request.request_id,
             attempt,
             correction.source,
             _safe_bbox(current_bbox),
             _safe_bbox(correction.bbox),
+            correction.full_cover_replacement,
             _safe_deltas(validation.deltas),
             _safe_corner_deltas(validation.corner_deltas),
         )
         current_bbox = correction.bbox
+        use_full_cover_replacement = correction.full_cover_replacement
 
     diagnostics_path = _save_composition_validation_diagnostics(
         request=request,
@@ -357,6 +369,7 @@ def compose_stage2_image(
     source_copy_path: Path | None = None,
     banner_replaced_path: Path | None = None,
     landing_area_path: Path | None = None,
+    full_cover_replacement: bool = False,
 ) -> tuple[int, int]:
     with Image.open(source_screenshot_path) as source_raw, Image.open(creative_path) as creative_raw:
         source = source_raw.convert("RGBA")
@@ -370,7 +383,10 @@ def compose_stage2_image(
         result = source.copy()
         creative_source = _trim_transparent_padding(creative_raw.convert("RGBA"))
         creative = creative_source.resize((banner_bbox.width, banner_bbox.height), Image.Resampling.LANCZOS)
-        background_crop = result.crop((banner_bbox.x, banner_bbox.y, banner_bbox.right, banner_bbox.bottom))
+        if full_cover_replacement:
+            background_crop = Image.new("RGBA", (banner_bbox.width, banner_bbox.height), (255, 255, 255, 255))
+        else:
+            background_crop = result.crop((banner_bbox.x, banner_bbox.y, banner_bbox.right, banner_bbox.bottom))
         blended = Image.alpha_composite(background_crop, creative)
         result.paste(blended, (banner_bbox.x, banner_bbox.y))
         _draw_ad_mark(result, banner_bbox)
@@ -467,9 +483,31 @@ def _select_next_composition_bbox(
     current_bbox: BoundingBox,
     request: ProofRequest,
     attempt: int,
+    full_cover_already_used: bool = False,
 ) -> _CompositionCorrection | None:
     mismatch_present = _has_non_zero_deltas(validation.deltas) or _has_non_zero_corner_deltas(validation.corner_deltas)
     candidates: list[tuple[str, BoundingBox | None]] = []
+
+    if _is_render_coverage_mismatch(validation=validation, current_bbox=current_bbox):
+        if full_cover_already_used:
+            logger.info(
+                "stage2_composition_validation_render_cover_retry_exhausted request_id=%s attempt=%s current_bbox=%s actual_inserted_creative_bbox=%s reason=%s",
+                request.request_id,
+                attempt,
+                _safe_bbox(current_bbox),
+                _safe_bbox(validation.inserted_creative_bbox),
+                _safe_feedback_text(validation.reason, max_length=240),
+            )
+            return None
+        logger.info(
+            "stage2_composition_validation_render_cover_retry request_id=%s attempt=%s previous_bbox=%s current_bbox=%s actual_inserted_creative_bbox=%s reason=corrected_bbox_unchanged_but_creative_coverage_differs",
+            request.request_id,
+            attempt,
+            _safe_bbox(current_bbox),
+            _safe_bbox(current_bbox),
+            _safe_bbox(validation.inserted_creative_bbox),
+        )
+        return _CompositionCorrection(bbox=current_bbox, source="render_full_cover", full_cover_replacement=True)
 
     if validation.corrected_bbox is not None:
         if validation.corrected_bbox != current_bbox or not mismatch_present:
@@ -531,6 +569,10 @@ def _select_next_composition_bbox(
         return _CompositionCorrection(bbox=validated, source=source)
 
     return None
+
+
+def _is_render_coverage_mismatch(*, validation: CompositionValidationResult, current_bbox: BoundingBox) -> bool:
+    return validation.corrected_bbox == current_bbox and validation.inserted_creative_bbox is not None and validation.inserted_creative_bbox != current_bbox
 
 
 def _bbox_from_corner_deltas(*, current_bbox: BoundingBox, corner_deltas: dict[str, dict[str, int]]) -> BoundingBox | None:

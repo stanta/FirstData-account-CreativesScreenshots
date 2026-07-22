@@ -8,7 +8,7 @@ from reports_ad.config import BotConfig
 from reports_ad.gemma_client import GemmaClientError, HeaderAuthGemmaClient, _banner_prompt, _composition_validation_crop_rect, _composition_validation_prompt, _parse_bbox_result, _parse_composition_validation_result, build_gemma_client_from_config
 from reports_ad.models import BBoxDetectionResult, BoundingBox, CompositionValidationResult, CreativeInfo, Placement, ProofRequest, ProofResult, SourceScreenshotInfo
 from reports_ad.proof import compose_final_image
-from reports_ad.stage2_proof import AD_MARK_LABEL, compose_stage2_image, fallback_landing_bbox, generate_stage2_proof, validate_banner_bbox_semantics, select_valid_banner_bbox_with_feedback, compose_stage2_image_with_validation, _address_bar_only_height, _load_cyrillic_font, _render_ad_mark_label
+from reports_ad.stage2_proof import AD_MARK_LABEL, compose_stage2_image, fallback_landing_bbox, generate_stage2_proof, validate_banner_bbox_semantics, select_valid_banner_bbox_with_feedback, compose_stage2_image_with_validation, _address_bar_only_height, _load_cyrillic_font, _render_ad_mark_label, _select_next_composition_bbox
 from reports_ad.catalog import get_spec
 from reports_ad.validation import ValidationError
 
@@ -90,6 +90,31 @@ def test_stage2_compose_pastes_creative_into_exact_banner_region(tmp_path: Path)
         assert result.getpixel((150, 45)) == (255, 255, 255)
         assert result.getpixel((90, 29)) == (255, 255, 255)
         assert result.getpixel((90, 120)) == (255, 255, 255)
+
+
+def test_stage2_compose_full_cover_replacement_overwrites_old_bbox_pixels(tmp_path: Path) -> None:
+    source_path = tmp_path / "source.png"
+    creative_path = tmp_path / "creative.png"
+    output_path = tmp_path / "stage2.png"
+    banner_path = tmp_path / "banner.png"
+    bbox = BoundingBox(x=30, y=20, width=80, height=60)
+    Image.new("RGB", (160, 120), (0, 255, 0)).save(source_path)
+    Image.new("RGBA", (20, 20), (255, 0, 0, 0)).save(creative_path)
+
+    compose_stage2_image(
+        source_screenshot_path=source_path,
+        creative_path=creative_path,
+        effective_click_url="https://example.com/landing?utm_source=test&utm_medium=cpc",
+        banner_bbox=bbox,
+        landing_bbox=fallback_landing_bbox(image_width=160, image_height=120),
+        output_path=output_path,
+        banner_replaced_path=banner_path,
+        full_cover_replacement=True,
+    )
+
+    with Image.open(banner_path) as result:
+        assert result.getpixel((bbox.x + bbox.width // 2, bbox.y + bbox.height // 2)) == (255, 255, 255)
+        assert result.getpixel((bbox.x - 1, bbox.y + bbox.height // 2)) == (0, 255, 0)
 
 
 def test_ad_mark_label_uses_cyrillic_capable_font_and_transparent_background() -> None:
@@ -641,6 +666,100 @@ def test_parse_composition_validation_result_defaults_corner_deltas_from_bboxes(
         "bottom_right": {"dx": 40, "dy": 30},
         "bottom_left": {"dx": 20, "dy": 30},
     }
+
+
+def test_stage2_composition_correction_prefers_new_recommended_bbox_retry() -> None:
+    spec = get_spec("yandex-graphic-banners-300x250-image")
+    assert spec is not None
+    request = ProofRequest(
+        request_id="req-correction-new-bbox",
+        network_display_name="Яндекс",
+        network_slug="yandex_graphic_banners",
+        spec=spec,
+        banner_type=spec.display_name,
+        source_screenshot=SourceScreenshotInfo(path=Path("source.png"), mime_type="image/png", width=400, height=300, size_bytes=123),
+        creative=CreativeInfo(path=Path("creative.png"), mime_type="image/png", width=300, height=250, size_bytes=123),
+        landing_url="https://example.com/landing",
+        utm_params={},
+        placement=Placement(mode="template", value="screenshot-detected"),
+        output_path=Path("final.png"),
+    )
+    current_bbox = BoundingBox(20, 30, 100, 70)
+    corrected_bbox = BoundingBox(40, 50, 120, 80)
+
+    correction = _select_next_composition_bbox(
+        validation=CompositionValidationResult(
+            passed=False,
+            original_banner_bbox=corrected_bbox,
+            inserted_creative_bbox=current_bbox,
+            corrected_bbox=corrected_bbox,
+            deltas={"x": -20, "y": -20, "width": -20, "height": -10},
+            corner_deltas={
+                "top_left": {"dx": 999, "dy": 999},
+                "top_right": {"dx": 999, "dy": 999},
+                "bottom_right": {"dx": 999, "dy": 999},
+                "bottom_left": {"dx": 999, "dy": 999},
+            },
+            confidence=0.95,
+            reason="recommended bbox differs from current slot",
+        ),
+        current_bbox=current_bbox,
+        request=request,
+        attempt=1,
+    )
+
+    assert correction is not None
+    assert correction.source == "corrected_bbox"
+    assert correction.bbox == corrected_bbox
+    assert correction.full_cover_replacement is False
+
+
+def test_stage2_composition_correction_uses_full_cover_for_render_coverage_mismatch(caplog: pytest.LogCaptureFixture) -> None:
+    spec = get_spec("first-data-rtb-banners-240x400-image")
+    assert spec is not None
+    request = ProofRequest(
+        request_id="req-render-cover-retry",
+        network_display_name="First Data",
+        network_slug="first_data_rtb_banners",
+        spec=spec,
+        banner_type=spec.display_name,
+        source_screenshot=SourceScreenshotInfo(path=Path("source.png"), mime_type="image/png", width=1280, height=719, size_bytes=123),
+        creative=CreativeInfo(path=Path("creative.png"), mime_type="image/png", width=240, height=400, size_bytes=123),
+        landing_url="https://example.com/landing",
+        utm_params={},
+        placement=Placement(mode="template", value="screenshot-detected"),
+        output_path=Path("final.png"),
+    )
+    current_bbox = BoundingBox(896, 201, 177, 410)
+
+    with caplog.at_level("INFO", logger="reports_ad.stage2_proof"):
+        correction = _select_next_composition_bbox(
+            validation=CompositionValidationResult(
+                passed=False,
+                original_banner_bbox=current_bbox,
+                inserted_creative_bbox=BoundingBox(896, 281, 177, 330),
+                corrected_bbox=current_bbox,
+                deltas={"x": 0, "y": 80, "width": 0, "height": -80},
+                corner_deltas={
+                    "top_left": {"dx": 0, "dy": -80},
+                    "top_right": {"dx": 0, "dy": -80},
+                    "bottom_right": {"dx": 0, "dy": 0},
+                    "bottom_left": {"dx": 0, "dy": 0},
+                },
+                confidence=0.95,
+                reason="slot correct but rendered creative covers only lower part",
+            ),
+            current_bbox=current_bbox,
+            request=request,
+            attempt=1,
+        )
+
+    assert correction is not None
+    assert correction.source == "render_full_cover"
+    assert correction.bbox == current_bbox
+    assert correction.full_cover_replacement is True
+    assert "stage2_composition_validation_render_cover_retry" in caplog.text
+    assert "correction_source=corner_deltas" not in caplog.text
 
 
 def test_tgo_candidates_choose_full_ad_card_over_internal_image_asset() -> None:
