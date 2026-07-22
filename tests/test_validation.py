@@ -13,6 +13,8 @@ from reports_ad.bot import (
     REVIEW_MENU_PROMPT,
     SCREENSHOT,
     SPEC_MENU_PROMPT,
+    START_MENU_BUTTON,
+    START_MENU_PROMPT,
     TELEGRAM_KEYBOARD_BUTTON_TEXT_LIMIT,
     TELEGRAM_SEND_MAX_ATTEMPTS,
     _menu_label,
@@ -31,6 +33,8 @@ from reports_ad.bot import (
     network_menu_keyboard,
     spec_menu_keyboard,
     spec_menu_prompt,
+    start,
+    start_menu_keyboard,
 )
 from reports_ad.catalog import choose_placement_for_url, get_site_placement, get_spec, infer_media_type_from_spec, list_placement_site_entries, list_placement_sites, list_runtime_specs, placement_site_urls
 from reports_ad.config import BotConfig
@@ -322,6 +326,15 @@ def test_review_menu_keyboard_contains_russian_labels_and_launch_is_last() -> No
     assert keyboard.input_field_placeholder == REVIEW_MENU_PROMPT
 
 
+def test_start_menu_keyboard_contains_exact_russian_start_button() -> None:
+    keyboard = start_menu_keyboard()
+    labels = [button.text for row in keyboard.keyboard for button in row]
+
+    assert labels == [START_MENU_BUTTON]
+    assert labels[0] == "Старт"
+    assert keyboard.input_field_placeholder == START_MENU_PROMPT
+
+
 def test_review_menu_action_maps_all_russian_labels_and_legacy_fallbacks() -> None:
     for label, action in REVIEW_MENU_ACTIONS.items():
         assert review_menu_action(label) == action
@@ -441,7 +454,7 @@ async def test_reply_photo_and_document_wrappers_use_retry() -> None:
     document_result = await _reply_document_with_retry(message, operation="test.reply_document", sleep=fake_sleep, document=b"png", filename="proof.png", caption="doc")
 
     assert photo_result == {"photo": b"png", "caption": "photo"}
-    assert document_result == {"document": b"png", "filename": "proof.png", "caption": "doc"}
+    assert document_result == {"document": b"png", "filename": "proof.png", "caption": "doc", "reply_markup": None}
     assert len(message.photos) == 1
     assert len(message.documents) == 1
     assert sleeps == [0.25, 0.25]
@@ -479,7 +492,24 @@ async def test_review_launch_menu_label_starts_generation_like_yes(tmp_path: Pat
     assert message.replies[0]["reply_markup"].__class__.__name__ == "ReplyKeyboardRemove"
     assert message.photos[-1]["caption"] == "Proof-скриншот готов."
     assert message.documents[-1]["caption"] == "Proof-скриншот как документ без сжатия."
+    document_keyboard_labels = [button.text for row in message.documents[-1]["reply_markup"].keyboard for button in row]
+    assert document_keyboard_labels == ["Старт"]
     assert context.user_data == {}
+
+
+@pytest.mark.asyncio
+async def test_start_button_invokes_existing_start_flow_and_resets_state(tmp_path: Path) -> None:
+    context = _FakeContext(BotConfig(telegram_token="test", temp_root=tmp_path))
+    context.user_data.update(_review_user_data(tmp_path))
+    message = _FakeMessage("Старт")
+
+    state = await start(_FakeUpdate(message), context)
+
+    assert state == 0
+    assert set(context.user_data) == {"request_id"}
+    assert message.replies[-1]["text"].startswith("Я сформирую proof-скриншот рекламного размещения.")
+    labels = [[button.text for button in row] for row in message.replies[-1]["reply_markup"].keyboard]
+    assert any("[yandex_graphic_banners]" in label for row in labels for label in row)
 
 
 @pytest.mark.asyncio
@@ -632,11 +662,11 @@ class _FakeMessage:
         self.photos.append(reply)
         return reply
 
-    async def reply_document(self, document, filename: str | None = None, caption: str | None = None) -> dict:
+    async def reply_document(self, document, filename: str | None = None, caption: str | None = None, reply_markup=None) -> dict:
         if self.document_failures_remaining:
             self.document_failures_remaining -= 1
             raise TimedOut("reply_document timed out")
-        reply = {"document": document, "filename": filename, "caption": caption}
+        reply = {"document": document, "filename": filename, "caption": caption, "reply_markup": reply_markup}
         self.documents.append(reply)
         return reply
 

@@ -62,10 +62,12 @@ REVIEW_MENU_ACTIONS = {
     "Изменить UTM-строку": "utm",
     "Запустить": "generate",
 }
+START_MENU_BUTTON = "Старт"
 
 ProofGenerator = Callable[[ProofRequest], Awaitable[ProofResult]]
 RawProofGenerator = Callable[..., Awaitable[ProofResult]]
 
+START_MENU_PROMPT = "Нажмите «Старт», чтобы запустить flow бота:"
 NETWORK_MENU_PROMPT = "Выберите рекламную сеть кнопкой меню telegram_menu:"
 SPEC_MENU_PROMPT = "Теперь выберите тип баннера/spec кнопкой меню telegram_menu:"
 REVIEW_MENU_PROMPT = "Выберите действие кнопкой меню telegram_menu:"
@@ -101,17 +103,17 @@ def build_application(config: BotConfig | None = None, proof_generator: RawProof
     application.bot_data["user_locks"] = {}
 
     conversation = ConversationHandler(
-        entry_points=[CommandHandler("start", start), CommandHandler("help", start)],
+        entry_points=[CommandHandler("start", start), CommandHandler("help", start), _start_button_handler()],
         states={
-            NETWORK: [MessageHandler(filters.TEXT & ~filters.COMMAND, collect_network)],
-            BANNER_TYPE: [MessageHandler(filters.TEXT & ~filters.COMMAND, collect_banner_type)],
-            SCREENSHOT: [MessageHandler((filters.PHOTO | filters.Document.IMAGE | filters.TEXT) & ~filters.COMMAND, collect_screenshot)],
-            CREATIVE: [MessageHandler((filters.PHOTO | filters.Document.IMAGE | filters.TEXT) & ~filters.COMMAND, collect_creative)],
-            LANDING_URL: [MessageHandler(filters.TEXT & ~filters.COMMAND, collect_landing_url)],
-            UTM: [MessageHandler(filters.TEXT & ~filters.COMMAND, collect_utm)],
-            REVIEW: [MessageHandler(filters.TEXT & ~filters.COMMAND, review_or_generate)],
+            NETWORK: [_start_button_handler(), MessageHandler(filters.TEXT & ~filters.COMMAND, collect_network)],
+            BANNER_TYPE: [_start_button_handler(), MessageHandler(filters.TEXT & ~filters.COMMAND, collect_banner_type)],
+            SCREENSHOT: [_start_button_handler(), MessageHandler((filters.PHOTO | filters.Document.IMAGE | filters.TEXT) & ~filters.COMMAND, collect_screenshot)],
+            CREATIVE: [_start_button_handler(), MessageHandler((filters.PHOTO | filters.Document.IMAGE | filters.TEXT) & ~filters.COMMAND, collect_creative)],
+            LANDING_URL: [_start_button_handler(), MessageHandler(filters.TEXT & ~filters.COMMAND, collect_landing_url)],
+            UTM: [_start_button_handler(), MessageHandler(filters.TEXT & ~filters.COMMAND, collect_utm)],
+            REVIEW: [_start_button_handler(), MessageHandler(filters.TEXT & ~filters.COMMAND, review_or_generate)],
         },
-        fallbacks=[CommandHandler("cancel", cancel), CommandHandler("start", start)],
+        fallbacks=[CommandHandler("cancel", cancel), CommandHandler("start", start), _start_button_handler()],
         allow_reentry=True,
     )
     application.add_handler(conversation)
@@ -139,7 +141,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await _cleanup_state(context.user_data)
     context.user_data.clear()
-    await _reply_text_with_retry(update.effective_message, "Заявка отменена, временные файлы удалены.", operation="cancel.reply_text", reply_markup=ReplyKeyboardRemove())
+    await _reply_text_with_retry(update.effective_message, "Заявка отменена, временные файлы удалены.", operation="cancel.reply_text", reply_markup=start_menu_keyboard())
     return ConversationHandler.END
 
 
@@ -357,7 +359,14 @@ async def _generate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             with result.output_path.open("rb") as image_file:
                 await _reply_photo_with_retry(update.effective_message, operation="proof_result.reply_photo", photo=image_file, caption="Proof-скриншот готов.")
             with result.output_path.open("rb") as image_file:
-                await _reply_document_with_retry(update.effective_message, operation="proof_result.reply_document", document=image_file, filename=result.output_path.name, caption="Proof-скриншот как документ без сжатия.")
+                await _reply_document_with_retry(
+                    update.effective_message,
+                    operation="proof_result.reply_document",
+                    document=image_file,
+                    filename=result.output_path.name,
+                    caption="Proof-скриншот как документ без сжатия.",
+                    reply_markup=start_menu_keyboard(),
+                )
             if result.intermediate_screenshot_path:
                 logger.info(
                     "proof_intermediate_screenshot_saved request_id=%s user=%s chat=%s artifact_path=%s",
@@ -618,6 +627,13 @@ async def _telegram_send_with_retry(
     raise RuntimeError("unreachable telegram retry state")
 
 
+def start_menu_keyboard() -> ReplyKeyboardMarkup:
+    menu = ReportsAdMenuMessage(navigation=None, label="reports-ad-start", input_field=START_MENU_PROMPT)
+    menu.keyboard = []
+    _add_menu_row_button(menu, label=START_MENU_BUTTON, args=START_MENU_BUTTON)
+    return menu.gen_keyboard_content()
+
+
 def network_menu_keyboard() -> ReplyKeyboardMarkup:
     menu = ReportsAdMenuMessage(navigation=None, label="reports-ad-network", input_field="Выберите рекламную сеть")
     menu.keyboard = []
@@ -644,6 +660,10 @@ def review_menu_keyboard() -> ReplyKeyboardMarkup:
     for label in REVIEW_MENU_ACTIONS:
         _add_menu_row_button(menu, label=label, args=label)
     return menu.gen_keyboard_content()
+
+
+def _start_button_handler() -> MessageHandler:
+    return MessageHandler(filters.Regex(f"^{re.escape(START_MENU_BUTTON)}$") & ~filters.COMMAND, start)
 
 
 def spec_menu_prompt(network_slug: str) -> str:
