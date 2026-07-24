@@ -8,7 +8,7 @@ import re
 import tempfile
 import uuid
 from pathlib import Path
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, BinaryIO, Callable
 
 import httpx
 from telegram import ReplyKeyboardMarkup, ReplyKeyboardRemove, Update
@@ -252,17 +252,20 @@ async def _generate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             banner_generator: BannerGenerator = context.bot_data.get("banner_generator") or _configure_banner_generator(generate_masked_banner, config)
             async with asyncio.timeout(config.request_timeout_seconds):
                 result = await banner_generator(request)
-            with result.output_path.open("rb") as image_file:
-                await _reply_photo_with_retry(update.effective_message, operation="masked_banner.reply_photo", photo=image_file, caption="Баннер с маской готов.")
-            with result.output_path.open("rb") as image_file:
-                await _reply_document_with_retry(
-                    update.effective_message,
-                    operation="masked_banner.reply_document",
-                    document=image_file,
-                    filename=f"{request.network_slug}-{request.size_slug}-masked-banner.png",
-                    caption="PNG-баннер с маской без сжатия.",
-                    reply_markup=start_menu_keyboard(),
-                )
+            await _reply_photo_file_with_retry(
+                update.effective_message,
+                operation="masked_banner.reply_photo",
+                photo_path=result.output_path,
+                caption="Баннер с маской готов.",
+            )
+            await _reply_document_file_with_retry(
+                update.effective_message,
+                operation="masked_banner.reply_document",
+                document_path=result.output_path,
+                filename=f"{request.network_slug}-{request.size_slug}-masked-banner.png",
+                caption="PNG-баннер с маской без сжатия.",
+                reply_markup=start_menu_keyboard(),
+            )
             logger.info("masked_banner_request_done request_id=%s user=%s chat=%s elapsed_ms=%s", request_id, user_hash, chat_hash, _loop_elapsed_ms(started))
         except asyncio.TimeoutError as exc:
             logger.warning("masked_banner_timeout request_id=%s user=%s chat=%s elapsed_ms=%s exception_message=%s", request_id, user_hash, chat_hash, _loop_elapsed_ms(started), _safe_exception_message(exc))
@@ -351,6 +354,40 @@ async def _reply_photo_with_retry(message: Any, *, operation: str, sleep: Callab
 
 async def _reply_document_with_retry(message: Any, *, operation: str, sleep: Callable[[float], Awaitable[Any]] = asyncio.sleep, **kwargs: Any) -> Any:
     return await _telegram_send_with_retry(lambda: message.reply_document(**kwargs), operation=operation, sleep=sleep)
+
+
+async def _reply_photo_file_with_retry(message: Any, *, operation: str, photo_path: Path, sleep: Callable[[float], Awaitable[Any]] = asyncio.sleep, **kwargs: Any) -> Any:
+    return await _telegram_send_file_with_retry(lambda file_obj: message.reply_photo(photo=file_obj, **kwargs), operation=operation, file_path=photo_path, sleep=sleep)
+
+
+async def _reply_document_file_with_retry(message: Any, *, operation: str, document_path: Path, sleep: Callable[[float], Awaitable[Any]] = asyncio.sleep, **kwargs: Any) -> Any:
+    return await _telegram_send_file_with_retry(lambda file_obj: message.reply_document(document=file_obj, **kwargs), operation=operation, file_path=document_path, sleep=sleep)
+
+
+async def _telegram_send_file_with_retry(
+    send_call: Callable[[BinaryIO], Awaitable[Any]],
+    *,
+    operation: str,
+    file_path: Path,
+    max_attempts: int = TELEGRAM_SEND_MAX_ATTEMPTS,
+    initial_backoff_seconds: float = TELEGRAM_SEND_INITIAL_BACKOFF_SECONDS,
+    sleep: Callable[[float], Awaitable[Any]] = asyncio.sleep,
+) -> Any:
+    safe_file_name = file_path.name
+
+    async def open_and_send() -> Any:
+        file_size = file_path.stat().st_size if file_path.exists() else -1
+        logger.info("telegram_file_send_attempt operation=%s file_name=%s file_size=%s", operation, safe_file_name, file_size)
+        with file_path.open("rb") as file_obj:
+            return await send_call(file_obj)
+
+    return await _telegram_send_with_retry(
+        open_and_send,
+        operation=operation,
+        max_attempts=max_attempts,
+        initial_backoff_seconds=initial_backoff_seconds,
+        sleep=sleep,
+    )
 
 
 async def _telegram_send_with_retry(
