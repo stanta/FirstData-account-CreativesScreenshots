@@ -38,7 +38,9 @@ from reports_ad.bot import (
 )
 from reports_ad.catalog import choose_placement_for_url, get_site_placement, get_spec, infer_media_type_from_spec, list_placement_site_entries, list_placement_sites, list_runtime_specs, placement_site_urls
 from reports_ad.config import BotConfig
-from reports_ad.models import CreativeInfo, Placement, ProofResult
+from reports_ad.mask_catalog import get_banner_size, resolve_mask_asset
+from reports_ad.masked_banner import MaskedBannerResult
+from reports_ad.models import CreativeInfo, Placement
 from reports_ad.validation import (
     ValidationError,
     merge_url_with_utm,
@@ -282,26 +284,28 @@ def test_telegram_menu_network_keyboard_contains_catalog_slug() -> None:
     labels = [[button.text for button in row] for row in keyboard.keyboard]
     assert labels[0]
     assert all(row for row in labels)
-    assert any("[yandex_graphic_banners]" in label for row in labels for label in row)
-    assert _menu_value("Яндекс [yandex_graphic_banners] — 12 specs") == "yandex_graphic_banners"
+    assert any("[mediasniper]" in label for row in labels for label in row)
+    assert any("[hybrid]" in label for row in labels for label in row)
+    assert _menu_value("Mediasniper [mediasniper] — 3 размера") == "mediasniper"
 
 
 def test_telegram_menu_spec_keyboard_is_filtered_by_network() -> None:
-    keyboard = spec_menu_keyboard("yandex_graphic_banners")
+    keyboard = spec_menu_keyboard("mediasniper")
     labels = [[button.text for button in row] for row in keyboard.keyboard]
     assert labels
     assert labels[0]
     assert all(row for row in labels)
     assert all(len(label) <= TELEGRAM_KEYBOARD_BUTTON_TEXT_LIMIT for row in labels for label in row)
-    assert any("[yandex-graphic-banners-300x250-image]" in label for row in labels for label in row)
-    assert all("yandex-graphic-banners" in label for row in labels for label in row)
+    assert any("[240x400]" in label for row in labels for label in row)
+    assert any("[300x600]" in label for row in labels for label in row)
+    assert any("[300x500]" in label for row in labels for label in row)
     assert keyboard.input_field_placeholder == SPEC_MENU_PROMPT
 
 
 def test_spec_menu_prompt_uses_requested_telegram_menu_wording() -> None:
-    prompt = spec_menu_prompt("yandex_graphic_banners")
-    assert prompt.startswith("Теперь выберите тип баннера/spec кнопкой меню telegram_menu:\n")
-    assert "yandex-graphic-banners-300x250-image" in prompt
+    prompt = spec_menu_prompt("mediasniper")
+    assert prompt.startswith("Теперь выберите размер баннера кнопкой меню telegram_menu:\n")
+    assert "240x400" in prompt
 
 
 def test_review_text_uses_russian_menu_prompt_without_old_instruction(tmp_path: Path) -> None:
@@ -311,8 +315,9 @@ def test_review_text_uses_russian_menu_prompt_without_old_instruction(tmp_path: 
 
     assert text.startswith("Проверьте заявку перед запуском:")
     assert REVIEW_MENU_PROMPT in text
-    assert "screenshot-only/Pillow" in text
-    assert "скриншот площадки:" in text
+    assert "resize + mask overlay/Pillow" in text
+    assert "размер баннера:" in text
+    assert "скриншот площадки:" not in text
     assert "Ответьте `yes`" not in text
     assert "edit network" not in text
 
@@ -342,11 +347,11 @@ def test_review_menu_action_maps_all_russian_labels_and_legacy_fallbacks() -> No
     assert review_menu_action("yes") == "generate"
     assert review_menu_action("edit network") == "network"
     assert review_menu_action("edit spec") == "spec"
-    assert review_menu_action("edit screenshot") == "screenshot"
+    assert review_menu_action("edit size") == "size"
     assert review_menu_action("edit creative") == "creative"
-    assert review_menu_action("edit landing") == "landing"
-    assert review_menu_action("edit utm") == "utm"
-    assert {action for action in REVIEW_MENU_ACTIONS.values() if action != "generate"} == set(EDIT_TARGETS) - {"banner", "screen"}
+    assert review_menu_action("edit landing") == "unknown_edit"
+    assert review_menu_action("edit utm") == "unknown_edit"
+    assert {action for action in REVIEW_MENU_ACTIONS.values() if action != "generate"} == {"network", "size", "creative"}
 
 
 @pytest.mark.asyncio
@@ -479,9 +484,9 @@ async def test_review_launch_menu_label_starts_generation_like_yes(tmp_path: Pat
     async def fake_generator(request):
         captured_requests.append(request)
         request.output_path.write_bytes(b"fake-png")
-        return ProofResult(output_path=request.output_path, width=1, height=1, effective_click_url="https://example.com", request_id=request.request_id)
+        return MaskedBannerResult(output_path=request.output_path, width=1, height=1, request_id=request.request_id, mask_asset=resolve_mask_asset(request.network_slug, request.size_slug))
 
-    context.bot_data["proof_generator"] = fake_generator
+    context.bot_data["banner_generator"] = fake_generator
     context.bot_data["user_locks"] = {}
     message = _FakeMessage("Запустить")
 
@@ -490,8 +495,8 @@ async def test_review_launch_menu_label_starts_generation_like_yes(tmp_path: Pat
     assert state == -1
     assert captured_requests
     assert message.replies[0]["reply_markup"].__class__.__name__ == "ReplyKeyboardRemove"
-    assert message.photos[-1]["caption"] == "Proof-скриншот готов."
-    assert message.documents[-1]["caption"] == "Proof-скриншот как документ без сжатия."
+    assert message.photos[-1]["caption"] == "Баннер с маской готов."
+    assert message.documents[-1]["caption"] == "PNG-баннер с маской без сжатия."
     document_keyboard_labels = [button.text for row in message.documents[-1]["reply_markup"].keyboard for button in row]
     assert document_keyboard_labels == ["Старт"]
     assert context.user_data == {}
@@ -507,9 +512,9 @@ async def test_start_button_invokes_existing_start_flow_and_resets_state(tmp_pat
 
     assert state == 0
     assert set(context.user_data) == {"request_id"}
-    assert message.replies[-1]["text"].startswith("Я сформирую proof-скриншот рекламного размещения.")
+    assert message.replies[-1]["text"].startswith("Я сформирую баннер:")
     labels = [[button.text for button in row] for row in message.replies[-1]["reply_markup"].keyboard]
-    assert any("[yandex_graphic_banners]" in label for row in labels for label in row)
+    assert any("[mediasniper]" in label for row in labels for label in row)
 
 
 @pytest.mark.asyncio
@@ -517,10 +522,8 @@ async def test_review_russian_edit_labels_transition_to_expected_states(tmp_path
     expected_states = {
         "Изменить рекламную сеть": 0,
         "Изменить тип баннера": 1,
-        "Изменить скриншот площадки": SCREENSHOT,
+        "Изменить размер баннера": 1,
         "Изменить креатив": CREATIVE,
-        "Изменить landing URL": 4,
-        "Изменить UTM-строку": 5,
     }
     for label, expected_state in expected_states.items():
         context = _FakeContext(BotConfig(telegram_token="test", temp_root=tmp_path))
@@ -543,7 +546,7 @@ async def test_review_russian_edit_labels_transition_to_expected_states(tmp_path
 
 @pytest.mark.asyncio
 async def test_network_selection_immediately_sends_filtered_spec_menu() -> None:
-    message = _FakeMessage("Яндекс [yandex_graphic_banners] — 12 specs")
+    message = _FakeMessage("Mediasniper [mediasniper] — 3 размера")
     update = _FakeUpdate(message)
     context = _FakeContext()
 
@@ -552,15 +555,14 @@ async def test_network_selection_immediately_sends_filtered_spec_menu() -> None:
     reply = message.replies[-1]
     labels = [[button.text for button in row] for row in reply["reply_markup"].keyboard]
     assert state == 1
-    assert reply["text"].startswith("Сеть выбрана: Яндекс.\nТеперь выберите тип баннера/spec кнопкой меню telegram_menu:")
-    assert any("[yandex-graphic-banners-300x250-image]" in label for row in labels for label in row)
-    assert all("yandex-graphic-banners" in label for row in labels for label in row)
+    assert reply["text"].startswith("Сеть выбрана: Mediasniper.\nТеперь выберите размер баннера кнопкой меню telegram_menu:")
+    assert any("[240x400]" in label for row in labels for label in row)
 
 
 @pytest.mark.asyncio
-async def test_network_menu_button_then_spec_menu_button_advances_to_screenshot_upload_step() -> None:
+async def test_network_menu_button_then_size_menu_button_advances_to_creative_upload_step() -> None:
     context = _FakeContext()
-    network_message = _FakeMessage("Яндекс [yandex_graphic_banners] — 12 specs")
+    network_message = _FakeMessage("Mediasniper [mediasniper] — 3 размера")
 
     network_state = await collect_network(_FakeUpdate(network_message), context)
     spec_keyboard = network_message.replies[-1]["reply_markup"]
@@ -568,30 +570,28 @@ async def test_network_menu_button_then_spec_menu_button_advances_to_screenshot_
         button.text
         for row in spec_keyboard.keyboard
         for button in row
-        if "[yandex-graphic-banners-300x250-image]" in button.text
+        if "[240x400]" in button.text
     )
     spec_message = _FakeMessage(spec_label)
 
     spec_state = await collect_banner_type(_FakeUpdate(spec_message), context)
 
     assert network_state == 1
-    assert spec_state == SCREENSHOT
-    assert context.user_data["network_slug"] == "yandex_graphic_banners"
-    assert context.user_data["spec"].slug == "yandex-graphic-banners-300x250-image"
-    assert "Отправьте готовый скриншот площадки" in spec_message.replies[-1]["text"]
-    assert "до 10 МБ" in spec_message.replies[-1]["text"]
+    assert spec_state == CREATIVE
+    assert context.user_data["network_slug"] == "mediasniper"
+    assert context.user_data["banner_size_slug"] == "240x400"
+    assert "Отправьте PNG/JPEG-креатив" in spec_message.replies[-1]["text"]
+    assert "240×400" in spec_message.replies[-1]["text"]
     assert "Введите URL рекламной страницы" not in spec_message.replies[-1]["text"]
 
 
 @pytest.mark.asyncio
 async def test_invalid_creative_stays_in_creative_upload_state_and_asks_reupload(tmp_path: Path) -> None:
-    spec = get_spec("yandex-graphic-banners-300x250-image")
-    assert spec is not None
     image_path = tmp_path / "wrong-type.gif"
     Image.new("RGB", (320, 250), "red").save(image_path)
     message = _FakeMessage(str(image_path))
     context = _FakeContext(BotConfig(telegram_token="test", allow_local_creative_path=True, temp_root=tmp_path))
-    context.user_data["spec"] = spec
+    context.user_data.update(_selected_mask_flow_data(tmp_path))
 
     state = await collect_creative(_FakeUpdate(message), context)
 
@@ -602,23 +602,19 @@ async def test_invalid_creative_stays_in_creative_upload_state_and_asks_reupload
 
 
 @pytest.mark.asyncio
-async def test_valid_creative_transitions_to_landing_prompt_state(tmp_path: Path) -> None:
-    spec = get_spec("yandex-graphic-banners-300x250-image")
-    assert spec is not None
+async def test_valid_creative_generates_masked_banner_and_cleans_state(tmp_path: Path) -> None:
     image_path = tmp_path / "creative.png"
     Image.new("RGB", (300, 250), "red").save(image_path)
     message = _FakeMessage(str(image_path))
     context = _FakeContext(BotConfig(telegram_token="test", allow_local_creative_path=True, temp_root=tmp_path))
-    context.user_data["spec"] = spec
-    screenshot_path = tmp_path / "source.png"
-    Image.new("RGB", (800, 600), "white").save(screenshot_path)
-    context.user_data["source_screenshot"] = validate_screenshot_file(screenshot_path)
+    context.user_data.update(_selected_mask_flow_data(tmp_path))
 
     state = await collect_creative(_FakeUpdate(message), context)
 
-    assert state == 4
-    assert context.user_data["creative"].width == 300
-    assert message.replies[-1]["text"] == "Креатив принят. Введите landing URL, который нужно показать в нижней области proof-скриншота."
+    assert state == -1
+    assert context.user_data == {}
+    assert message.photos[-1]["caption"] == "Баннер с маской готов."
+    assert message.documents[-1]["filename"] == "mediasniper-240x400-masked-banner.png"
 
 
 def test_menu_label_roundtrip_preserves_slug_for_validation() -> None:
@@ -628,10 +624,8 @@ def test_menu_label_roundtrip_preserves_slug_for_validation() -> None:
 
 
 def test_spec_menu_label_roundtrip_preserves_slug_for_validation() -> None:
-    spec = get_spec("yandex-graphic-banners-300x250-image")
-    assert spec is not None
-    label = _menu_label(spec.display_name, spec.slug, spec.dimensions_label)
-    assert _menu_value(label) == "yandex-graphic-banners-300x250-image"
+    label = _menu_label("240×400", "240x400")
+    assert _menu_value(label) == "240x400"
 
 
 class _FakeMessage:
@@ -688,24 +682,30 @@ class _FakeContext:
 
 
 def _review_user_data(tmp_path: Path) -> dict:
-    spec = get_spec("yandex-graphic-banners-300x250-image")
-    assert spec is not None
     creative_path = tmp_path / "creative.png"
     if not creative_path.exists():
-        Image.new("RGB", (300, 250), "red").save(creative_path)
-    screenshot_path = tmp_path / "source.png"
-    if not screenshot_path.exists():
-        Image.new("RGB", (800, 600), "white").save(screenshot_path)
-    screenshot_info = validate_screenshot_file(screenshot_path)
+        Image.new("RGB", (240, 400), "red").save(creative_path)
+    size = get_banner_size("240x400")
+    assert size is not None
     return {
         "request_id": "test-request",
-        "network_slug": "yandex_graphic_banners",
-        "network_display_name": "Яндекс",
-        "spec": spec,
-        "banner_type": spec.display_name,
-        "placement": Placement(mode="template", value="top-banner"),
-        "source_screenshot": screenshot_info,
-        "creative": CreativeInfo(path=creative_path, mime_type="image/png", width=300, height=250, size_bytes=creative_path.stat().st_size),
-        "landing_url": "https://example.com/landing",
-        "utm_params": {"utm_source": "telegram", "utm_medium": "cpc"},
+        "network_slug": "mediasniper",
+        "network_display_name": "Mediasniper",
+        "banner_size_slug": "240x400",
+        "banner_size": size,
+        "banner_type": size.label,
+        "creative": CreativeInfo(path=creative_path, mime_type="image/png", width=240, height=400, size_bytes=creative_path.stat().st_size),
+    }
+
+
+def _selected_mask_flow_data(tmp_path: Path) -> dict:
+    size = get_banner_size("240x400")
+    assert size is not None
+    return {
+        "request_id": "test-request",
+        "network_slug": "mediasniper",
+        "network_display_name": "Mediasniper",
+        "banner_size_slug": "240x400",
+        "banner_size": size,
+        "banner_type": size.label,
     }

@@ -37,7 +37,7 @@ where = ["."]
 include = ["reports_ad*"]
 
 [tool.setuptools.package-data]
-reports_ad = ["data/*.json"]
+reports_ad = ["data/*.json", "data/masks/*/*.png"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

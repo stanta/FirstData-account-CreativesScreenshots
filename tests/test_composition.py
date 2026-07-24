@@ -6,6 +6,8 @@ from PIL import Image, ImageChops, ImageDraw, ImageFont
 from reports_ad.bot import build_application
 from reports_ad.config import BotConfig
 from reports_ad.gemma_client import GemmaClientError, HeaderAuthGemmaClient, _banner_prompt, _composition_validation_crop_rect, _composition_validation_prompt, _parse_bbox_result, _parse_composition_validation_result, build_gemma_client_from_config
+from reports_ad.mask_catalog import get_banner_size, resolve_mask_asset
+from reports_ad.masked_banner import MaskedBannerRequest, MaskedBannerResult, compose_masked_banner, generate_masked_banner
 from reports_ad.models import BBoxDetectionResult, BoundingBox, CompositionValidationResult, CreativeInfo, Placement, ProofRequest, ProofResult, SourceScreenshotInfo
 from reports_ad.proof import compose_final_image
 from reports_ad.stage2_proof import AD_MARK_LABEL, compose_stage2_image, fallback_landing_bbox, generate_stage2_proof, validate_banner_bbox_semantics, select_valid_banner_bbox_with_feedback, compose_stage2_image_with_validation, _address_bar_only_height, _load_cyrillic_font, _render_ad_mark_label, _select_next_composition_bbox
@@ -63,6 +65,63 @@ def test_stage2_compose_fits_creative_proportionally_draws_landing_and_ad_mark(t
         assert result.getpixel((100, 70)) != (255, 255, 255)
         assert result.getpixel((62, 53)) != result.getpixel((200, 20))
         assert result.getpixel((200, 285)) != (255, 255, 255)
+
+
+def test_resolve_mask_asset_supports_required_networks_and_sizes() -> None:
+    for network_slug in ("mediasniper", "hybrid"):
+        for size_slug in ("240x400", "300x600", "300x500"):
+            asset = resolve_mask_asset(network_slug, size_slug)
+
+            assert asset.network.slug == network_slug
+            assert asset.size.slug == size_slug
+            assert asset.path.exists()
+
+
+def test_compose_masked_banner_resizes_creative_and_overlays_mask(tmp_path: Path) -> None:
+    creative_path = tmp_path / "creative.png"
+    output_path = tmp_path / "masked.png"
+    Image.new("RGB", (60, 100), (220, 0, 0)).save(creative_path)
+    mask_asset = resolve_mask_asset("mediasniper", "240x400")
+
+    width, height = compose_masked_banner(
+        creative_path=creative_path,
+        mask_path=mask_asset.path,
+        output_path=output_path,
+        width=240,
+        height=400,
+    )
+
+    assert (width, height) == (240, 400)
+    with Image.open(output_path) as result:
+        assert result.size == (240, 400)
+        assert result.getpixel((120, 200))[:3] == (220, 0, 0)
+        assert result.getpixel((10, 10))[:3] != (220, 0, 0)
+
+
+@pytest.mark.asyncio
+async def test_generate_masked_banner_uses_selected_hybrid_mask(tmp_path: Path) -> None:
+    size = get_banner_size("300x500")
+    assert size is not None
+    creative_path = tmp_path / "creative.jpg"
+    output_path = tmp_path / "masked.png"
+    Image.new("RGB", (150, 250), (10, 120, 220)).save(creative_path)
+    request = MaskedBannerRequest(
+        request_id="req-mask-hybrid",
+        network_slug="hybrid",
+        network_display_name="Hybrid",
+        size_slug=size.slug,
+        size=size,
+        creative=CreativeInfo(path=creative_path, mime_type="image/jpeg", width=150, height=250, size_bytes=creative_path.stat().st_size),
+        output_path=output_path,
+    )
+
+    result = await generate_masked_banner(request)
+
+    assert result.output_path == output_path
+    assert result.width == 300
+    assert result.height == 500
+    assert result.mask_asset.network.slug == "hybrid"
+    assert result.mask_asset.size.slug == "300x500"
 
 
 def test_stage2_compose_centers_proportionally_fitted_creative_in_banner_region(tmp_path: Path) -> None:
@@ -1637,49 +1696,43 @@ async def test_stage2_generate_handles_invalid_composition_validation_response(t
 
 
 @pytest.mark.asyncio
-async def test_build_application_injects_runtime_config_into_stage2_generator(tmp_path: Path) -> None:
-    spec = get_spec("yandex-graphic-banners-300x250-image")
-    assert spec is not None
-    source_path = tmp_path / "source.png"
+async def test_build_application_injects_runtime_config_into_masked_banner_generator(tmp_path: Path) -> None:
+    size = get_banner_size("240x400")
+    assert size is not None
     creative_path = tmp_path / "creative.png"
     output_path = tmp_path / "final.png"
-    Image.new("RGB", (400, 300), "white").save(source_path)
-    Image.new("RGB", (300, 250), "blue").save(creative_path)
+    Image.new("RGB", (240, 400), "blue").save(creative_path)
     config = BotConfig(
         telegram_token="test",
         temp_root=tmp_path,
         ocr_llm_base_url="http://gemma.firstdata.io/v1",
         ocr_llm_model="cyankiwi/gemma-4-26B-A4B-it-AWQ-4bit",
     )
-    request = ProofRequest(
-        request_id="req-stage2-config",
-        network_display_name="Яндекс",
-        network_slug="yandex_graphic_banners",
-        spec=spec,
-        banner_type=spec.display_name,
-        source_screenshot=SourceScreenshotInfo(path=source_path, mime_type="image/png", width=400, height=300, size_bytes=source_path.stat().st_size),
-        creative=CreativeInfo(path=creative_path, mime_type="image/png", width=300, height=250, size_bytes=creative_path.stat().st_size),
-        landing_url="https://example.com/landing",
-        utm_params={"utm_source": "test"},
-        placement=Placement(mode="template", value="screenshot-detected"),
+    request = MaskedBannerRequest(
+        request_id="req-mask-config",
+        network_display_name="Mediasniper",
+        network_slug="mediasniper",
+        size_slug=size.slug,
+        size=size,
+        creative=CreativeInfo(path=creative_path, mime_type="image/png", width=240, height=400, size_bytes=creative_path.stat().st_size),
         output_path=output_path,
     )
     captured: dict[str, object] = {}
 
-    async def fake_stage2_generator(stage2_request: ProofRequest, *, config: BotConfig | None = None):
-        captured["request"] = stage2_request
+    async def fake_masked_banner_generator(mask_request: MaskedBannerRequest, *, config: BotConfig | None = None):
+        captured["request"] = mask_request
         captured["config"] = config
         output_path.write_bytes(b"fake-png")
-        return ProofResult(
+        return MaskedBannerResult(
             output_path=output_path,
-            width=400,
-            height=300,
-            effective_click_url="https://example.com/landing?utm_source=test",
-            request_id=stage2_request.request_id,
+            width=240,
+            height=400,
+            request_id=mask_request.request_id,
+            mask_asset=resolve_mask_asset(mask_request.network_slug, mask_request.size_slug),
         )
 
-    application = build_application(config, proof_generator=fake_stage2_generator)
-    configured_generator = application.bot_data["proof_generator"]
+    application = build_application(config, banner_generator=fake_masked_banner_generator)
+    configured_generator = application.bot_data["banner_generator"]
 
     await configured_generator(request)
 

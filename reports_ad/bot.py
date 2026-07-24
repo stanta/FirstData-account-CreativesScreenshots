@@ -13,63 +13,50 @@ from typing import Any, Awaitable, Callable
 import httpx
 from telegram import ReplyKeyboardMarkup, ReplyKeyboardRemove, Update
 from telegram.error import NetworkError, TimedOut
-from telegram.ext import (
-    Application,
-    ApplicationBuilder,
-    CommandHandler,
-    ContextTypes,
-    ConversationHandler,
-    MessageHandler,
-    filters,
-)
+from telegram.ext import Application, ApplicationBuilder, CommandHandler, ContextTypes, ConversationHandler, MessageHandler, filters
 from telegram_menu import BaseMessage
 
-from .catalog import catalog_summary, get_network, get_spec, infer_media_type_from_spec, list_networks, list_runtime_specs, specs_summary
 from .config import BotConfig
-from .models import CreativeInfo, CreativeSpec, Placement, ProofRequest, ProofResult, SourceScreenshotInfo
-from .proof import ScreenshotGenerationError
-from .stage2_proof import generate_stage2_proof
-from .validation import (
-    ValidationError,
-    merge_url_with_utm,
-    normalize_public_url,
-    parse_utm_params,
-    validate_creative_file,
-    validate_network_slug,
-    validate_screenshot_file,
-    validate_spec_slug,
+from .mask_catalog import (
+    BannerSize,
+    get_banner_size,
+    get_mask_network,
+    list_banner_sizes,
+    list_mask_networks,
+    validate_banner_size_slug,
+    validate_mask_network_slug,
 )
+from .masked_banner import MaskedBannerRequest, MaskedBannerResult, generate_masked_banner
+from .models import CreativeInfo
+from .proof import ScreenshotGenerationError
+from .validation import ValidationError, validate_creative_file
 
 logger = logging.getLogger(__name__)
 
-NETWORK, BANNER_TYPE, SCREENSHOT, CREATIVE, LANDING_URL, UTM, REVIEW = range(7)
+NETWORK, BANNER_TYPE, CREATIVE = range(3)
+BANNER_SIZE = BANNER_TYPE
+SCREENSHOT, LANDING_URL, UTM, REVIEW = range(3, 7)
 EDIT_TARGETS = {
     "network": NETWORK,
     "spec": BANNER_TYPE,
     "banner": BANNER_TYPE,
-    "screenshot": SCREENSHOT,
-    "screen": SCREENSHOT,
+    "size": BANNER_TYPE,
     "creative": CREATIVE,
-    "landing": LANDING_URL,
-    "utm": UTM,
 }
 REVIEW_MENU_ACTIONS = {
     "Изменить рекламную сеть": "network",
-    "Изменить тип баннера": "spec",
-    "Изменить скриншот площадки": "screenshot",
+    "Изменить размер баннера": "size",
     "Изменить креатив": "creative",
-    "Изменить landing URL": "landing",
-    "Изменить UTM-строку": "utm",
     "Запустить": "generate",
 }
 START_MENU_BUTTON = "Старт"
 
-ProofGenerator = Callable[[ProofRequest], Awaitable[ProofResult]]
-RawProofGenerator = Callable[..., Awaitable[ProofResult]]
+BannerGenerator = Callable[[MaskedBannerRequest], Awaitable[MaskedBannerResult]]
+RawBannerGenerator = Callable[..., Awaitable[MaskedBannerResult]]
 
 START_MENU_PROMPT = "Нажмите «Старт», чтобы запустить flow бота:"
 NETWORK_MENU_PROMPT = "Выберите рекламную сеть кнопкой меню telegram_menu:"
-SPEC_MENU_PROMPT = "Теперь выберите тип баннера/spec кнопкой меню telegram_menu:"
+SPEC_MENU_PROMPT = "Теперь выберите размер баннера кнопкой меню telegram_menu:"
 REVIEW_MENU_PROMPT = "Выберите действие кнопкой меню telegram_menu:"
 TELEGRAM_KEYBOARD_BUTTON_TEXT_LIMIT = 64
 TELEGRAM_SEND_MAX_ATTEMPTS = 5
@@ -95,11 +82,17 @@ class ReportsAdMenuMessage(BaseMessage):
         return ""
 
 
-def build_application(config: BotConfig | None = None, proof_generator: RawProofGenerator = generate_stage2_proof) -> Application:
+def build_application(
+    config: BotConfig | None = None,
+    banner_generator: RawBannerGenerator = generate_masked_banner,
+    **legacy_kwargs: RawBannerGenerator,
+) -> Application:
+    if "proof_generator" in legacy_kwargs:
+        banner_generator = legacy_kwargs["proof_generator"]
     runtime_config = config or BotConfig.from_env()
     application = ApplicationBuilder().token(runtime_config.telegram_token).build()
     application.bot_data["config"] = runtime_config
-    application.bot_data["proof_generator"] = _configure_proof_generator(proof_generator, runtime_config)
+    application.bot_data["banner_generator"] = _configure_banner_generator(banner_generator, runtime_config)
     application.bot_data["user_locks"] = {}
 
     conversation = ConversationHandler(
@@ -107,11 +100,7 @@ def build_application(config: BotConfig | None = None, proof_generator: RawProof
         states={
             NETWORK: [_start_button_handler(), MessageHandler(filters.TEXT & ~filters.COMMAND, collect_network)],
             BANNER_TYPE: [_start_button_handler(), MessageHandler(filters.TEXT & ~filters.COMMAND, collect_banner_type)],
-            SCREENSHOT: [_start_button_handler(), MessageHandler((filters.PHOTO | filters.Document.IMAGE | filters.TEXT) & ~filters.COMMAND, collect_screenshot)],
             CREATIVE: [_start_button_handler(), MessageHandler((filters.PHOTO | filters.Document.IMAGE | filters.TEXT) & ~filters.COMMAND, collect_creative)],
-            LANDING_URL: [_start_button_handler(), MessageHandler(filters.TEXT & ~filters.COMMAND, collect_landing_url)],
-            UTM: [_start_button_handler(), MessageHandler(filters.TEXT & ~filters.COMMAND, collect_utm)],
-            REVIEW: [_start_button_handler(), MessageHandler(filters.TEXT & ~filters.COMMAND, review_or_generate)],
         },
         fallbacks=[CommandHandler("cancel", cancel), CommandHandler("start", start), _start_button_handler()],
         allow_reentry=True,
@@ -126,9 +115,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data["request_id"] = uuid.uuid4().hex[:12]
     await _reply_text_with_retry(
         update.effective_message,
-        "Я сформирую proof-скриншот рекламного размещения.\n\n"
-        "Выберите: рекламную сеть → тип баннера → готовый PNG/JPEG-скриншот площадки с рекламой → PNG/JPEG-креатив → landing URL → UTM → review/edit → старт.\n"
-        "Сайты площадки и landing не открываются: замена выполняется по загруженному скриншоту средствами Pillow.\n\n"
+        "Я сформирую баннер: выберите рекламную сеть → размер баннера → загрузите PNG/JPEG-креатив. "
+        "Система проверит файл, изменит его до выбранного размера, наложит маску и вернет результат в Telegram.\n\n"
         f"{NETWORK_MENU_PROMPT}\n"
         f"{catalog_summary()}\n\n"
         "Команда /cancel отменяет текущую заявку.",
@@ -146,9 +134,9 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
 
 async def collect_network(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    allowed = {network["slug"] for network in list_networks()}
+    allowed = {network.slug for network in list_mask_networks()}
     try:
-        network_slug = validate_network_slug(_menu_value(update.effective_message.text), allowed)
+        network_slug = validate_mask_network_slug(_menu_value(update.effective_message.text), allowed)
     except ValidationError as exc:
         await _reply_text_with_retry(
             update.effective_message,
@@ -158,15 +146,14 @@ async def collect_network(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         )
         return NETWORK
 
-    network = get_network(network_slug) or {"slug": network_slug, "display_name": network_slug}
+    network = get_mask_network(network_slug)
     context.user_data["network_slug"] = network_slug
-    context.user_data["network_display_name"] = network.get("display_name", network_slug)
-    if "spec" in context.user_data and context.user_data["spec"].network_slug != network_slug:
-        _clear_from(context.user_data, "spec")
+    context.user_data["network_display_name"] = network.display_name if network else network_slug
+    if "banner_size_slug" in context.user_data:
+        _clear_from(context.user_data, "banner_size_slug")
     await _reply_text_with_retry(
         update.effective_message,
-        f"Сеть выбрана: {context.user_data['network_display_name']}.\n"
-        f"{spec_menu_prompt(network_slug)}",
+        f"Сеть выбрана: {context.user_data['network_display_name']}.\n{spec_menu_prompt(network_slug)}",
         operation="collect_network.accepted.reply_text",
         reply_markup=spec_menu_keyboard(network_slug),
     )
@@ -184,10 +171,9 @@ async def collect_banner_type(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
         return NETWORK
 
-    specs = list_runtime_specs(network_slug)
-    allowed = {spec.slug for spec in specs}
+    allowed = {size.slug for size in list_banner_sizes()}
     try:
-        spec_slug = validate_spec_slug(_menu_value(update.effective_message.text), allowed)
+        size_slug = validate_banner_size_slug(_menu_value(update.effective_message.text), allowed)
     except ValidationError as exc:
         await _reply_text_with_retry(
             update.effective_message,
@@ -197,47 +183,20 @@ async def collect_banner_type(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
         return BANNER_TYPE
 
-    spec = get_spec(spec_slug)
-    if spec is None or not spec.runtime_upload_supported:
-        await _reply_text_with_retry(
-            update.effective_message,
-            "Выбранный формат не поддерживается runtime. Выберите PNG/JPEG spec из меню.",
-            operation="collect_banner_type.unsupported.reply_text",
-            reply_markup=spec_menu_keyboard(network_slug),
-        )
+    size = get_banner_size(size_slug)
+    if size is None:
+        await _reply_text_with_retry(update.effective_message, "Выбранный размер не поддерживается.", operation="collect_banner_type.unsupported.reply_text", reply_markup=spec_menu_keyboard(network_slug))
         return BANNER_TYPE
 
-    context.user_data["spec"] = spec
-    context.user_data["banner_type"] = spec.display_name
-    context.user_data.pop("source_screenshot", None)
+    context.user_data["banner_size_slug"] = size.slug
+    context.user_data["banner_size"] = size
+    context.user_data["banner_type"] = size.label
     context.user_data.pop("creative", None)
-    if "landing_url" in context.user_data or "utm_params" in context.user_data:
-        _clear_from(context.user_data, "landing_url")
     await _reply_text_with_retry(
         update.effective_message,
-        f"Тип баннера выбран: {spec.display_name}\n"
-        "Отправьте готовый скриншот площадки с уже размещенной рекламой. Поддерживаются PNG/JPEG до 10 МБ.",
+        f"Размер баннера выбран: {size.label}.\n{creative_upload_prompt(size)}",
         operation="collect_banner_type.accepted.reply_text",
         reply_markup=ReplyKeyboardRemove(),
-    )
-    return SCREENSHOT
-
-
-async def collect_screenshot(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    config = _config(context)
-    message = update.effective_message
-    try:
-        screenshot_info = await _save_and_validate_screenshot(message, context, config)
-    except ValidationError as exc:
-        await _reply_text_with_retry(message, f"Скриншот не подходит: {exc.safe_message}\nОтправьте PNG/JPEG-скриншот площадки до 10 МБ еще раз.", operation="collect_screenshot.invalid.reply_text")
-        return SCREENSHOT
-
-    context.user_data["source_screenshot"] = screenshot_info
-    await _reply_text_with_retry(
-        message,
-        f"Скриншот принят: {screenshot_info.mime_type}, {screenshot_info.width}×{screenshot_info.height}, {screenshot_info.size_bytes} байт.\n"
-        f"{creative_upload_prompt(context.user_data['spec'])}",
-        operation="collect_screenshot.accepted.reply_text",
     )
     return CREATIVE
 
@@ -245,71 +204,29 @@ async def collect_screenshot(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def collect_creative(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     config = _config(context)
     message = update.effective_message
+    if "banner_size" not in context.user_data:
+        await _reply_text_with_retry(message, f"Сначала выберите размер баннера.\n{spec_menu_prompt(context.user_data.get('network_slug', ''))}", operation="collect_creative.missing_size.reply_text", reply_markup=spec_menu_keyboard(context.user_data.get("network_slug", "")))
+        return BANNER_TYPE
     try:
         creative_info = await _save_and_validate_creative(message, context, config)
     except ValidationError as exc:
-        await _reply_text_with_retry(message, f"Креатив не подходит: {exc.safe_message}\nОтправьте PNG/JPEG-креатив для выбранного spec еще раз.", operation="collect_creative.invalid.reply_text")
+        await _reply_text_with_retry(message, f"Креатив не подходит: {exc.safe_message}\nОтправьте PNG/JPEG-креатив еще раз.", operation="collect_creative.invalid.reply_text")
         return CREATIVE
 
     context.user_data["creative"] = creative_info
-    if "source_screenshot" in context.user_data and "landing_url" in context.user_data and "utm_params" in context.user_data:
-        await _reply_review(message, context.user_data)
-        return REVIEW
-    await _reply_text_with_retry(message, "Креатив принят. Введите landing URL, который нужно показать в нижней области proof-скриншота.", operation="collect_creative.accepted.reply_text")
-    return LANDING_URL
-
-
-async def collect_landing_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    config = _config(context)
-    try:
-        context.user_data["landing_url"] = normalize_public_url(update.effective_message.text, allow_local=config.allow_local_urls)
-    except ValidationError as exc:
-        await _reply_text_with_retry(update.effective_message, exc.safe_message, operation="validation_error.reply_text")
-        return LANDING_URL
-
-    if "utm_params" in context.user_data:
-        await _reply_review(update.effective_message, context.user_data)
-        return REVIEW
-    await _reply_text_with_retry(update.effective_message, "Введите UTM-строку, например: utm_source=telegram&utm_medium=cpc&utm_campaign=test", operation="collect_landing_url.accepted.reply_text")
-    return UTM
-
-
-async def collect_utm(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    config = _config(context)
-    try:
-        utm_params = parse_utm_params(update.effective_message.text)
-        merge_url_with_utm(context.user_data["landing_url"], utm_params, allow_local=config.allow_local_urls)
-    except ValidationError as exc:
-        await _reply_text_with_retry(update.effective_message, exc.safe_message, operation="collect_utm.invalid.reply_text")
-        return UTM
-
-    context.user_data["utm_params"] = utm_params
-    await _reply_review(update.effective_message, context.user_data)
-    return REVIEW
+    return await _generate(update, context)
 
 
 async def review_or_generate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     action = review_menu_action(update.effective_message.text)
     if action == "generate":
         return await _generate(update, context)
-
     if action in EDIT_TARGETS:
         _clear_for_edit(context.user_data, action)
         await _reply_text_with_retry(update.effective_message, _edit_prompt(action, context.user_data), operation=f"review.edit.{action}.reply_text", reply_markup=_edit_reply_markup(action, context.user_data))
         return EDIT_TARGETS[action]
-
-    if action == "unknown_edit":
-        await _reply_text_with_retry(
-            update.effective_message,
-            "Неизвестное поле для редактирования. Выберите действие кнопкой меню или используйте fallback: "
-            "edit network, edit spec, edit screenshot, edit creative, edit landing, edit utm.",
-            operation="review.unknown_edit.reply_text",
-            reply_markup=review_menu_keyboard(),
-        )
-        return REVIEW
-
-    await _reply_review(update.effective_message, context.user_data, prefix="Генерация не запущена. Выберите действие в меню.")
-    return REVIEW
+    await _reply_text_with_retry(update.effective_message, "Review-экран в новом flow не используется. Загрузите креатив после выбора сети и размера.", operation="review.unsupported.reply_text")
+    return CREATIVE
 
 
 async def _generate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -319,90 +236,43 @@ async def _generate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     lock = _user_lock(context, user_id)
     if lock.locked():
         await _reply_text_with_retry(update.effective_message, "У вас уже выполняется генерация. Дождитесь завершения или отмените текущую заявку.", operation="generate.busy.reply_text")
-        return REVIEW
+        return CREATIVE
 
     async with lock:
-        await _reply_text_with_retry(
-            update.effective_message,
-            "Генерирую proof-скриншот. Это может занять до 5 минут, если включается fallback-цепочка площадок.",
-            operation="generate.started.reply_text",
-            reply_markup=ReplyKeyboardRemove(),
-        )
+        await _reply_text_with_retry(update.effective_message, "Креатив принят. Накладываю маску и готовлю PNG-баннер.", operation="generate.started.reply_text", reply_markup=ReplyKeyboardRemove())
         request_id = context.user_data.get("request_id", uuid.uuid4().hex[:12])
         user_hash = _safe_user_hash(user_id)
         chat_hash = _safe_user_hash(chat_id)
         started = asyncio.get_running_loop().time()
-        logger.info("proof_generation_started request_id=%s user=%s chat=%s", request_id, user_hash, chat_hash)
+        logger.info("masked_banner_request_started request_id=%s user=%s chat=%s", request_id, user_hash, chat_hash)
         try:
             config = _config(context)
-            output_path = _ensure_temp_dir(context.user_data, config) / "proof-result.png"
-            request = _build_proof_request(context.user_data, config, output_path)
-            logger.info(
-                "proof_generation_request_built request_id=%s user=%s chat=%s landing_host=%s network=%s spec=%s dimensions=%s screenshot=%sx%s placement_hint_present=%s timeout_seconds=%s",
-                request_id,
-                user_hash,
-                chat_hash,
-                _safe_host(request.landing_url),
-                request.network_slug,
-                request.spec.slug,
-                request.spec.dimensions_label,
-                request.source_screenshot.width,
-                request.source_screenshot.height,
-                bool(request.spec.position_hint.strip()),
-                config.request_timeout_seconds,
-            )
-            proof_generator: ProofGenerator = context.bot_data["proof_generator"]
+            output_path = _ensure_temp_dir(context.user_data, config) / "masked-banner.png"
+            request = _build_masked_banner_request(context.user_data, output_path)
+            banner_generator: BannerGenerator = context.bot_data.get("banner_generator") or _configure_banner_generator(generate_masked_banner, config)
             async with asyncio.timeout(config.request_timeout_seconds):
-                result = await proof_generator(request)
-            send_started = asyncio.get_running_loop().time()
-            logger.info("proof_telegram_send_started request_id=%s user=%s chat=%s elapsed_ms=%s", request_id, user_hash, chat_hash, _loop_elapsed_ms(send_started))
+                result = await banner_generator(request)
             with result.output_path.open("rb") as image_file:
-                await _reply_photo_with_retry(update.effective_message, operation="proof_result.reply_photo", photo=image_file, caption="Proof-скриншот готов.")
+                await _reply_photo_with_retry(update.effective_message, operation="masked_banner.reply_photo", photo=image_file, caption="Баннер с маской готов.")
             with result.output_path.open("rb") as image_file:
                 await _reply_document_with_retry(
                     update.effective_message,
-                    operation="proof_result.reply_document",
+                    operation="masked_banner.reply_document",
                     document=image_file,
-                    filename=result.output_path.name,
-                    caption="Proof-скриншот как документ без сжатия.",
+                    filename=f"{request.network_slug}-{request.size_slug}-masked-banner.png",
+                    caption="PNG-баннер с маской без сжатия.",
                     reply_markup=start_menu_keyboard(),
                 )
-            if result.intermediate_screenshot_path:
-                logger.info(
-                    "proof_intermediate_screenshot_saved request_id=%s user=%s chat=%s artifact_path=%s",
-                    request_id,
-                    user_hash,
-                    chat_hash,
-                    result.intermediate_screenshot_path,
-                )
-            logger.info("proof_telegram_send_done request_id=%s user=%s chat=%s elapsed_ms=%s", request_id, user_hash, chat_hash, _loop_elapsed_ms(send_started))
-            logger.info("proof_generation_done request_id=%s user=%s chat=%s elapsed_ms=%s", request_id, user_hash, chat_hash, _loop_elapsed_ms(started))
+            logger.info("masked_banner_request_done request_id=%s user=%s chat=%s elapsed_ms=%s", request_id, user_hash, chat_hash, _loop_elapsed_ms(started))
         except asyncio.TimeoutError as exc:
-            logger.warning(
-                "proof_generation_timeout request_id=%s user=%s chat=%s elapsed_ms=%s timeout_seconds=%s exception_class=%s exception_message=%s",
-                request_id,
-                user_hash,
-                chat_hash,
-                _loop_elapsed_ms(started),
-                _config(context).request_timeout_seconds,
-                type(exc).__name__,
-                _safe_exception_message(exc),
-            )
-            await _reply_text_with_retry(update.effective_message, "Истекло время генерации proof-скриншота. Попробуйте позже или упростите страницу/селектор.", operation="generate.timeout.reply_text")
+            logger.warning("masked_banner_timeout request_id=%s user=%s chat=%s elapsed_ms=%s exception_message=%s", request_id, user_hash, chat_hash, _loop_elapsed_ms(started), _safe_exception_message(exc))
+            await _reply_text_with_retry(update.effective_message, "Истекло время генерации баннера. Попробуйте позже.", operation="generate.timeout.reply_text")
         except (ValidationError, ScreenshotGenerationError) as exc:
-            logger.warning(
-                "proof_generation_failed request_id=%s user=%s chat=%s elapsed_ms=%s reason=%s exception_message=%s",
-                request_id,
-                user_hash,
-                chat_hash,
-                _loop_elapsed_ms(started),
-                type(exc).__name__,
-                _safe_exception_message(exc),
-            )
-            await _reply_text_with_retry(update.effective_message, exc.safe_message, operation="generate.validation_or_screenshot_error.reply_text")
+            logger.warning("masked_banner_failed request_id=%s user=%s chat=%s elapsed_ms=%s reason=%s exception_message=%s", request_id, user_hash, chat_hash, _loop_elapsed_ms(started), type(exc).__name__, _safe_exception_message(exc))
+            await _reply_text_with_retry(update.effective_message, exc.safe_message, operation="generate.validation_or_composition_error.reply_text", reply_markup=start_menu_keyboard())
         except Exception as exc:
-            logger.exception("proof_generation_unexpected request_id=%s user=%s chat=%s elapsed_ms=%s exception_class=%s", request_id, user_hash, chat_hash, _loop_elapsed_ms(started), type(exc).__name__)
-            await _reply_text_with_retry(update.effective_message, "Не удалось сформировать proof-скриншот. Проверьте входные данные и попробуйте снова.", operation="generate.unexpected.reply_text")
+            logger.exception("masked_banner_unexpected request_id=%s user=%s chat=%s elapsed_ms=%s exception_class=%s", request_id, user_hash, chat_hash, _loop_elapsed_ms(started), type(exc).__name__)
+            await _reply_text_with_retry(update.effective_message, "Не удалось сформировать баннер. Проверьте входные данные и попробуйте снова.", operation="generate.unexpected.reply_text", reply_markup=start_menu_keyboard())
         finally:
             await _cleanup_state(context.user_data)
             context.user_data.clear()
@@ -412,8 +282,7 @@ async def _generate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
 async def _save_and_validate_creative(message: Any, context: ContextTypes.DEFAULT_TYPE, config: BotConfig) -> CreativeInfo:
     temp_dir = _ensure_temp_dir(context.user_data, config)
-    spec: CreativeSpec = context.user_data["spec"]
-    max_bytes = min(config.max_creative_bytes, spec.max_file_size_bytes or config.max_creative_bytes)
+    max_bytes = config.max_creative_bytes
 
     if message.document:
         document = message.document
@@ -423,13 +292,7 @@ async def _save_and_validate_creative(message: Any, context: ContextTypes.DEFAUL
         destination = temp_dir / f"creative{suffix}"
         tg_file = await document.get_file()
         await tg_file.download_to_drive(custom_path=destination)
-        return validate_creative_file(
-            destination,
-            declared_mime_type=document.mime_type,
-            max_bytes=max_bytes,
-            max_pixels=config.max_creative_pixels,
-            spec=spec,
-        )
+        return validate_creative_file(destination, declared_mime_type=document.mime_type, max_bytes=max_bytes, max_pixels=config.max_creative_pixels)
 
     if message.photo:
         photo = message.photo[-1]
@@ -438,94 +301,24 @@ async def _save_and_validate_creative(message: Any, context: ContextTypes.DEFAUL
         destination = temp_dir / "creative.jpg"
         tg_file = await photo.get_file()
         await tg_file.download_to_drive(custom_path=destination)
-        return validate_creative_file(
-            destination,
-            declared_mime_type="image/jpeg",
-            max_bytes=max_bytes,
-            max_pixels=config.max_creative_pixels,
-            spec=spec,
-        )
+        return validate_creative_file(destination, declared_mime_type="image/jpeg", max_bytes=max_bytes, max_pixels=config.max_creative_pixels)
 
     if message.text and config.allow_local_creative_path:
-        return validate_creative_file(
-            Path(message.text.strip()),
-            declared_mime_type=None,
-            max_bytes=max_bytes,
-            max_pixels=config.max_creative_pixels,
-            spec=spec,
-        )
+        return validate_creative_file(Path(message.text.strip()), declared_mime_type=None, max_bytes=max_bytes, max_pixels=config.max_creative_pixels)
 
     raise ValidationError("Загрузите PNG/JPEG-файл как фото или документ.")
 
 
-async def _save_and_validate_screenshot(message: Any, context: ContextTypes.DEFAULT_TYPE, config: BotConfig) -> SourceScreenshotInfo:
-    temp_dir = _ensure_temp_dir(context.user_data, config)
-    max_bytes = config.max_screenshot_bytes
-
-    if message.document:
-        document = message.document
-        if document.file_size and document.file_size > max_bytes:
-            raise ValidationError("Скриншот превышает допустимый размер 10 МБ.")
-        suffix = Path(document.file_name or "source-screenshot.jpg").suffix.lower() or ".jpg"
-        destination = temp_dir / f"source-screenshot{suffix}"
-        tg_file = await document.get_file()
-        await tg_file.download_to_drive(custom_path=destination)
-        return validate_screenshot_file(
-            destination,
-            declared_mime_type=document.mime_type,
-            max_bytes=max_bytes,
-            max_pixels=config.max_screenshot_pixels,
-        )
-
-    if message.photo:
-        photo = message.photo[-1]
-        if photo.file_size and photo.file_size > max_bytes:
-            raise ValidationError("Скриншот превышает допустимый размер 10 МБ.")
-        destination = temp_dir / "source-screenshot.jpg"
-        tg_file = await photo.get_file()
-        await tg_file.download_to_drive(custom_path=destination)
-        return validate_screenshot_file(
-            destination,
-            declared_mime_type="image/jpeg",
-            max_bytes=max_bytes,
-            max_pixels=config.max_screenshot_pixels,
-        )
-
-    if message.text and config.allow_local_creative_path:
-        return validate_screenshot_file(
-            Path(message.text.strip()),
-            declared_mime_type=None,
-            max_bytes=max_bytes,
-            max_pixels=config.max_screenshot_pixels,
-        )
-
-    raise ValidationError("Загрузите PNG/JPEG-скриншот как фото или документ.")
-
-
-def _build_proof_request(user_data: dict[str, Any], config: BotConfig, output_path: Path) -> ProofRequest:
-    return ProofRequest(
+def _build_masked_banner_request(user_data: dict[str, Any], output_path: Path) -> MaskedBannerRequest:
+    size: BannerSize = user_data["banner_size"]
+    return MaskedBannerRequest(
         request_id=user_data["request_id"],
         network_slug=user_data["network_slug"],
         network_display_name=user_data["network_display_name"],
-        spec=user_data["spec"],
-        banner_type=user_data["banner_type"],
-        source_screenshot=user_data["source_screenshot"],
+        size_slug=size.slug,
+        size=size,
         creative=user_data["creative"],
-        landing_url=user_data["landing_url"],
-        utm_params=user_data["utm_params"],
-        placement=user_data.get("placement", Placement(mode="template", value="screenshot-detected")),
         output_path=output_path,
-        viewport_width=config.viewport_width,
-        viewport_height=config.viewport_height,
-        headless=config.headless,
-        allow_local_urls=config.allow_local_urls,
-        page_load_timeout_ms=config.page_load_timeout_ms,
-        click_timeout_ms=config.click_timeout_ms,
-        screenshot_timeout_ms=config.screenshot_timeout_ms,
-        timeout_diagnostics=config.timeout_diagnostics,
-        timeout_diagnostics_timeout_ms=config.timeout_diagnostics_timeout_ms,
-        locale=config.locale,
-        timezone_id=config.timezone_id,
     )
 
 
@@ -537,53 +330,26 @@ def _ensure_temp_dir(user_data: dict[str, Any], config: BotConfig) -> Path:
 
 def _review_text(user_data: dict[str, Any]) -> str:
     creative: CreativeInfo = user_data["creative"]
-    screenshot: SourceScreenshotInfo = user_data["source_screenshot"]
-    spec: CreativeSpec = user_data["spec"]
-    utm_keys = ", ".join(sorted(user_data["utm_params"].keys()))
-    fallback_media_type = infer_media_type_from_spec(spec)
+    size: BannerSize = user_data["banner_size"]
     return (
         "Проверьте заявку перед запуском:\n"
         f"• сеть: {user_data['network_display_name']} ({user_data['network_slug']})\n"
-        f"• тип баннера: {spec.display_name}\n"
-        f"• размер spec: {spec.dimensions_label}; лимит: {spec.max_file_size_bytes} байт\n"
-        f"• скриншот площадки: {screenshot.mime_type}, {screenshot.width}×{screenshot.height}, {screenshot.size_bytes} байт\n"
-        f"• режим: screenshot-only/Pillow; сайты площадки и landing не открываются\n"
-        f"• media-type каталога: {fallback_media_type}\n"
+        f"• размер баннера: {size.label}\n"
         f"• креатив: {creative.mime_type}, {creative.width}×{creative.height}, {creative.size_bytes} байт\n"
-        f"• landing: {user_data['landing_url']}\n"
-        f"• UTM-ключи: {utm_keys}\n\n"
+        "• режим: resize + mask overlay/Pillow\n\n"
         f"{REVIEW_MENU_PROMPT}"
     )
-
-
-async def _reply_review(message: Any, user_data: dict[str, Any], *, prefix: str = "") -> None:
-    text = _review_text(user_data)
-    if prefix:
-        text = f"{prefix}\n\n{text}"
-    await _reply_text_with_retry(message, text, operation="review.reply_text", reply_markup=review_menu_keyboard())
 
 
 async def _reply_text_with_retry(message: Any, text: str, *, operation: str, **kwargs: Any) -> Any:
     return await _telegram_send_with_retry(lambda: message.reply_text(text, **kwargs), operation=operation)
 
 
-async def _reply_photo_with_retry(
-    message: Any,
-    *,
-    operation: str,
-    sleep: Callable[[float], Awaitable[Any]] = asyncio.sleep,
-    **kwargs: Any,
-) -> Any:
+async def _reply_photo_with_retry(message: Any, *, operation: str, sleep: Callable[[float], Awaitable[Any]] = asyncio.sleep, **kwargs: Any) -> Any:
     return await _telegram_send_with_retry(lambda: message.reply_photo(**kwargs), operation=operation, sleep=sleep)
 
 
-async def _reply_document_with_retry(
-    message: Any,
-    *,
-    operation: str,
-    sleep: Callable[[float], Awaitable[Any]] = asyncio.sleep,
-    **kwargs: Any,
-) -> Any:
+async def _reply_document_with_retry(message: Any, *, operation: str, sleep: Callable[[float], Awaitable[Any]] = asyncio.sleep, **kwargs: Any) -> Any:
     return await _telegram_send_with_retry(lambda: message.reply_document(**kwargs), operation=operation, sleep=sleep)
 
 
@@ -637,20 +403,18 @@ def start_menu_keyboard() -> ReplyKeyboardMarkup:
 def network_menu_keyboard() -> ReplyKeyboardMarkup:
     menu = ReportsAdMenuMessage(navigation=None, label="reports-ad-network", input_field="Выберите рекламную сеть")
     menu.keyboard = []
-    for network in list_networks():
-        slug = network.get("slug", "")
-        count = len(list_runtime_specs(slug))
-        label = _menu_label(network.get("display_name", slug), slug, f"{count} specs")
-        _add_menu_row_button(menu, label=label, args=slug)
+    for network in list_mask_networks():
+        label = _menu_label(network.display_name, network.slug, "3 размера")
+        _add_menu_row_button(menu, label=label, args=network.slug)
     return menu.gen_keyboard_content()
 
 
-def spec_menu_keyboard(network_slug: str) -> ReplyKeyboardMarkup:
-    menu = ReportsAdMenuMessage(navigation=None, label=f"reports-ad-spec-{network_slug}", input_field=SPEC_MENU_PROMPT)
+def spec_menu_keyboard(network_slug: str = "") -> ReplyKeyboardMarkup:
+    menu = ReportsAdMenuMessage(navigation=None, label=f"reports-ad-size-{network_slug or 'any'}", input_field=SPEC_MENU_PROMPT)
     menu.keyboard = []
-    for spec in list_runtime_specs(network_slug):
-        label = _spec_menu_label(spec)
-        _add_menu_row_button(menu, label=label, args=spec.slug)
+    for size in list_banner_sizes():
+        label = _size_menu_label(size)
+        _add_menu_row_button(menu, label=label, args=size.slug)
     return menu.gen_keyboard_content()
 
 
@@ -666,16 +430,20 @@ def _start_button_handler() -> MessageHandler:
     return MessageHandler(filters.Regex(f"^{re.escape(START_MENU_BUTTON)}$") & ~filters.COMMAND, start)
 
 
-def spec_menu_prompt(network_slug: str) -> str:
+def spec_menu_prompt(network_slug: str = "") -> str:
     return f"{SPEC_MENU_PROMPT}\n{specs_summary(network_slug)}"
 
 
-def creative_upload_prompt(spec: CreativeSpec) -> str:
-    limit = f"; максимальный размер файла: {spec.max_file_size_bytes} байт" if spec.max_file_size_bytes else ""
-    return (
-        f"Отправьте PNG/JPEG-креатив как фото или документ для выбранного spec. "
-        f"Ожидаемые размеры: {spec.dimensions_label}{limit}."
-    )
+def creative_upload_prompt(size: BannerSize) -> str:
+    return f"Отправьте PNG/JPEG-креатив как фото или документ. Он будет изменен до размера {size.label} и наложен под выбранную маску."
+
+
+def catalog_summary(max_networks: int = 12) -> str:
+    return "\n".join(f"{index}. {network.display_name} — {network.slug} (3 размера)" for index, network in enumerate(list_mask_networks()[:max_networks], start=1))
+
+
+def specs_summary(network_slug: str = "", max_specs: int = 24) -> str:
+    return "\n".join(f"{index}. {size.label} — {size.slug}" for index, size in enumerate(list_banner_sizes()[:max_specs], start=1))
 
 
 def _add_menu_row_button(menu: ReportsAdMenuMessage, *, label: str, args: str) -> None:
@@ -688,16 +456,15 @@ def _menu_label(display_name: str, slug: str, detail: str = "") -> str:
     return f"{base} — {detail}" if detail else base
 
 
-def _spec_menu_label(spec: CreativeSpec) -> str:
-    label = _menu_label(spec.dimensions_label, spec.slug)
+def _size_menu_label(size: BannerSize) -> str:
+    label = _menu_label(size.label, size.slug)
     if len(label) <= TELEGRAM_KEYBOARD_BUTTON_TEXT_LIMIT:
         return label
+    return size.slug
 
-    label = f"[{spec.slug}]"
-    if len(label) <= TELEGRAM_KEYBOARD_BUTTON_TEXT_LIMIT:
-        return label
 
-    return spec.slug
+def _spec_menu_label(size: BannerSize) -> str:
+    return _size_menu_label(size)
 
 
 def _menu_value(text: str | None) -> str:
@@ -712,74 +479,53 @@ def review_menu_action(text: str | None) -> str:
     menu_action = REVIEW_MENU_ACTIONS.get(raw_value)
     if menu_action:
         return menu_action
-
     answer = raw_value.lower()
     if answer in {"yes", "y", "да", "д", "start", "go", "generate", "старт", "запуск", "запустить"}:
         return "generate"
-
     if answer.startswith("edit") or answer.startswith("изменить"):
         parts = answer.split(maxsplit=1)
         target = parts[1].strip() if len(parts) > 1 else ""
+        if target in {"тип баннера", "размер баннера", "banner size"}:
+            return "size"
         return target if target in EDIT_TARGETS else "unknown_edit"
-
     return ""
 
 
 def _clear_for_edit(user_data: dict[str, Any], target: str) -> None:
     if target == "network":
         _clear_from(user_data, "network_slug")
-    elif target in {"spec", "banner"}:
-        _clear_from(user_data, "spec")
-    elif target in {"screenshot", "screen"}:
-        _clear_from(user_data, "source_screenshot")
+    elif target in {"spec", "banner", "size"}:
+        _clear_from(user_data, "banner_size_slug")
     elif target == "creative":
         user_data.pop("creative", None)
-    elif target == "landing":
-        _clear_from(user_data, "landing_url")
-    elif target == "utm":
-        user_data.pop("utm_params", None)
 
 
-def _clear_from(user_data: dict[str, Any], key: str, *, keep_creative: bool = False) -> None:
-    order = ["network_slug", "network_display_name", "spec", "banner_type", "source_screenshot", "placement", "creative", "landing_url", "utm_params"]
+def _clear_from(user_data: dict[str, Any], key: str) -> None:
+    order = ["network_slug", "network_display_name", "banner_size_slug", "banner_size", "banner_type", "creative"]
     if key not in order:
         return
     for candidate in order[order.index(key) :]:
-        if candidate == "creative" and keep_creative:
-            continue
         user_data.pop(candidate, None)
 
 
 def _edit_prompt(target: str, user_data: dict[str, Any]) -> str:
     if target == "network":
         return f"{NETWORK_MENU_PROMPT}\n{catalog_summary()}"
-    if target in {"spec", "banner"}:
-        network_slug = user_data.get("network_slug")
-        if not network_slug:
-            return f"Сначала выберите рекламную сеть.\n{NETWORK_MENU_PROMPT}\n{catalog_summary()}"
-        return spec_menu_prompt(network_slug)
-    if target in {"screenshot", "screen"}:
-        return "Отправьте новый готовый PNG/JPEG-скриншот площадки с уже размещенной рекламой до 10 МБ."
+    if target in {"spec", "banner", "size"}:
+        return spec_menu_prompt(user_data.get("network_slug", ""))
     if target == "creative":
-        spec = user_data.get("spec")
-        if isinstance(spec, CreativeSpec):
-            return creative_upload_prompt(spec)
+        size = user_data.get("banner_size")
+        if isinstance(size, BannerSize):
+            return creative_upload_prompt(size)
         return "Загрузите новый PNG/JPEG-креатив как фото или документ."
-    if target == "landing":
-        return "Введите новый landing URL."
-    if target == "utm":
-        return "Введите новую UTM-строку, например: utm_source=telegram&utm_medium=cpc&utm_campaign=test"
     return "Введите новое значение."
 
 
 def _edit_reply_markup(target: str, user_data: dict[str, Any]) -> ReplyKeyboardMarkup | ReplyKeyboardRemove:
     if target == "network":
         return network_menu_keyboard()
-    if target in {"spec", "banner"}:
-        network_slug = user_data.get("network_slug")
-        if network_slug:
-            return spec_menu_keyboard(network_slug)
-        return network_menu_keyboard()
+    if target in {"spec", "banner", "size"}:
+        return spec_menu_keyboard(user_data.get("network_slug", ""))
     return ReplyKeyboardRemove()
 
 
@@ -793,23 +539,23 @@ def _config(context: ContextTypes.DEFAULT_TYPE) -> BotConfig:
     return context.bot_data["config"]
 
 
-def _configure_proof_generator(proof_generator: RawProofGenerator, config: BotConfig) -> ProofGenerator:
+def _configure_banner_generator(banner_generator: RawBannerGenerator, config: BotConfig) -> BannerGenerator:
     try:
-        parameters = inspect.signature(proof_generator).parameters
+        parameters = inspect.signature(banner_generator).parameters
     except (TypeError, ValueError):
-        return proof_generator  # type: ignore[return-value]
+        return banner_generator  # type: ignore[return-value]
 
     if "config" not in parameters:
-        return proof_generator  # type: ignore[return-value]
+        return banner_generator  # type: ignore[return-value]
 
-    async def configured_proof_generator(request: ProofRequest) -> ProofResult:
-        return await proof_generator(request, config=config)
+    async def configured_banner_generator(request: MaskedBannerRequest) -> MaskedBannerResult:
+        return await banner_generator(request, config=config)
 
-    return configured_proof_generator
+    return configured_banner_generator
 
 
 def _user_lock(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> asyncio.Lock:
-    locks: dict[int, asyncio.Lock] = context.bot_data["user_locks"]
+    locks: dict[int, asyncio.Lock] = context.bot_data.setdefault("user_locks", {})
     lock = locks.get(user_id)
     if lock is None:
         lock = asyncio.Lock()
@@ -819,12 +565,6 @@ def _user_lock(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> asyncio.Lock
 
 def _safe_user_hash(user_id: int) -> str:
     return hashlib.sha256(str(user_id).encode("utf-8")).hexdigest()[:12]
-
-
-def _safe_host(url: str) -> str:
-    from urllib.parse import urlparse
-
-    return (urlparse(url).hostname or "").lower()[:120]
 
 
 def _safe_exception_message(exc: BaseException) -> str:
