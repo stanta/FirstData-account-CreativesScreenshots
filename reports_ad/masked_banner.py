@@ -1,10 +1,17 @@
 from __future__ import annotations
 
+import io
 import logging
+import socket
 import time
 from dataclasses import dataclass
+from html.parser import HTMLParser
 from pathlib import Path
+from urllib.error import HTTPError, URLError
+from urllib.parse import urljoin, urlparse
+from urllib.request import Request, urlopen
 
+import cairosvg
 from PIL import Image, ImageChops, ImageDraw, ImageFont, UnidentifiedImageError
 
 from .mask_catalog import BannerSize, MaskAsset, resolve_mask_asset
@@ -17,9 +24,16 @@ OPAQUE_MASK_BACKGROUND_ALPHA = 80
 YANDEX_VIDEO_NETWORK_SLUG = "yandex_video"
 YANDEX_VIDEO_SIZE_SLUG = "1920x1080"
 YANDEX_VIDEO_MASK_SIZE = (1536, 1024)
+YANDEX_VIDEO_FAVICON_BBOX = (56, 799, 32, 32)
 YANDEX_VIDEO_TARGET_SITE_BBOX = (100, 795, 250, 40)
 YANDEX_VIDEO_TARGET_SITE_FONT_SIZE = 45
 YANDEX_VIDEO_TARGET_SITE_FILL = (255, 255, 255, 255)
+YANDEX_VIDEO_FAVICON_TIMEOUT_SECONDS = 1.5
+YANDEX_VIDEO_FAVICON_MAX_BYTES = 512 * 1024
+YANDEX_VIDEO_FAVICON_HTML_MAX_BYTES = 256 * 1024
+YANDEX_VIDEO_FAVICON_SVG_RENDER_SIZE = 96
+YANDEX_VIDEO_FAVICON_USER_AGENT = "reports-ad-bot/1.0"
+YANDEX_VIDEO_FAVICON_PATHS = ("/favicon.ico", "/favicon.png", "/apple-touch-icon.png")
 YANDEX_VIDEO_FONT_CANDIDATES = (
     "/usr/share/fonts/truetype/msttcorefonts/arialbd.ttf",
     "/usr/share/fonts/truetype/msttcorefonts/Arial_Bold.ttf",
@@ -99,6 +113,7 @@ async def generate_masked_banner(request: MaskedBannerRequest) -> MaskedBannerRe
             width=request.size.width,
             height=request.size.height,
             network_slug=request.network_slug,
+            target_site_url=request.target_site_url,
             target_site_display=request.target_site_display,
         )
     except ValidationError:
@@ -127,6 +142,7 @@ def compose_masked_banner(
     width: int,
     height: int,
     network_slug: str | None = None,
+    target_site_url: str | None = None,
     target_site_display: str | None = None,
 ) -> tuple[int, int]:
     if width <= 0 or height <= 0:
@@ -139,12 +155,13 @@ def compose_masked_banner(
                     raise ValidationError("Для Яндекс Видео нужно указать адрес целевого сайта.")
                 raw_mask = mask_raw.convert("RGBA")
                 creative = _clear_yandex_video_mask_region(creative, raw_mask)
-                creative = render_yandex_video_target_site(creative, target_site_display)
             mask = _prepare_mask_overlay(mask_raw.convert("RGBA"))
             if mask.size != (width, height):
                 raise ValidationError("Размер файла маски не совпадает с выбранным размером баннера.")
             pre_composite = creative.copy()
             result = Image.alpha_composite(creative, mask)
+            if network_slug == YANDEX_VIDEO_NETWORK_SLUG:
+                result = render_yandex_video_target_site(result, target_site_display or "", target_site_url=target_site_url)
             _log_composition_diagnostics(
                 network_slug=network_slug,
                 size=(width, height),
@@ -188,37 +205,187 @@ def _log_composition_diagnostics(*, network_slug: str | None, size: tuple[int, i
     )
 
 
-def render_yandex_video_target_site(base: Image.Image, display_text: str) -> Image.Image:
+def render_yandex_video_target_site(base: Image.Image, display_text: str, *, target_site_url: str | None = None) -> Image.Image:
     text = (display_text or "").strip()
     if not text:
         raise ValidationError("Адрес целевого сайта не должен быть пустым.")
     result = base.copy().convert("RGBA")
     width, height = result.size
-    scale_x = width / YANDEX_VIDEO_MASK_SIZE[0]
-    scale_y = height / YANDEX_VIDEO_MASK_SIZE[1]
-    x, y, box_width, box_height = YANDEX_VIDEO_TARGET_SITE_BBOX
-    box = _scale_yandex_video_bbox((width, height))
+    favicon_box = _scale_yandex_video_bbox((width, height), YANDEX_VIDEO_FAVICON_BBOX)
+    text_box = _scale_yandex_video_bbox((width, height), YANDEX_VIDEO_TARGET_SITE_BBOX)
+    favicon_present = _paste_target_site_favicon(result, target_site_url=target_site_url, box=favicon_box)
     draw = ImageDraw.Draw(result)
-    font = _fit_text_font(text=text, box_width=box[2], box_height=box[3], preferred_size=YANDEX_VIDEO_TARGET_SITE_FONT_SIZE)
+    font = _fit_text_font(text=text, box_width=text_box[2], box_height=text_box[3], preferred_size=YANDEX_VIDEO_TARGET_SITE_FONT_SIZE)
     text_bbox = draw.textbbox((0, 0), text, font=font)
     text_width = text_bbox[2] - text_bbox[0]
     text_height = text_bbox[3] - text_bbox[1]
-    text_x = box[0]
-    text_y = box[1] + max(0, (box[3] - text_height) // 2) - text_bbox[1]
+    text_x = text_box[0]
+    text_y = text_box[1] + max(0, (text_box[3] - text_height) // 2) - text_bbox[1]
     draw.text((text_x, text_y), text, fill=YANDEX_VIDEO_TARGET_SITE_FILL, font=font)
     logger.info(
-        "yandex_video_target_site_rendered text_length=%s box=%s font_class=%s font_size=%s fill=%s rendered_size=%sx%s",
+        "yandex_video_target_site_rendered text_length=%s text_box=%s favicon_box=%s favicon_present=%s font_class=%s font_size=%s fill=%s rendered_size=%sx%s",
         len(text),
-        box,
+        text_box,
+        favicon_box,
+        favicon_present,
         type(font).__name__,
         getattr(font, "size", "unknown"),
         YANDEX_VIDEO_TARGET_SITE_FILL,
         text_width,
         text_height,
     )
-    if text_width > box[2]:
-        logger.debug("yandex_video_target_site_text_overflow text_length=%s box_width=%s rendered_width=%s", len(text), box[2], text_width)
+    if text_width > text_box[2]:
+        logger.debug("yandex_video_target_site_text_overflow text_length=%s box_width=%s rendered_width=%s", len(text), text_box[2], text_width)
     return result
+
+
+def _paste_target_site_favicon(base: Image.Image, *, target_site_url: str | None, box: tuple[int, int, int, int]) -> bool:
+    favicon = _load_target_site_favicon(target_site_url)
+    if favicon is None:
+        return False
+    x, y, width, height = box
+    icon = favicon.convert("RGBA").resize((width, height), Image.Resampling.LANCZOS)
+    base.alpha_composite(icon, dest=(x, y))
+    return True
+
+
+def _load_target_site_favicon(target_site_url: str | None) -> Image.Image | None:
+    parsed = urlparse((target_site_url or "").strip())
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        logger.info("yandex_video_favicon_fetch_skipped reason=missing_public_url")
+        return None
+
+    hostname = parsed.hostname.lower()
+    if _hostname_resolves_to_private_address(hostname):
+        logger.warning("yandex_video_favicon_fetch_skipped host=%s reason=private_or_local_address", hostname)
+        return None
+
+    favicon_urls = [*(_discover_favicon_urls_from_homepage(target_site_url or "")), *(f"{parsed.scheme}://{hostname}{path}" for path in YANDEX_VIDEO_FAVICON_PATHS)]
+    seen_urls: set[str] = set()
+    for favicon_url in favicon_urls:
+        if favicon_url in seen_urls:
+            continue
+        seen_urls.add(favicon_url)
+        try:
+            favicon = _fetch_favicon_image_from_public_url(favicon_url)
+        except (HTTPError, URLError, TimeoutError, OSError, UnidentifiedImageError) as exc:
+            logger.debug("yandex_video_favicon_fetch_attempt_failed host=%s url=%s exception_class=%s", hostname, favicon_url, type(exc).__name__)
+            continue
+        logger.info("yandex_video_favicon_fetch_done host=%s url=%s size=%sx%s", hostname, favicon_url, favicon.width, favicon.height)
+        return favicon
+
+    logger.info("yandex_video_favicon_fetch_failed host=%s attempts=%s", hostname, len(seen_urls))
+    return None
+
+
+def _discover_favicon_urls_from_homepage(target_site_url: str) -> tuple[str, ...]:
+    try:
+        request = Request(target_site_url, headers={"User-Agent": YANDEX_VIDEO_FAVICON_USER_AGENT})
+        with urlopen(request, timeout=YANDEX_VIDEO_FAVICON_TIMEOUT_SECONDS) as response:
+            html = response.read(YANDEX_VIDEO_FAVICON_HTML_MAX_BYTES + 1)
+    except (HTTPError, URLError, TimeoutError, OSError) as exc:
+        logger.debug("yandex_video_favicon_html_fetch_failed url=%s exception_class=%s", target_site_url, type(exc).__name__)
+        return ()
+    if len(html) > YANDEX_VIDEO_FAVICON_HTML_MAX_BYTES:
+        logger.debug("yandex_video_favicon_html_fetch_truncated url=%s bytes=%s", target_site_url, len(html))
+        html = html[:YANDEX_VIDEO_FAVICON_HTML_MAX_BYTES]
+
+    parser = _FaviconLinkParser(base_url=target_site_url)
+    parser.feed(html.decode("utf-8", errors="ignore"))
+    urls = parser.icon_urls
+    logger.debug("yandex_video_favicon_html_links_found url=%s count=%s", target_site_url, len(urls))
+    return tuple(urls)
+
+
+class _FaviconLinkParser(HTMLParser):
+    def __init__(self, *, base_url: str) -> None:
+        super().__init__()
+        self._base_url = base_url
+        self.icon_urls: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag.lower() != "link":
+            return
+        attributes = {key.lower(): value for key, value in attrs if value is not None}
+        rel = attributes.get("rel", "").lower()
+        href = attributes.get("href")
+        if not href or "icon" not in rel:
+            return
+        icon_url = urljoin(self._base_url, href)
+        if icon_url not in self.icon_urls:
+            self.icon_urls.append(icon_url)
+
+
+def _fetch_favicon_image_from_public_url(favicon_url: str) -> Image.Image:
+    parsed = urlparse(favicon_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise OSError("favicon URL must be public http/https")
+    hostname = parsed.hostname.lower()
+    if _hostname_resolves_to_private_address(hostname):
+        raise OSError("favicon URL resolves to a private or local address")
+    return _fetch_favicon_image(favicon_url)
+
+
+def _fetch_favicon_image(favicon_url: str) -> Image.Image:
+    request = Request(favicon_url, headers={"User-Agent": YANDEX_VIDEO_FAVICON_USER_AGENT})
+    with urlopen(request, timeout=YANDEX_VIDEO_FAVICON_TIMEOUT_SECONDS) as response:
+        content = response.read(YANDEX_VIDEO_FAVICON_MAX_BYTES + 1)
+        content_type = response.headers.get("Content-Type", "")
+    if len(content) > YANDEX_VIDEO_FAVICON_MAX_BYTES:
+        raise OSError("favicon response is too large")
+    if _looks_like_svg_favicon(favicon_url=favicon_url, content_type=content_type, content=content):
+        return _render_svg_favicon(content)
+    with Image.open(io.BytesIO(content)) as favicon_raw:
+        return favicon_raw.convert("RGBA")
+
+
+def _looks_like_svg_favicon(*, favicon_url: str, content_type: str, content: bytes) -> bool:
+    if favicon_url.lower().split("?", 1)[0].endswith(".svg"):
+        return True
+    if "svg" in content_type.lower():
+        return True
+    return content.lstrip().startswith((b"<svg", b"<?xml")) and b"<svg" in content[:512]
+
+
+def _render_svg_favicon(content: bytes) -> Image.Image:
+    png_bytes = cairosvg.svg2png(
+        bytestring=content,
+        output_width=YANDEX_VIDEO_FAVICON_SVG_RENDER_SIZE,
+        output_height=YANDEX_VIDEO_FAVICON_SVG_RENDER_SIZE,
+        unsafe=False,
+    )
+    with Image.open(io.BytesIO(png_bytes)) as favicon_raw:
+        return favicon_raw.convert("RGBA")
+
+
+def _hostname_resolves_to_private_address(hostname: str) -> bool:
+    try:
+        address_infos = socket.getaddrinfo(hostname, None, proto=socket.IPPROTO_TCP)
+    except OSError as exc:
+        logger.debug("yandex_video_favicon_dns_failed host=%s exception_class=%s", hostname, type(exc).__name__)
+        return True
+
+    for address_info in address_infos:
+        address = address_info[4][0]
+        if _is_private_or_local_ip_address(address):
+            return True
+    return False
+
+
+def _is_private_or_local_ip_address(address: str) -> bool:
+    import ipaddress
+
+    ip_address = ipaddress.ip_address(address)
+    return any(
+        (
+            ip_address.is_loopback,
+            ip_address.is_private,
+            ip_address.is_link_local,
+            ip_address.is_multicast,
+            ip_address.is_reserved,
+            ip_address.is_unspecified,
+        )
+    )
 
 
 def _clear_yandex_video_mask_region(base: Image.Image, raw_mask: Image.Image) -> Image.Image:
@@ -242,11 +409,11 @@ def _clear_yandex_video_mask_region(base: Image.Image, raw_mask: Image.Image) ->
     return result
 
 
-def _scale_yandex_video_bbox(size: tuple[int, int]) -> tuple[int, int, int, int]:
+def _scale_yandex_video_bbox(size: tuple[int, int], bbox: tuple[int, int, int, int] = YANDEX_VIDEO_TARGET_SITE_BBOX) -> tuple[int, int, int, int]:
     width, height = size
     scale_x = width / YANDEX_VIDEO_MASK_SIZE[0]
     scale_y = height / YANDEX_VIDEO_MASK_SIZE[1]
-    x, y, box_width, box_height = YANDEX_VIDEO_TARGET_SITE_BBOX
+    x, y, box_width, box_height = bbox
     return (
         int(round(x * scale_x)),
         int(round(y * scale_y)),

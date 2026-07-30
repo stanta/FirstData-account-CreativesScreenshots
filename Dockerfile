@@ -19,7 +19,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     python -m pip install -r /tmp/requirements.txt
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends cabextract wget fonts-dejavu-core fonts-liberation2 fonts-urw-base35 fontconfig \
+    && apt-get install -y --no-install-recommends cabextract wget fonts-dejavu-core fonts-liberation2 fonts-urw-base35 fontconfig libcairo2 libpango-1.0-0 libpangocairo-1.0-0 libgdk-pixbuf-2.0-0 libffi8 \
     && mkdir -p /usr/share/fonts/truetype/msttcorefonts /usr/share/fonts/truetype/helvetica \
     && wget -O /tmp/arial32.exe https://downloads.sourceforge.net/corefonts/arial32.exe \
     && cabextract -q -d /usr/share/fonts/truetype/msttcorefonts /tmp/arial32.exe \

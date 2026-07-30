@@ -7,7 +7,8 @@ from reports_ad.bot import build_application
 from reports_ad.config import BotConfig
 from reports_ad.gemma_client import GemmaClientError, HeaderAuthGemmaClient, _banner_prompt, _composition_validation_crop_rect, _composition_validation_prompt, _parse_bbox_result, _parse_composition_validation_result, build_gemma_client_from_config
 from reports_ad.mask_catalog import get_banner_size, resolve_mask_asset
-from reports_ad.masked_banner import YANDEX_VIDEO_TARGET_SITE_BBOX, MaskedBannerRequest, MaskedBannerResult, compose_masked_banner, generate_masked_banner
+from reports_ad import masked_banner as masked_banner_module
+from reports_ad.masked_banner import YANDEX_VIDEO_FAVICON_BBOX, YANDEX_VIDEO_TARGET_SITE_BBOX, MaskedBannerRequest, MaskedBannerResult, compose_masked_banner, generate_masked_banner
 from reports_ad.models import BBoxDetectionResult, BoundingBox, CompositionValidationResult, CreativeInfo, Placement, ProofRequest, ProofResult, SourceScreenshotInfo
 from reports_ad.proof import compose_final_image
 from reports_ad.stage2_proof import AD_MARK_LABEL, compose_stage2_image, fallback_landing_bbox, generate_stage2_proof, validate_banner_bbox_semantics, select_valid_banner_bbox_with_feedback, compose_stage2_image_with_validation, _address_bar_only_height, _load_cyrillic_font, _render_ad_mark_label, _select_next_composition_bbox
@@ -103,7 +104,7 @@ def test_compose_masked_banner_resizes_creative_and_overlays_mask(tmp_path: Path
         assert result.getpixel((10, 10))[:3] != (220, 0, 0)
 
 
-def test_compose_yandex_video_renders_target_site_before_mask_overlay(tmp_path: Path) -> None:
+def test_compose_yandex_video_renders_target_site_after_mask_overlay_without_favicon(tmp_path: Path) -> None:
     creative_path = tmp_path / "creative.png"
     output_path = tmp_path / "yandex-video.png"
     Image.new("RGB", (640, 360), (20, 30, 40)).save(creative_path)
@@ -126,6 +127,79 @@ def test_compose_yandex_video_renders_target_site_before_mask_overlay(tmp_path: 
         target_crop = result.crop((x, y, x + box_width, y + box_height)).convert("RGB")
         blank = Image.new("RGB", target_crop.size, (20, 30, 40))
         assert ImageChops.difference(target_crop, blank).getbbox() is not None
+
+
+def test_compose_yandex_video_renders_target_site_favicon(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    creative_path = tmp_path / "creative.png"
+    output_path = tmp_path / "yandex-video-favicon.png"
+    Image.new("RGB", (640, 360), (20, 30, 40)).save(creative_path)
+    mask_asset = resolve_mask_asset("yandex_video", "1920x1080")
+
+    def fake_load_favicon(target_site_url: str | None) -> Image.Image:
+        assert target_site_url == "https://sberbank.com"
+        return Image.new("RGBA", (16, 16), (230, 20, 20, 255))
+
+    monkeypatch.setattr(masked_banner_module, "_load_target_site_favicon", fake_load_favicon)
+
+    width, height = compose_masked_banner(
+        creative_path=creative_path,
+        mask_path=mask_asset.path,
+        output_path=output_path,
+        width=1536,
+        height=1024,
+        network_slug="yandex_video",
+        target_site_url="https://sberbank.com",
+        target_site_display="sberbank.com",
+    )
+
+    assert (width, height) == (1536, 1024)
+    x, y, box_width, box_height = YANDEX_VIDEO_FAVICON_BBOX
+    with Image.open(output_path) as result:
+        assert result.size == (1536, 1024)
+        center_pixel = result.convert("RGBA").getpixel((x + box_width // 2, y + box_height // 2))
+        assert center_pixel[:3] == (230, 20, 20)
+
+
+def test_compose_yandex_video_ignores_missing_favicon(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    creative_path = tmp_path / "creative.png"
+    output_path = tmp_path / "yandex-video-no-favicon.png"
+    Image.new("RGB", (640, 360), (20, 30, 40)).save(creative_path)
+    mask_asset = resolve_mask_asset("yandex_video", "1920x1080")
+
+    monkeypatch.setattr(masked_banner_module, "_load_target_site_favicon", lambda target_site_url: None)
+
+    width, height = compose_masked_banner(
+        creative_path=creative_path,
+        mask_path=mask_asset.path,
+        output_path=output_path,
+        width=1536,
+        height=1024,
+        network_slug="yandex_video",
+        target_site_url="https://missing-icon.example.com",
+        target_site_display="missing-icon.example.com",
+    )
+
+    assert (width, height) == (1536, 1024)
+    assert output_path.exists()
+
+
+def test_favicon_link_parser_discovers_svg_icon_from_single_line_html() -> None:
+    html = '<!doctype html><html><head><link rel="shortcut icon" href="https://static.example.com/icon.svg" type="image/x-icon"></head></html>'
+    parser = masked_banner_module._FaviconLinkParser(base_url="https://firstdata.io")
+
+    parser.feed(html)
+
+    assert parser.icon_urls == ["https://static.example.com/icon.svg"]
+
+
+def test_render_svg_favicon_converts_svg_to_rgba_image() -> None:
+    svg = b'<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><rect width="16" height="16" fill="#18a058"/></svg>'
+
+    icon = masked_banner_module._render_svg_favicon(svg)
+
+    assert icon.mode == "RGBA"
+    assert icon.size == (masked_banner_module.YANDEX_VIDEO_FAVICON_SVG_RENDER_SIZE, masked_banner_module.YANDEX_VIDEO_FAVICON_SVG_RENDER_SIZE)
+    assert icon.getpixel((icon.width // 2, icon.height // 2))[:3] == (24, 160, 88)
 
 
 def test_compose_yandex_video_requires_target_site_display(tmp_path: Path) -> None:
