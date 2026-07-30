@@ -17,11 +17,37 @@ OPAQUE_MASK_BACKGROUND_ALPHA = 80
 YANDEX_VIDEO_NETWORK_SLUG = "yandex_video"
 YANDEX_VIDEO_SIZE_SLUG = "1920x1080"
 YANDEX_VIDEO_MASK_SIZE = (1536, 1024)
-YANDEX_VIDEO_TARGET_SITE_BBOX = (68, 794, 360, 56)
+YANDEX_VIDEO_TARGET_SITE_BBOX = (100, 795, 250, 40)
+YANDEX_VIDEO_TARGET_SITE_FONT_SIZE = 45
+YANDEX_VIDEO_TARGET_SITE_FILL = (255, 255, 255, 255)
 YANDEX_VIDEO_FONT_CANDIDATES = (
+    "/usr/share/fonts/truetype/msttcorefonts/arialbd.ttf",
+    "/usr/share/fonts/truetype/msttcorefonts/Arial_Bold.ttf",
+    "/usr/share/fonts/truetype/msttcorefonts/Arial Bold.ttf",
+    "/usr/share/fonts/truetype/msttcorefonts/arial.ttf",
+    "/usr/share/fonts/truetype/helvetica/Helvetica-Bold.ttf",
+    "/usr/share/fonts/truetype/helvetica/Helvetica.ttf",
+    "/usr/share/fonts/opentype/urw-base35/NimbusSans-Bold.otf",
+    "/usr/share/fonts/opentype/urw-base35/NimbusSans-Regular.otf",
+    "/usr/share/fonts/truetype/msttcorefonts/Arial_Bold.ttf",
+    "/usr/share/fonts/truetype/msttcorefonts/Arial Bold.ttf",
+    "/usr/share/fonts/truetype/msttcorefonts/arialbd.ttf",
+    "/Library/Fonts/Arial Bold.ttf",
+    "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+    "/Library/Fonts/Helvetica.ttc",
+    "/System/Library/Fonts/Helvetica.ttc",
+    "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
     "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
     "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
+    "/usr/local/share/fonts/DejaVuSans.ttf",
+    "/usr/local/lib/python3.14/site-packages/PIL/fonts/DejaVuSans.ttf",
+    "/usr/local/lib/python3.13/site-packages/PIL/fonts/DejaVuSans.ttf",
+    "/usr/local/lib/python3.12/site-packages/PIL/fonts/DejaVuSans.ttf",
+    "/usr/local/lib/python3.11/site-packages/PIL/fonts/DejaVuSans.ttf",
 )
 
 
@@ -111,6 +137,8 @@ def compose_masked_banner(
             if network_slug == YANDEX_VIDEO_NETWORK_SLUG:
                 if not target_site_display:
                     raise ValidationError("Для Яндекс Видео нужно указать адрес целевого сайта.")
+                raw_mask = mask_raw.convert("RGBA")
+                creative = _clear_yandex_video_mask_region(creative, raw_mask)
                 creative = render_yandex_video_target_site(creative, target_site_display)
             mask = _prepare_mask_overlay(mask_raw.convert("RGBA"))
             if mask.size != (width, height):
@@ -171,15 +199,46 @@ def render_yandex_video_target_site(base: Image.Image, display_text: str) -> Ima
     x, y, box_width, box_height = YANDEX_VIDEO_TARGET_SITE_BBOX
     box = _scale_yandex_video_bbox((width, height))
     draw = ImageDraw.Draw(result)
-    font = _fit_text_font(text=text, box_width=box[2], box_height=box[3])
+    font = _fit_text_font(text=text, box_width=box[2], box_height=box[3], preferred_size=YANDEX_VIDEO_TARGET_SITE_FONT_SIZE)
     text_bbox = draw.textbbox((0, 0), text, font=font)
     text_width = text_bbox[2] - text_bbox[0]
     text_height = text_bbox[3] - text_bbox[1]
     text_x = box[0]
     text_y = box[1] + max(0, (box[3] - text_height) // 2) - text_bbox[1]
-    draw.text((text_x, text_y), text, fill=(255, 255, 255, 255), font=font)
+    draw.text((text_x, text_y), text, fill=YANDEX_VIDEO_TARGET_SITE_FILL, font=font)
+    logger.info(
+        "yandex_video_target_site_rendered text_length=%s box=%s font_class=%s font_size=%s fill=%s rendered_size=%sx%s",
+        len(text),
+        box,
+        type(font).__name__,
+        getattr(font, "size", "unknown"),
+        YANDEX_VIDEO_TARGET_SITE_FILL,
+        text_width,
+        text_height,
+    )
     if text_width > box[2]:
         logger.debug("yandex_video_target_site_text_overflow text_length=%s box_width=%s rendered_width=%s", len(text), box[2], text_width)
+    return result
+
+
+def _clear_yandex_video_mask_region(base: Image.Image, raw_mask: Image.Image) -> Image.Image:
+    if raw_mask.size != base.size:
+        return base
+    result = base.copy().convert("RGBA")
+    alpha = raw_mask.getchannel("A")
+    alpha_bbox = alpha.getbbox()
+    if alpha_bbox is None:
+        logger.warning("yandex_video_mask_region_clear_skipped reason=empty_alpha mask_size=%sx%s", raw_mask.width, raw_mask.height)
+        return result
+    overlay = Image.new("RGBA", result.size, (0, 0, 0, 255))
+    result.paste(overlay, (0, 0), alpha)
+    logger.info(
+        "yandex_video_mask_region_cleared mask_size=%sx%s mask_alpha_extrema=%s mask_alpha_bbox=%s",
+        raw_mask.width,
+        raw_mask.height,
+        alpha.getextrema(),
+        alpha_bbox,
+    )
     return result
 
 
@@ -196,8 +255,8 @@ def _scale_yandex_video_bbox(size: tuple[int, int]) -> tuple[int, int, int, int]
     )
 
 
-def _fit_text_font(*, text: str, box_width: int, box_height: int) -> ImageFont.ImageFont:
-    max_size = max(12, min(34, box_height - 8))
+def _fit_text_font(*, text: str, box_width: int, box_height: int, preferred_size: int = 20) -> ImageFont.ImageFont:
+    max_size = max(12, min(preferred_size, box_height - 4))
     min_size = 12
     for size in range(max_size, min_size - 1, -2):
         font = _load_font(size)
@@ -209,8 +268,13 @@ def _fit_text_font(*, text: str, box_width: int, box_height: int) -> ImageFont.I
 
 def _load_font(size: int) -> ImageFont.ImageFont:
     for candidate in YANDEX_VIDEO_FONT_CANDIDATES:
-        if Path(candidate).exists():
-            return ImageFont.truetype(candidate, size=size)
+        try:
+            font = ImageFont.truetype(candidate, size=size)
+        except OSError:
+            continue
+        logger.debug("yandex_video_font_loaded source=%s requested_size=%s actual_size=%s", candidate, size, getattr(font, "size", "unknown"))
+        return font
+    logger.warning("yandex_video_font_fallback_to_default requested_size=%s", size)
     return ImageFont.load_default()
 
 
