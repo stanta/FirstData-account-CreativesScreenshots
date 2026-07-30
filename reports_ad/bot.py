@@ -19,23 +19,23 @@ from telegram_menu import BaseMessage
 from .config import BotConfig
 from .mask_catalog import (
     BannerSize,
-    get_banner_size,
+    get_banner_size_for_network,
     get_mask_network,
-    list_banner_sizes,
+    list_banner_sizes_for_network,
     list_mask_networks,
-    validate_banner_size_slug,
+    validate_banner_size_slug_for_network,
     validate_mask_network_slug,
 )
 from .masked_banner import MaskedBannerRequest, MaskedBannerResult, generate_masked_banner
 from .models import CreativeInfo
 from .proof import ScreenshotGenerationError
-from .validation import ValidationError, validate_creative_file
+from .validation import ValidationError, normalize_target_site_for_display, validate_creative_file
 
 logger = logging.getLogger(__name__)
 
-NETWORK, BANNER_TYPE, CREATIVE = range(3)
+NETWORK, BANNER_TYPE, CREATIVE, TARGET_SITE = range(4)
 BANNER_SIZE = BANNER_TYPE
-SCREENSHOT, LANDING_URL, UTM, REVIEW = range(3, 7)
+SCREENSHOT, LANDING_URL, UTM, REVIEW = range(4, 8)
 EDIT_TARGETS = {
     "network": NETWORK,
     "spec": BANNER_TYPE,
@@ -101,6 +101,7 @@ def build_application(
             NETWORK: [_start_button_handler(), MessageHandler(filters.TEXT & ~filters.COMMAND, collect_network)],
             BANNER_TYPE: [_start_button_handler(), MessageHandler(filters.TEXT & ~filters.COMMAND, collect_banner_type)],
             CREATIVE: [_start_button_handler(), MessageHandler((filters.PHOTO | filters.Document.IMAGE | filters.TEXT) & ~filters.COMMAND, collect_creative)],
+            TARGET_SITE: [_start_button_handler(), MessageHandler(filters.TEXT & ~filters.COMMAND, collect_target_site)],
         },
         fallbacks=[CommandHandler("cancel", cancel), CommandHandler("start", start), _start_button_handler()],
         allow_reentry=True,
@@ -116,6 +117,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await _reply_text_with_retry(
         update.effective_message,
         "Я сформирую баннер: выберите рекламную сеть → размер баннера → загрузите PNG/JPEG-креатив. "
+        "Для Яндекс Видео дополнительно попрошу адрес целевого сайта для поля слева от кнопки «Перейти». "
         "Система проверит файл, изменит его до выбранного размера, наложит маску и вернет результат в Telegram.\n\n"
         f"{NETWORK_MENU_PROMPT}\n"
         f"{catalog_summary()}\n\n"
@@ -171,9 +173,8 @@ async def collect_banner_type(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
         return NETWORK
 
-    allowed = {size.slug for size in list_banner_sizes()}
     try:
-        size_slug = validate_banner_size_slug(_menu_value(update.effective_message.text), allowed)
+        size_slug = validate_banner_size_slug_for_network(_menu_value(update.effective_message.text), network_slug)
     except ValidationError as exc:
         await _reply_text_with_retry(
             update.effective_message,
@@ -183,7 +184,7 @@ async def collect_banner_type(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
         return BANNER_TYPE
 
-    size = get_banner_size(size_slug)
+    size = get_banner_size_for_network(network_slug, size_slug)
     if size is None:
         await _reply_text_with_retry(update.effective_message, "Выбранный размер не поддерживается.", operation="collect_banner_type.unsupported.reply_text", reply_markup=spec_menu_keyboard(network_slug))
         return BANNER_TYPE
@@ -214,6 +215,31 @@ async def collect_creative(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return CREATIVE
 
     context.user_data["creative"] = creative_info
+    if _selected_flow_kind(context.user_data) == "yandex_video":
+        await _reply_text_with_retry(
+            message,
+            "Креатив принят. Отправьте адрес целевого сайта, который нужно показать слева от кнопки «Перейти».\n"
+            "Например: sberbank.com или https://www.sberbank.com",
+            operation="collect_creative.yandex_video_target_site_prompt.reply_text",
+        )
+        return TARGET_SITE
+    return await _generate(update, context)
+
+
+async def collect_target_site(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    message = update.effective_message
+    try:
+        target_site_url, target_site_display = normalize_target_site_for_display(message.text or "", allow_local=_config(context).allow_local_urls)
+    except ValidationError as exc:
+        await _reply_text_with_retry(
+            message,
+            f"Адрес целевого сайта не подходит: {exc.safe_message}\nВведите публичный домен или http/https URL, например sberbank.com или https://www.sberbank.com",
+            operation="collect_target_site.invalid.reply_text",
+        )
+        return TARGET_SITE
+
+    context.user_data["target_site_url"] = target_site_url
+    context.user_data["target_site_display"] = target_site_display
     return await _generate(update, context)
 
 
@@ -322,6 +348,8 @@ def _build_masked_banner_request(user_data: dict[str, Any], output_path: Path) -
         size=size,
         creative=user_data["creative"],
         output_path=output_path,
+        target_site_url=user_data.get("target_site_url"),
+        target_site_display=user_data.get("target_site_display"),
     )
 
 
@@ -339,6 +367,7 @@ def _review_text(user_data: dict[str, Any]) -> str:
         f"• сеть: {user_data['network_display_name']} ({user_data['network_slug']})\n"
         f"• размер баннера: {size.label}\n"
         f"• креатив: {creative.mime_type}, {creative.width}×{creative.height}, {creative.size_bytes} байт\n"
+        f"• целевой сайт: {user_data.get('target_site_display', 'не требуется')}\n"
         "• режим: resize + mask overlay/Pillow\n\n"
         f"{REVIEW_MENU_PROMPT}"
     )
@@ -441,7 +470,9 @@ def network_menu_keyboard() -> ReplyKeyboardMarkup:
     menu = ReportsAdMenuMessage(navigation=None, label="reports-ad-network", input_field="Выберите рекламную сеть")
     menu.keyboard = []
     for network in list_mask_networks():
-        label = _menu_label(network.display_name, network.slug, "3 размера")
+        size_count = len(list_banner_sizes_for_network(network.slug))
+        detail = f"{size_count} размер" if size_count == 1 else f"{size_count} размера"
+        label = _menu_label(network.display_name, network.slug, detail)
         _add_menu_row_button(menu, label=label, args=network.slug)
     return menu.gen_keyboard_content()
 
@@ -449,7 +480,7 @@ def network_menu_keyboard() -> ReplyKeyboardMarkup:
 def spec_menu_keyboard(network_slug: str = "") -> ReplyKeyboardMarkup:
     menu = ReportsAdMenuMessage(navigation=None, label=f"reports-ad-size-{network_slug or 'any'}", input_field=SPEC_MENU_PROMPT)
     menu.keyboard = []
-    for size in list_banner_sizes():
+    for size in _sizes_for_menu(network_slug):
         label = _size_menu_label(size)
         _add_menu_row_button(menu, label=label, args=size.slug)
     return menu.gen_keyboard_content()
@@ -476,11 +507,25 @@ def creative_upload_prompt(size: BannerSize) -> str:
 
 
 def catalog_summary(max_networks: int = 12) -> str:
-    return "\n".join(f"{index}. {network.display_name} — {network.slug} (3 размера)" for index, network in enumerate(list_mask_networks()[:max_networks], start=1))
+    return "\n".join(
+        f"{index}. {network.display_name} — {network.slug} ({len(list_banner_sizes_for_network(network.slug))} размер(а))"
+        for index, network in enumerate(list_mask_networks()[:max_networks], start=1)
+    )
 
 
 def specs_summary(network_slug: str = "", max_specs: int = 24) -> str:
-    return "\n".join(f"{index}. {size.label} — {size.slug}" for index, size in enumerate(list_banner_sizes()[:max_specs], start=1))
+    return "\n".join(f"{index}. {size.label} — {size.slug}" for index, size in enumerate(_sizes_for_menu(network_slug)[:max_specs], start=1))
+
+
+def _sizes_for_menu(network_slug: str = "") -> list[BannerSize]:
+    sizes = list_banner_sizes_for_network(network_slug) if network_slug else []
+    if sizes:
+        return sizes
+    all_sizes: dict[str, BannerSize] = {}
+    for network in list_mask_networks():
+        for size in list_banner_sizes_for_network(network.slug):
+            all_sizes.setdefault(size.slug, size)
+    return list(all_sizes.values())
 
 
 def _add_menu_row_button(menu: ReportsAdMenuMessage, *, label: str, args: str) -> None:
@@ -538,7 +583,7 @@ def _clear_for_edit(user_data: dict[str, Any], target: str) -> None:
 
 
 def _clear_from(user_data: dict[str, Any], key: str) -> None:
-    order = ["network_slug", "network_display_name", "banner_size_slug", "banner_size", "banner_type", "creative"]
+    order = ["network_slug", "network_display_name", "banner_size_slug", "banner_size", "banner_type", "creative", "target_site_url", "target_site_display"]
     if key not in order:
         return
     for candidate in order[order.index(key) :]:
@@ -564,6 +609,11 @@ def _edit_reply_markup(target: str, user_data: dict[str, Any]) -> ReplyKeyboardM
     if target in {"spec", "banner", "size"}:
         return spec_menu_keyboard(user_data.get("network_slug", ""))
     return ReplyKeyboardRemove()
+
+
+def _selected_flow_kind(user_data: dict[str, Any]) -> str:
+    network = get_mask_network(str(user_data.get("network_slug", "")))
+    return network.flow_kind if network else "masked_banner"
 
 
 async def _cleanup_state(user_data: dict[str, Any]) -> None:

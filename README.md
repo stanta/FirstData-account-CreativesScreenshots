@@ -10,9 +10,9 @@
   2. выбор размера баннера кнопкой `telegram_menu`;
   3. PNG/JPEG-креатив через Telegram-файл/фото или локальный путь в тестовом режиме;
   4. автоматическая проверка файла, resize до выбранного размера, наложение маски и возврат результата пользователю.
-- Runtime показывает только рекламные сети Mediasniper и Hybrid.
-- Runtime показывает только размеры `240x400`, `300x600`, `300x500`.
-- Маски берутся из `reports_ad/reports_ad/data/masks/<Network>/<Size>.png`.
+- Runtime показывает рекламные сети Mediasniper, Hybrid и Яндекс Видео.
+- Для Mediasniper и Hybrid runtime показывает размеры `240x400`, `300x600`, `300x500`; для Яндекс Видео — только `1920x1080`.
+- Маски берутся из `reports_ad/reports_ad/data/masks/<Network>/<Size>.png`. Для Яндекс Видео используется `reports_ad/reports_ad/data/masks/YandexVideo/1920x1080.png`; после загрузки креатива бот дополнительно запрашивает адрес целевого сайта и отрисовывает его слева от кнопки «Перейти».
 - Валидация проверяет MIME, расширение, размер файла и корректность PNG/JPEG; точное совпадение размеров входного креатива не требуется, потому что креатив приводится к выбранному размеру перед наложением маски.
 - Pillow generator изменяет креатив до выбранного размера, накладывает PNG-маску поверх и сохраняет итоговый PNG.
 - Нет сохранения истории задач; состояние диалога и per-user locks только в памяти процесса.
@@ -281,7 +281,8 @@ Use these changes as operational experiments, not default code changes: the corr
 Runtime-каталог масок находится в `reports_ad/reports_ad/mask_catalog.py` и жестко ограничивает production flow двумя сетями и тремя размерами:
 
 - Mediasniper: `reports_ad/reports_ad/data/masks/Mediasniper/240x400.png`, `300x600.png`, `300x500.png`;
-- Hybrid: `reports_ad/reports_ad/data/masks/Hybrid/240x400.png`, `300x600.png`, `300x500.png`.
+- Hybrid: `reports_ad/reports_ad/data/masks/Hybrid/240x400.png`, `300x600.png`, `300x500.png`;
+- Яндекс Видео: `reports_ad/reports_ad/data/masks/YandexVideo/1920x1080.png`.
 
 Если файл маски отсутствует или размер PNG-маски не совпадает с выбранным размером, пользователь получает безопасную ошибку без traceback и без внутренних путей. Итоговый файл отправляется как Telegram photo и как PNG document без сжатия.
 
