@@ -43,6 +43,7 @@ MASK_NETWORKS: tuple[MaskNetwork, ...] = (
     MaskNetwork(slug="mediasniper", display_name="Mediasniper", directory_name="Mediasniper"),
     MaskNetwork(slug="hybrid", display_name="Hybrid", directory_name="Hybrid"),
     MaskNetwork(slug="yandex_video", display_name="Яндекс Видео", directory_name="YandexVideo", flow_kind="yandex_video"),
+    MaskNetwork(slug="mediasniper_video", display_name="Mediasniper Video", directory_name="MediasniperVideo", flow_kind="yandex_video"),
 )
 
 STANDARD_BANNER_SIZES: tuple[BannerSize, ...] = (
@@ -53,11 +54,15 @@ STANDARD_BANNER_SIZES: tuple[BannerSize, ...] = (
 YANDEX_VIDEO_BANNER_SIZES: tuple[BannerSize, ...] = (
     BannerSize(slug="1920x1080", width=1536, height=1024, display_label="1920×1080"),
 )
-SUPPORTED_BANNER_SIZES: tuple[BannerSize, ...] = STANDARD_BANNER_SIZES + YANDEX_VIDEO_BANNER_SIZES
+MEDIASNIPER_VIDEO_BANNER_SIZES: tuple[BannerSize, ...] = (
+    BannerSize(slug="1920x1080", width=1920, height=1080, display_label="1920×1080"),
+)
+SUPPORTED_BANNER_SIZES: tuple[BannerSize, ...] = STANDARD_BANNER_SIZES + YANDEX_VIDEO_BANNER_SIZES + MEDIASNIPER_VIDEO_BANNER_SIZES
 NETWORK_BANNER_SIZES: dict[str, tuple[BannerSize, ...]] = {
     "mediasniper": STANDARD_BANNER_SIZES,
     "hybrid": STANDARD_BANNER_SIZES,
     "yandex_video": YANDEX_VIDEO_BANNER_SIZES,
+    "mediasniper_video": MEDIASNIPER_VIDEO_BANNER_SIZES,
 }
 
 
@@ -106,6 +111,14 @@ def normalize_mask_network_slug(value: str | None) -> str:
         "media_sniper": "mediasniper",
         "media-sniper": "mediasniper",
         "mediasniper": "mediasniper",
+        "media_sniper_video": "mediasniper_video",
+        "media-sniper-video": "mediasniper_video",
+        "mediasniper_video": "mediasniper_video",
+        "mediasniper-video": "mediasniper_video",
+        "mediasnipervideo": "mediasniper_video",
+        "медиаснайпер_видео": "mediasniper_video",
+        "медиаснайпер-видео": "mediasniper_video",
+        "медиаснайпер видео": "mediasniper_video",
         "hybryd": "hybrid",
         "hybrid": "hybrid",
         "yandex_video": "yandex_video",
@@ -126,7 +139,7 @@ def validate_mask_network_slug(raw_value: str, allowed_slugs: set[str] | None = 
     value = normalize_mask_network_slug(raw_value)
     allowed = allowed_slugs or {network.slug for network in MASK_NETWORKS}
     if value not in allowed:
-        raise ValidationError("Неизвестная рекламная сеть. Выберите Mediasniper, Hybrid или Яндекс Видео из меню.")
+        raise ValidationError("Неизвестная рекламная сеть. Выберите Mediasniper, Hybrid, Яндекс Видео или Mediasniper Video из меню.")
     return value
 
 
@@ -150,7 +163,7 @@ def validate_banner_size_slug_for_network(raw_value: str, network_slug: str) -> 
 def resolve_mask_asset(network_slug: str, size_slug: str) -> MaskAsset:
     network = get_mask_network(network_slug)
     if network is None:
-        raise ValidationError("Неизвестная рекламная сеть. Выберите Mediasniper, Hybrid или Яндекс Видео из меню.")
+        raise ValidationError("Неизвестная рекламная сеть. Выберите Mediasniper, Hybrid, Яндекс Видео или Mediasniper Video из меню.")
     size = get_banner_size_for_network(network.slug, size_slug)
     if size is None:
         raise ValidationError("Неизвестный размер баннера для выбранной сети. Выберите размер из меню.")

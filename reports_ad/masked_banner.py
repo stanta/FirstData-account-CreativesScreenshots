@@ -21,9 +21,13 @@ from .validation import ValidationError
 
 logger = logging.getLogger(__name__)
 OPAQUE_MASK_BACKGROUND_ALPHA = 80
+VIDEO_FLOW_NETWORK_SLUGS = frozenset({"yandex_video", "mediasniper_video"})
+VIDEO_FLOW_SIZE_SLUG = "1920x1080"
+VIDEO_FLOW_BASE_SIZE = (1536, 1024)
 YANDEX_VIDEO_NETWORK_SLUG = "yandex_video"
-YANDEX_VIDEO_SIZE_SLUG = "1920x1080"
-YANDEX_VIDEO_MASK_SIZE = (1536, 1024)
+MEDIASNIPER_VIDEO_NETWORK_SLUG = "mediasniper_video"
+YANDEX_VIDEO_SIZE_SLUG = VIDEO_FLOW_SIZE_SLUG
+YANDEX_VIDEO_MASK_SIZE = VIDEO_FLOW_BASE_SIZE
 YANDEX_VIDEO_FAVICON_BBOX = (56, 799, 32, 32)
 YANDEX_VIDEO_TARGET_SITE_BBOX = (100, 795, 250, 40)
 YANDEX_VIDEO_TARGET_SITE_FONT_SIZE = 45
@@ -34,6 +38,13 @@ YANDEX_VIDEO_FAVICON_HTML_MAX_BYTES = 256 * 1024
 YANDEX_VIDEO_FAVICON_SVG_RENDER_SIZE = 96
 YANDEX_VIDEO_FAVICON_USER_AGENT = "reports-ad-bot/1.0"
 YANDEX_VIDEO_FAVICON_PATHS = ("/favicon.ico", "/favicon.png", "/apple-touch-icon.png")
+MEDIASNIPER_VIDEO_SIZE = (1920, 1080)
+MEDIASNIPER_VIDEO_FAVICON_BBOX = (90, 785, 128, 128)
+MEDIASNIPER_VIDEO_TARGET_SITE_BBOX = (270, 765, 465, 75)
+MEDIASNIPER_VIDEO_CTA_BBOX = (780, 800, 370, 70)
+MEDIASNIPER_VIDEO_SKIP_BBOX = (1355, 800, 460, 60)
+MEDIASNIPER_VIDEO_AD_LABEL_BBOX = (90, 945, 270, 65)
+MEDIASNIPER_VIDEO_TEXT_FILL = (255, 255, 255, 255)
 YANDEX_VIDEO_FONT_CANDIDATES = (
     "/usr/share/fonts/truetype/msttcorefonts/arialbd.ttf",
     "/usr/share/fonts/truetype/msttcorefonts/Arial_Bold.ttf",
@@ -150,9 +161,9 @@ def compose_masked_banner(
     try:
         with Image.open(creative_path) as creative_raw, Image.open(mask_path) as mask_raw:
             creative = creative_raw.convert("RGBA").resize((width, height), Image.Resampling.LANCZOS)
-            if network_slug == YANDEX_VIDEO_NETWORK_SLUG:
+            if _is_video_flow(network_slug):
                 if not target_site_display:
-                    raise ValidationError("Для Яндекс Видео нужно указать адрес целевого сайта.")
+                    raise ValidationError("Для видео-flow нужно указать адрес целевого сайта.")
                 raw_mask = mask_raw.convert("RGBA")
                 creative = _clear_yandex_video_mask_region(creative, raw_mask)
             mask = _prepare_mask_overlay(mask_raw.convert("RGBA"))
@@ -162,6 +173,8 @@ def compose_masked_banner(
             result = Image.alpha_composite(creative, mask)
             if network_slug == YANDEX_VIDEO_NETWORK_SLUG:
                 result = render_yandex_video_target_site(result, target_site_display or "", target_site_url=target_site_url)
+            elif network_slug == MEDIASNIPER_VIDEO_NETWORK_SLUG:
+                result = render_mediasniper_video_overlay(result, target_site_display or "", target_site_url=target_site_url)
             _log_composition_diagnostics(
                 network_slug=network_slug,
                 size=(width, height),
@@ -186,7 +199,7 @@ def _log_composition_diagnostics(*, network_slug: str | None, size: tuple[int, i
     alpha = mask.getchannel("A")
     changed_bbox = ImageChops.difference(pre_composite.convert("RGB"), result.convert("RGB")).getbbox()
     target_region_changed = None
-    if network_slug == YANDEX_VIDEO_NETWORK_SLUG:
+    if _is_video_flow(network_slug):
         x, y, width, height = _scale_yandex_video_bbox(size)
         before_crop = pre_composite.crop((x, y, x + width, y + height)).convert("RGB")
         after_crop = result.crop((x, y, x + width, y + height)).convert("RGB")
@@ -239,6 +252,51 @@ def render_yandex_video_target_site(base: Image.Image, display_text: str, *, tar
     return result
 
 
+def render_mediasniper_video_overlay(base: Image.Image, display_text: str, *, target_site_url: str | None = None) -> Image.Image:
+    text = (display_text or "").strip()
+    if not text:
+        raise ValidationError("Адрес целевого сайта не должен быть пустым.")
+    result = base.copy().convert("RGBA")
+    if result.size != MEDIASNIPER_VIDEO_SIZE:
+        logger.warning("mediasniper_video_overlay_unexpected_size actual=%sx%s expected=%sx%s", result.width, result.height, *MEDIASNIPER_VIDEO_SIZE)
+
+    favicon_present = _paste_target_site_favicon(result, target_site_url=target_site_url, box=MEDIASNIPER_VIDEO_FAVICON_BBOX)
+    draw = ImageDraw.Draw(result)
+    site_font = _draw_fitted_text(draw, text=text, box=MEDIASNIPER_VIDEO_TARGET_SITE_BBOX, preferred_size=70, fill=MEDIASNIPER_VIDEO_TEXT_FILL)
+    cta_font = _draw_fitted_text(draw, text="Перейти", box=MEDIASNIPER_VIDEO_CTA_BBOX, preferred_size=58, fill=MEDIASNIPER_VIDEO_TEXT_FILL)
+    skip_font = _draw_fitted_text(draw, text="Пропустить 02", box=MEDIASNIPER_VIDEO_SKIP_BBOX, preferred_size=50, fill=MEDIASNIPER_VIDEO_TEXT_FILL)
+    ad_font = _draw_fitted_text(draw, text="Реклама", box=MEDIASNIPER_VIDEO_AD_LABEL_BBOX, preferred_size=58, fill=MEDIASNIPER_VIDEO_TEXT_FILL)
+    logger.info(
+        "mediasniper_video_overlay_rendered text_length=%s favicon_box=%s favicon_present=%s target_box=%s cta_box=%s skip_box=%s ad_box=%s site_font_size=%s cta_font_size=%s skip_font_size=%s ad_font_size=%s",
+        len(text),
+        MEDIASNIPER_VIDEO_FAVICON_BBOX,
+        favicon_present,
+        MEDIASNIPER_VIDEO_TARGET_SITE_BBOX,
+        MEDIASNIPER_VIDEO_CTA_BBOX,
+        MEDIASNIPER_VIDEO_SKIP_BBOX,
+        MEDIASNIPER_VIDEO_AD_LABEL_BBOX,
+        getattr(site_font, "size", "unknown"),
+        getattr(cta_font, "size", "unknown"),
+        getattr(skip_font, "size", "unknown"),
+        getattr(ad_font, "size", "unknown"),
+    )
+    return result
+
+
+def _draw_fitted_text(draw: ImageDraw.ImageDraw, *, text: str, box: tuple[int, int, int, int], preferred_size: int, fill: tuple[int, int, int, int]) -> ImageFont.ImageFont:
+    x, y, box_width, box_height = box
+    font = _fit_text_font(text=text, box_width=box_width, box_height=box_height, preferred_size=preferred_size)
+    text_bbox = draw.textbbox((0, 0), text, font=font)
+    text_width = text_bbox[2] - text_bbox[0]
+    text_height = text_bbox[3] - text_bbox[1]
+    text_x = x
+    text_y = y + max(0, (box_height - text_height) // 2) - text_bbox[1]
+    draw.text((text_x, text_y), text, fill=fill, font=font)
+    if text_width > box_width:
+        logger.debug("fitted_text_overflow text_length=%s box_width=%s rendered_width=%s", len(text), box_width, text_width)
+    return font
+
+
 def _paste_target_site_favicon(base: Image.Image, *, target_site_url: str | None, box: tuple[int, int, int, int]) -> bool:
     favicon = _load_target_site_favicon(target_site_url)
     if favicon is None:
@@ -260,16 +318,22 @@ def _load_target_site_favicon(target_site_url: str | None) -> Image.Image | None
         logger.warning("yandex_video_favicon_fetch_skipped host=%s reason=private_or_local_address", hostname)
         return None
 
-    favicon_urls = [*(_discover_favicon_urls_from_homepage(target_site_url or "")), *(f"{parsed.scheme}://{hostname}{path}" for path in YANDEX_VIDEO_FAVICON_PATHS)]
+    origin_urls = _target_site_origin_urls(parsed)
+    favicon_urls: list[str] = []
+    for origin_url in origin_urls:
+        favicon_urls.extend(_discover_favicon_urls_from_homepage(origin_url))
+    for origin_url in origin_urls:
+        favicon_urls.extend(f"{origin_url}{path}" for path in YANDEX_VIDEO_FAVICON_PATHS)
     seen_urls: set[str] = set()
     for favicon_url in favicon_urls:
         if favicon_url in seen_urls:
             continue
         seen_urls.add(favicon_url)
+        logger.info("yandex_video_favicon_fetch_attempt host=%s url=%s", hostname, favicon_url)
         try:
             favicon = _fetch_favicon_image_from_public_url(favicon_url)
         except (HTTPError, URLError, TimeoutError, OSError, UnidentifiedImageError) as exc:
-            logger.debug("yandex_video_favicon_fetch_attempt_failed host=%s url=%s exception_class=%s", hostname, favicon_url, type(exc).__name__)
+            logger.info("yandex_video_favicon_fetch_attempt_failed host=%s url=%s exception_class=%s", hostname, favicon_url, type(exc).__name__)
             continue
         logger.info("yandex_video_favicon_fetch_done host=%s url=%s size=%sx%s", hostname, favicon_url, favicon.width, favicon.height)
         return favicon
@@ -278,22 +342,45 @@ def _load_target_site_favicon(target_site_url: str | None) -> Image.Image | None
     return None
 
 
+def _target_site_origin_urls(parsed_url) -> tuple[str, ...]:
+    hostname = (parsed_url.hostname or "").strip().lower()
+    if not hostname:
+        return ()
+    hostnames = [hostname]
+    if hostname.startswith("www."):
+        apex_hostname = hostname[4:]
+        if apex_hostname and apex_hostname not in hostnames:
+            hostnames.append(apex_hostname)
+
+    origins: list[str] = []
+    for candidate_hostname in hostnames:
+        if candidate_hostname != hostname and _hostname_resolves_to_private_address(candidate_hostname):
+            logger.warning("yandex_video_favicon_origin_skipped host=%s reason=private_or_local_address", candidate_hostname)
+            continue
+        port = parsed_url.port
+        default_port = (parsed_url.scheme == "http" and port == 80) or (parsed_url.scheme == "https" and port == 443)
+        port_suffix = f":{port}" if port and not default_port else ""
+        origins.append(f"{parsed_url.scheme}://{candidate_hostname}{port_suffix}")
+    return tuple(origins)
+
+
 def _discover_favicon_urls_from_homepage(target_site_url: str) -> tuple[str, ...]:
     try:
+        logger.info("yandex_video_favicon_html_fetch_attempt url=%s", target_site_url)
         request = Request(target_site_url, headers={"User-Agent": YANDEX_VIDEO_FAVICON_USER_AGENT})
         with urlopen(request, timeout=YANDEX_VIDEO_FAVICON_TIMEOUT_SECONDS) as response:
             html = response.read(YANDEX_VIDEO_FAVICON_HTML_MAX_BYTES + 1)
     except (HTTPError, URLError, TimeoutError, OSError) as exc:
-        logger.debug("yandex_video_favicon_html_fetch_failed url=%s exception_class=%s", target_site_url, type(exc).__name__)
+        logger.info("yandex_video_favicon_html_fetch_failed url=%s exception_class=%s", target_site_url, type(exc).__name__)
         return ()
     if len(html) > YANDEX_VIDEO_FAVICON_HTML_MAX_BYTES:
-        logger.debug("yandex_video_favicon_html_fetch_truncated url=%s bytes=%s", target_site_url, len(html))
+        logger.info("yandex_video_favicon_html_fetch_truncated url=%s bytes=%s", target_site_url, len(html))
         html = html[:YANDEX_VIDEO_FAVICON_HTML_MAX_BYTES]
 
     parser = _FaviconLinkParser(base_url=target_site_url)
     parser.feed(html.decode("utf-8", errors="ignore"))
     urls = parser.icon_urls
-    logger.debug("yandex_video_favicon_html_links_found url=%s count=%s", target_site_url, len(urls))
+    logger.info("yandex_video_favicon_html_links_found url=%s count=%s", target_site_url, len(urls))
     return tuple(urls)
 
 
@@ -446,11 +533,15 @@ def _load_font(size: int) -> ImageFont.ImageFont:
 
 
 def _validate_masked_banner_request(request: MaskedBannerRequest) -> None:
-    if request.network_slug == YANDEX_VIDEO_NETWORK_SLUG:
-        if request.size_slug != YANDEX_VIDEO_SIZE_SLUG:
-            raise ValidationError("Яндекс Видео поддерживает только формат 1920×1080.")
+    if _is_video_flow(request.network_slug):
+        if request.size_slug != VIDEO_FLOW_SIZE_SLUG:
+            raise ValidationError("Видео-flow поддерживает только формат 1920×1080.")
         if not request.target_site_display:
-            raise ValidationError("Для Яндекс Видео нужно указать адрес целевого сайта.")
+            raise ValidationError("Для видео-flow нужно указать адрес целевого сайта.")
+
+
+def _is_video_flow(network_slug: str | None) -> bool:
+    return (network_slug or "") in VIDEO_FLOW_NETWORK_SLUGS
 
 
 def _prepare_mask_overlay(mask: Image.Image) -> Image.Image:
