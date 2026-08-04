@@ -201,6 +201,34 @@ def test_compose_yandex_video_renders_target_site_favicon(monkeypatch: pytest.Mo
         assert center_pixel[:3] == (230, 20, 20)
 
 
+def test_compose_yandex_video_uses_uploaded_favicon_when_provided(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    creative_path = tmp_path / "creative.png"
+    favicon_path = tmp_path / "favicon.png"
+    output_path = tmp_path / "yandex-video-uploaded-favicon.png"
+    Image.new("RGB", (640, 360), (20, 30, 40)).save(creative_path)
+    Image.new("RGBA", (24, 24), (20, 230, 40, 255)).save(favicon_path)
+    mask_asset = resolve_mask_asset("yandex_video", "1920x1080")
+    monkeypatch.setattr(masked_banner_module, "_load_target_site_favicon", lambda target_site_url: None)
+
+    width, height = compose_masked_banner(
+        creative_path=creative_path,
+        mask_path=mask_asset.path,
+        output_path=output_path,
+        width=1536,
+        height=1024,
+        network_slug="yandex_video",
+        target_site_url="https://missing-icon.example.com",
+        target_site_display="missing-icon.example.com",
+        favicon_path=favicon_path,
+    )
+
+    assert (width, height) == (1536, 1024)
+    x, y, box_width, box_height = YANDEX_VIDEO_FAVICON_BBOX
+    with Image.open(output_path) as result:
+        center_pixel = result.convert("RGBA").getpixel((x + box_width // 2, y + box_height // 2))
+        assert center_pixel[:3] == (20, 230, 40)
+
+
 def test_compose_yandex_video_ignores_missing_favicon(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     creative_path = tmp_path / "creative.png"
     output_path = tmp_path / "yandex-video-no-favicon.png"

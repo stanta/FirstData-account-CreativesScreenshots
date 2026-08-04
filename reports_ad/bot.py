@@ -26,16 +26,16 @@ from .mask_catalog import (
     validate_banner_size_slug_for_network,
     validate_mask_network_slug,
 )
-from .masked_banner import MaskedBannerRequest, MaskedBannerResult, generate_masked_banner
+from .masked_banner import MaskedBannerRequest, MaskedBannerResult, generate_masked_banner, _load_target_site_favicon
 from .models import CreativeInfo
 from .proof import ScreenshotGenerationError
 from .validation import ValidationError, normalize_target_site_for_display, validate_creative_file
 
 logger = logging.getLogger(__name__)
 
-NETWORK, BANNER_TYPE, CREATIVE, TARGET_SITE = range(4)
+NETWORK, BANNER_TYPE, CREATIVE, TARGET_SITE, FAVICON = range(5)
 BANNER_SIZE = BANNER_TYPE
-SCREENSHOT, LANDING_URL, UTM, REVIEW = range(4, 8)
+SCREENSHOT, LANDING_URL, UTM, REVIEW = range(5, 9)
 EDIT_TARGETS = {
     "network": NETWORK,
     "spec": BANNER_TYPE,
@@ -102,6 +102,7 @@ def build_application(
             BANNER_TYPE: [_start_button_handler(), MessageHandler(filters.TEXT & ~filters.COMMAND, collect_banner_type)],
             CREATIVE: [_start_button_handler(), MessageHandler((filters.PHOTO | filters.Document.IMAGE | filters.TEXT) & ~filters.COMMAND, collect_creative)],
             TARGET_SITE: [_start_button_handler(), MessageHandler(filters.TEXT & ~filters.COMMAND, collect_target_site)],
+            FAVICON: [_start_button_handler(), MessageHandler((filters.PHOTO | filters.Document.IMAGE | filters.TEXT) & ~filters.COMMAND, collect_favicon)],
         },
         fallbacks=[CommandHandler("cancel", cancel), CommandHandler("start", start), _start_button_handler()],
         allow_reentry=True,
@@ -240,6 +241,27 @@ async def collect_target_site(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     context.user_data["target_site_url"] = target_site_url
     context.user_data["target_site_display"] = target_site_display
+    if _selected_flow_kind(context.user_data) == "yandex_video" and _load_target_site_favicon(target_site_url) is None:
+        await _reply_text_with_retry(
+            message,
+            "Не удалось автоматически скачать favicon целевого сайта. Отправьте PNG/JPEG-иконку сайта как фото или документ — я добавлю её в видео-баннер.",
+            operation="collect_target_site.favicon_prompt.reply_text",
+        )
+        return FAVICON
+    return await _generate(update, context)
+
+
+async def collect_favicon(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    message = update.effective_message
+    if _selected_flow_kind(context.user_data) != "yandex_video":
+        return await _generate(update, context)
+    try:
+        favicon_info = await _save_and_validate_favicon(message, context, _config(context))
+    except ValidationError as exc:
+        await _reply_text_with_retry(message, f"Favicon не подходит: {exc.safe_message}\nОтправьте PNG/JPEG-иконку сайта еще раз.", operation="collect_favicon.invalid.reply_text")
+        return FAVICON
+
+    context.user_data["favicon"] = favicon_info
     return await _generate(update, context)
 
 
@@ -338,6 +360,35 @@ async def _save_and_validate_creative(message: Any, context: ContextTypes.DEFAUL
     raise ValidationError("Загрузите PNG/JPEG-файл как фото или документ.")
 
 
+async def _save_and_validate_favicon(message: Any, context: ContextTypes.DEFAULT_TYPE, config: BotConfig) -> CreativeInfo:
+    temp_dir = _ensure_temp_dir(context.user_data, config)
+    max_bytes = min(config.max_creative_bytes, 2 * 1024 * 1024)
+
+    if message.document:
+        document = message.document
+        if document.file_size and document.file_size > max_bytes:
+            raise ValidationError("Файл favicon превышает допустимый размер 2 МБ.")
+        suffix = Path(document.file_name or "favicon.png").suffix.lower() or ".png"
+        destination = temp_dir / f"favicon{suffix}"
+        tg_file = await document.get_file()
+        await tg_file.download_to_drive(custom_path=destination)
+        return validate_creative_file(destination, declared_mime_type=document.mime_type, max_bytes=max_bytes, max_pixels=1_000_000)
+
+    if message.photo:
+        photo = message.photo[-1]
+        if photo.file_size and photo.file_size > max_bytes:
+            raise ValidationError("Файл favicon превышает допустимый размер 2 МБ.")
+        destination = temp_dir / "favicon.jpg"
+        tg_file = await photo.get_file()
+        await tg_file.download_to_drive(custom_path=destination)
+        return validate_creative_file(destination, declared_mime_type="image/jpeg", max_bytes=max_bytes, max_pixels=1_000_000)
+
+    if message.text and config.allow_local_creative_path:
+        return validate_creative_file(Path(message.text.strip()), declared_mime_type=None, max_bytes=max_bytes, max_pixels=1_000_000)
+
+    raise ValidationError("Загрузите PNG/JPEG-favicon как фото или документ.")
+
+
 def _build_masked_banner_request(user_data: dict[str, Any], output_path: Path) -> MaskedBannerRequest:
     size: BannerSize = user_data["banner_size"]
     return MaskedBannerRequest(
@@ -350,6 +401,7 @@ def _build_masked_banner_request(user_data: dict[str, Any], output_path: Path) -
         output_path=output_path,
         target_site_url=user_data.get("target_site_url"),
         target_site_display=user_data.get("target_site_display"),
+        favicon_path=user_data["favicon"].path if isinstance(user_data.get("favicon"), CreativeInfo) else None,
     )
 
 
@@ -583,7 +635,7 @@ def _clear_for_edit(user_data: dict[str, Any], target: str) -> None:
 
 
 def _clear_from(user_data: dict[str, Any], key: str) -> None:
-    order = ["network_slug", "network_display_name", "banner_size_slug", "banner_size", "banner_type", "creative", "target_site_url", "target_site_display"]
+    order = ["network_slug", "network_display_name", "banner_size_slug", "banner_size", "banner_type", "creative", "target_site_url", "target_site_display", "favicon"]
     if key not in order:
         return
     for candidate in order[order.index(key) :]:

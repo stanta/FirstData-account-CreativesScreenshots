@@ -39,9 +39,9 @@ YANDEX_VIDEO_FAVICON_SVG_RENDER_SIZE = 96
 YANDEX_VIDEO_FAVICON_USER_AGENT = "reports-ad-bot/1.0"
 YANDEX_VIDEO_FAVICON_PATHS = ("/favicon.ico", "/favicon.png", "/apple-touch-icon.png")
 MEDIASNIPER_VIDEO_SIZE = (1920, 1080)
-MEDIASNIPER_VIDEO_FAVICON_BBOX = (90, 785, 128, 128)
+MEDIASNIPER_VIDEO_FAVICON_BBOX = (90, 765, 128, 128)
 MEDIASNIPER_VIDEO_TARGET_SITE_BBOX = (270, 765, 465, 75)
-MEDIASNIPER_VIDEO_CTA_BBOX = (780, 800, 370, 70)
+MEDIASNIPER_VIDEO_CTA_BBOX = (780, 780, 370, 70)
 MEDIASNIPER_VIDEO_SKIP_BBOX = (1355, 800, 460, 60)
 MEDIASNIPER_VIDEO_AD_LABEL_BBOX = (90, 945, 270, 65)
 MEDIASNIPER_VIDEO_TEXT_FILL = (255, 255, 255, 255)
@@ -87,6 +87,7 @@ class MaskedBannerRequest:
     output_path: Path
     target_site_url: str | None = None
     target_site_display: str | None = None
+    favicon_path: Path | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,6 +127,7 @@ async def generate_masked_banner(request: MaskedBannerRequest) -> MaskedBannerRe
             network_slug=request.network_slug,
             target_site_url=request.target_site_url,
             target_site_display=request.target_site_display,
+            favicon_path=request.favicon_path,
         )
     except ValidationError:
         raise
@@ -155,6 +157,7 @@ def compose_masked_banner(
     network_slug: str | None = None,
     target_site_url: str | None = None,
     target_site_display: str | None = None,
+    favicon_path: Path | None = None,
 ) -> tuple[int, int]:
     if width <= 0 or height <= 0:
         raise ValidationError("Размер баннера должен быть положительным.")
@@ -172,9 +175,9 @@ def compose_masked_banner(
             pre_composite = creative.copy()
             result = Image.alpha_composite(creative, mask)
             if network_slug == YANDEX_VIDEO_NETWORK_SLUG:
-                result = render_yandex_video_target_site(result, target_site_display or "", target_site_url=target_site_url)
+                result = render_yandex_video_target_site(result, target_site_display or "", target_site_url=target_site_url, favicon_path=favicon_path)
             elif network_slug == MEDIASNIPER_VIDEO_NETWORK_SLUG:
-                result = render_mediasniper_video_overlay(result, target_site_display or "", target_site_url=target_site_url)
+                result = render_mediasniper_video_overlay(result, target_site_display or "", target_site_url=target_site_url, favicon_path=favicon_path)
             _log_composition_diagnostics(
                 network_slug=network_slug,
                 size=(width, height),
@@ -218,7 +221,7 @@ def _log_composition_diagnostics(*, network_slug: str | None, size: tuple[int, i
     )
 
 
-def render_yandex_video_target_site(base: Image.Image, display_text: str, *, target_site_url: str | None = None) -> Image.Image:
+def render_yandex_video_target_site(base: Image.Image, display_text: str, *, target_site_url: str | None = None, favicon_path: Path | None = None) -> Image.Image:
     text = (display_text or "").strip()
     if not text:
         raise ValidationError("Адрес целевого сайта не должен быть пустым.")
@@ -226,7 +229,7 @@ def render_yandex_video_target_site(base: Image.Image, display_text: str, *, tar
     width, height = result.size
     favicon_box = _scale_yandex_video_bbox((width, height), YANDEX_VIDEO_FAVICON_BBOX)
     text_box = _scale_yandex_video_bbox((width, height), YANDEX_VIDEO_TARGET_SITE_BBOX)
-    favicon_present = _paste_target_site_favicon(result, target_site_url=target_site_url, box=favicon_box)
+    favicon_present = _paste_target_site_favicon(result, target_site_url=target_site_url, favicon_path=favicon_path, box=favicon_box)
     draw = ImageDraw.Draw(result)
     font = _fit_text_font(text=text, box_width=text_box[2], box_height=text_box[3], preferred_size=YANDEX_VIDEO_TARGET_SITE_FONT_SIZE)
     text_bbox = draw.textbbox((0, 0), text, font=font)
@@ -252,7 +255,7 @@ def render_yandex_video_target_site(base: Image.Image, display_text: str, *, tar
     return result
 
 
-def render_mediasniper_video_overlay(base: Image.Image, display_text: str, *, target_site_url: str | None = None) -> Image.Image:
+def render_mediasniper_video_overlay(base: Image.Image, display_text: str, *, target_site_url: str | None = None, favicon_path: Path | None = None) -> Image.Image:
     text = (display_text or "").strip()
     if not text:
         raise ValidationError("Адрес целевого сайта не должен быть пустым.")
@@ -260,7 +263,7 @@ def render_mediasniper_video_overlay(base: Image.Image, display_text: str, *, ta
     if result.size != MEDIASNIPER_VIDEO_SIZE:
         logger.warning("mediasniper_video_overlay_unexpected_size actual=%sx%s expected=%sx%s", result.width, result.height, *MEDIASNIPER_VIDEO_SIZE)
 
-    favicon_present = _paste_target_site_favicon(result, target_site_url=target_site_url, box=MEDIASNIPER_VIDEO_FAVICON_BBOX)
+    favicon_present = _paste_target_site_favicon(result, target_site_url=target_site_url, favicon_path=favicon_path, box=MEDIASNIPER_VIDEO_FAVICON_BBOX)
     draw = ImageDraw.Draw(result)
     site_font = _draw_fitted_text(draw, text=text, box=MEDIASNIPER_VIDEO_TARGET_SITE_BBOX, preferred_size=70, fill=MEDIASNIPER_VIDEO_TEXT_FILL)
     cta_font = _draw_fitted_text(draw, text="Перейти", box=MEDIASNIPER_VIDEO_CTA_BBOX, preferred_size=58, fill=MEDIASNIPER_VIDEO_TEXT_FILL)
@@ -297,14 +300,27 @@ def _draw_fitted_text(draw: ImageDraw.ImageDraw, *, text: str, box: tuple[int, i
     return font
 
 
-def _paste_target_site_favicon(base: Image.Image, *, target_site_url: str | None, box: tuple[int, int, int, int]) -> bool:
-    favicon = _load_target_site_favicon(target_site_url)
+def _paste_target_site_favicon(base: Image.Image, *, target_site_url: str | None, favicon_path: Path | None = None, box: tuple[int, int, int, int]) -> bool:
+    favicon = _load_uploaded_favicon(favicon_path) if favicon_path else _load_target_site_favicon(target_site_url)
     if favicon is None:
         return False
     x, y, width, height = box
     icon = favicon.convert("RGBA").resize((width, height), Image.Resampling.LANCZOS)
     base.alpha_composite(icon, dest=(x, y))
     return True
+
+
+def _load_uploaded_favicon(favicon_path: Path | None) -> Image.Image | None:
+    if favicon_path is None:
+        return None
+    try:
+        with Image.open(favicon_path) as favicon_raw:
+            favicon = favicon_raw.convert("RGBA")
+    except (UnidentifiedImageError, OSError) as exc:
+        logger.warning("uploaded_favicon_load_failed path=%s exception_class=%s", favicon_path.name, type(exc).__name__)
+        return None
+    logger.info("uploaded_favicon_loaded path=%s size=%sx%s", favicon_path.name, favicon.width, favicon.height)
+    return favicon
 
 
 def _load_target_site_favicon(target_site_url: str | None) -> Image.Image | None:

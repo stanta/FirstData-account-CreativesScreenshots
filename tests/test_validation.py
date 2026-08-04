@@ -8,6 +8,7 @@ from telegram.error import NetworkError, TimedOut
 from reports_ad.bot import (
     CREATIVE,
     EDIT_TARGETS,
+    FAVICON,
     REVIEW,
     REVIEW_MENU_ACTIONS,
     REVIEW_MENU_PROMPT,
@@ -27,6 +28,7 @@ from reports_ad.bot import (
     _telegram_send_with_retry,
     collect_banner_type,
     collect_creative,
+    collect_favicon,
     collect_network,
     collect_target_site,
     review_menu_action,
@@ -740,6 +742,46 @@ async def test_yandex_video_target_site_starts_generation_and_passes_display(tmp
     assert captured_requests[0].size_slug == "1920x1080"
     assert captured_requests[0].target_site_display == "sberbank.com"
     assert message.documents[-1]["filename"] == "yandex_video-1920x1080-masked-banner.png"
+
+
+@pytest.mark.asyncio
+async def test_yandex_video_target_site_prompts_for_manual_favicon_when_auto_fetch_fails(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    context = _FakeContext(BotConfig(telegram_token="test", temp_root=tmp_path))
+    context.user_data.update(_selected_yandex_video_flow_data(tmp_path, with_creative=True))
+    monkeypatch.setattr("reports_ad.bot._load_target_site_favicon", lambda target_site_url: None)
+    message = _FakeMessage("https://www.firstdata.io")
+
+    state = await collect_target_site(_FakeUpdate(message), context)
+
+    assert state == FAVICON
+    assert context.user_data["target_site_display"] == "firstdata.io"
+    assert "favicon" in message.replies[-1]["text"]
+
+
+@pytest.mark.asyncio
+async def test_video_flow_manual_favicon_upload_starts_generation(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    favicon_path = tmp_path / "favicon.png"
+    Image.new("RGB", (64, 64), "green").save(favicon_path)
+    context = _FakeContext(BotConfig(telegram_token="test", allow_local_creative_path=True, temp_root=tmp_path))
+    context.user_data.update(_selected_mediasniper_video_flow_data(tmp_path, with_creative=True))
+    context.user_data["target_site_url"] = "https://www.firstdata.io"
+    context.user_data["target_site_display"] = "firstdata.io"
+    captured_requests = []
+
+    async def fake_generator(request):
+        captured_requests.append(request)
+        request.output_path.write_bytes(b"fake-png")
+        return MaskedBannerResult(output_path=request.output_path, width=1920, height=1080, request_id=request.request_id, mask_asset=resolve_mask_asset(request.network_slug, request.size_slug))
+
+    context.bot_data["banner_generator"] = fake_generator
+    context.bot_data["user_locks"] = {}
+    message = _FakeMessage(str(favicon_path))
+
+    state = await collect_favicon(_FakeUpdate(message), context)
+
+    assert state == -1
+    assert captured_requests[0].favicon_path == favicon_path
+    assert message.documents[-1]["filename"] == "mediasniper_video-1920x1080-masked-banner.png"
 
 
 @pytest.mark.asyncio
