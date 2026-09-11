@@ -8,7 +8,7 @@ from reports_ad.config import BotConfig
 from reports_ad.gemma_client import GemmaClientError, HeaderAuthGemmaClient, _banner_prompt, _composition_validation_crop_rect, _composition_validation_prompt, _parse_bbox_result, _parse_composition_validation_result, build_gemma_client_from_config
 from reports_ad.mask_catalog import get_banner_size, resolve_mask_asset
 from reports_ad import masked_banner as masked_banner_module
-from reports_ad.masked_banner import MEDIASNIPER_VIDEO_AD_LABEL_BBOX, MEDIASNIPER_VIDEO_CTA_BBOX, MEDIASNIPER_VIDEO_FAVICON_BBOX, MEDIASNIPER_VIDEO_SKIP_BBOX, MEDIASNIPER_VIDEO_TARGET_SITE_BBOX, YANDEX_VIDEO_FAVICON_BBOX, YANDEX_VIDEO_TARGET_SITE_BBOX, MaskedBannerRequest, MaskedBannerResult, compose_masked_banner, generate_masked_banner
+from reports_ad.masked_banner import GETINTENT_VIDEO_MASK_SIZE, GETINTENT_VIDEO_MINIMUM_AGE_BBOX, MEDIASNIPER_VIDEO_AD_LABEL_BBOX, MEDIASNIPER_VIDEO_CTA_BBOX, MEDIASNIPER_VIDEO_FAVICON_BBOX, MEDIASNIPER_VIDEO_SKIP_BBOX, MEDIASNIPER_VIDEO_TARGET_SITE_BBOX, YANDEX_VIDEO_FAVICON_BBOX, YANDEX_VIDEO_TARGET_SITE_BBOX, MaskedBannerRequest, MaskedBannerResult, compose_masked_banner, generate_masked_banner
 from reports_ad.models import BBoxDetectionResult, BoundingBox, CompositionValidationResult, CreativeInfo, Placement, ProofRequest, ProofResult, SourceScreenshotInfo
 from reports_ad.proof import compose_final_image
 from reports_ad.stage2_proof import AD_MARK_LABEL, compose_stage2_image, fallback_landing_bbox, generate_stage2_proof, validate_banner_bbox_semantics, select_valid_banner_bbox_with_feedback, compose_stage2_image_with_validation, _address_bar_only_height, _load_cyrillic_font, _render_ad_mark_label, _select_next_composition_bbox
@@ -86,6 +86,11 @@ def test_resolve_mask_asset_supports_required_networks_and_sizes() -> None:
     assert mediasniper_video_asset.network.slug == "mediasniper_video"
     assert mediasniper_video_asset.size.slug == "1920x1080"
     assert mediasniper_video_asset.path.exists()
+
+    getintent_video_asset = resolve_mask_asset("getintent_video", "1920x1080")
+    assert getintent_video_asset.network.slug == "getintent_video"
+    assert (getintent_video_asset.size.width, getintent_video_asset.size.height) == GETINTENT_VIDEO_MASK_SIZE
+    assert getintent_video_asset.path.exists()
 
 
 def test_compose_masked_banner_resizes_creative_and_overlays_mask(tmp_path: Path) -> None:
@@ -311,6 +316,121 @@ def test_compose_mediasniper_video_requires_target_site_display(tmp_path: Path) 
             height=1080,
             network_slug="mediasniper_video",
         )
+
+
+@pytest.mark.parametrize("minimum_age", ["0", "12", "99"])
+def test_compose_getintent_video_renders_centered_age_without_background_panel(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, minimum_age: str) -> None:
+    creative_path = tmp_path / f"creative-{minimum_age}.png"
+    pre_age_path = tmp_path / f"pre-age-{minimum_age}.png"
+    output_path = tmp_path / f"getintent-{minimum_age}.png"
+    Image.new("RGB", GETINTENT_VIDEO_MASK_SIZE, (24, 36, 48)).save(creative_path)
+    mask_asset = resolve_mask_asset("getintent_video", "1920x1080")
+
+    original_renderer = masked_banner_module.render_getintent_video_minimum_age
+
+    def identity_renderer(base: Image.Image, age: str) -> Image.Image:
+        assert age == minimum_age
+        return base.copy()
+
+    monkeypatch.setattr(masked_banner_module, "render_getintent_video_minimum_age", identity_renderer)
+    compose_masked_banner(
+        creative_path=creative_path,
+        mask_path=mask_asset.path,
+        output_path=pre_age_path,
+        width=GETINTENT_VIDEO_MASK_SIZE[0],
+        height=GETINTENT_VIDEO_MASK_SIZE[1],
+        network_slug="getintent_video",
+        target_site_url="https://example.com",
+        target_site_display="example.com",
+        minimum_age=minimum_age,
+    )
+    monkeypatch.setattr(masked_banner_module, "render_getintent_video_minimum_age", original_renderer)
+
+    favicon_calls = 0
+
+    def fail_favicon_fetch(target_site_url: str | None):
+        nonlocal favicon_calls
+        favicon_calls += 1
+        raise AssertionError("GetIntent Video must not fetch a favicon")
+
+    monkeypatch.setattr(masked_banner_module, "_load_target_site_favicon", fail_favicon_fetch)
+    compose_masked_banner(
+        creative_path=creative_path,
+        mask_path=mask_asset.path,
+        output_path=output_path,
+        width=GETINTENT_VIDEO_MASK_SIZE[0],
+        height=GETINTENT_VIDEO_MASK_SIZE[1],
+        network_slug="getintent_video",
+        target_site_url="https://example.com",
+        target_site_display="example.com",
+        minimum_age=minimum_age,
+    )
+
+    assert favicon_calls == 0
+    assert GETINTENT_VIDEO_MINIMUM_AGE_BBOX == (1670, 180, 224, 110)
+    with Image.open(pre_age_path) as before_raw, Image.open(output_path) as after_raw:
+        before = before_raw.convert("RGB")
+        after = after_raw.convert("RGB")
+        diff_bbox = ImageChops.difference(before, after).getbbox()
+        assert diff_bbox is not None
+        x, y, box_width, box_height = GETINTENT_VIDEO_MINIMUM_AGE_BBOX
+        assert x <= diff_bbox[0] < diff_bbox[2] <= x + box_width
+        assert y <= diff_bbox[1] < diff_bbox[3] <= y + box_height
+        glyph_center = ((diff_bbox[0] + diff_bbox[2]) / 2, (diff_bbox[1] + diff_bbox[3]) / 2)
+        box_center = (x + box_width / 2, y + box_height / 2)
+        assert abs(glyph_center[0] - box_center[0]) <= 2
+        assert abs(glyph_center[1] - box_center[1]) <= 2
+        changed_pixels = sum(1 for pixel in ImageChops.difference(before, after).crop((x, y, x + box_width, y + box_height)).get_flattened_data() if pixel != (0, 0, 0))
+        assert changed_pixels < box_width * box_height * 0.45
+
+
+@pytest.mark.parametrize(
+    ("target_site_url", "target_site_display", "minimum_age"),
+    [(None, "example.com", "12"), ("https://example.com", None, "12"), ("https://example.com", "example.com", None), ("https://example.com", "example.com", "100")],
+)
+def test_compose_getintent_video_requires_address_and_valid_age(tmp_path: Path, target_site_url: str | None, target_site_display: str | None, minimum_age: str | None) -> None:
+    creative_path = tmp_path / "creative.png"
+    output_path = tmp_path / "getintent-invalid.png"
+    Image.new("RGB", GETINTENT_VIDEO_MASK_SIZE, (20, 30, 40)).save(creative_path)
+    mask_asset = resolve_mask_asset("getintent_video", "1920x1080")
+
+    with pytest.raises(ValidationError):
+        compose_masked_banner(
+            creative_path=creative_path,
+            mask_path=mask_asset.path,
+            output_path=output_path,
+            width=GETINTENT_VIDEO_MASK_SIZE[0],
+            height=GETINTENT_VIDEO_MASK_SIZE[1],
+            network_slug="getintent_video",
+            target_site_url=target_site_url,
+            target_site_display=target_site_display,
+            minimum_age=minimum_age,
+        )
+
+
+@pytest.mark.asyncio
+async def test_generate_getintent_video_passes_minimum_age(tmp_path: Path) -> None:
+    mask_asset = resolve_mask_asset("getintent_video", "1920x1080")
+    creative_path = tmp_path / "creative.png"
+    Image.new("RGB", (640, 360), (10, 120, 220)).save(creative_path)
+    creative = CreativeInfo(path=creative_path, mime_type="image/png", width=640, height=360, size_bytes=creative_path.stat().st_size)
+    request = MaskedBannerRequest(
+        request_id="req-getintent",
+        network_slug="getintent_video",
+        network_display_name="GetIntent Video",
+        size_slug="1920x1080",
+        size=mask_asset.size,
+        creative=creative,
+        output_path=tmp_path / "getintent.png",
+        target_site_url="https://example.com",
+        target_site_display="example.com",
+        minimum_age="12",
+    )
+
+    result = await generate_masked_banner(request)
+
+    assert (result.width, result.height) == GETINTENT_VIDEO_MASK_SIZE
+    assert result.output_path.exists()
 
 
 @pytest.mark.asyncio

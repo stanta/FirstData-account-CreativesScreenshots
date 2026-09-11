@@ -9,10 +9,14 @@
   1. выбор рекламной сети кнопкой reply-menu, построенной через `telegram_menu`;
   2. выбор размера баннера кнопкой `telegram_menu`;
   3. PNG/JPEG-креатив через Telegram-файл/фото или локальный путь в тестовом режиме;
-  4. автоматическая проверка файла, resize до выбранного размера, наложение маски и возврат результата пользователю.
-- Runtime показывает рекламные сети Mediasniper, Hybrid, Яндекс Видео и Mediasniper Video.
-- Для Mediasniper и Hybrid runtime показывает размеры `240x400`, `300x600`, `300x500`; для Яндекс Видео и Mediasniper Video — только `1920x1080`.
-- Маски берутся из `reports_ad/reports_ad/data/masks/<Network>/<Size>.png`. Для Яндекс Видео используется `reports_ad/reports_ad/data/masks/YandexVideo/1920x1080.png`, для Mediasniper Video — `reports_ad/reports_ad/data/masks/MediasniperVideo/1920x1080.png`; после загрузки креатива бот дополнительно запрашивает адрес целевого сайта и отрисовывает его favicon и домен слева от кнопки «Перейти».
+  4. для GetIntent Video — адрес целевого сайта и минимальный возраст `0..99` без знака `+`;
+  5. автоматическая проверка файла, resize до выбранного размера, наложение маски и возврат результата пользователю.
+- Runtime показывает рекламные сети Mediasniper, Hybrid, Яндекс Видео, Mediasniper Video и GetIntent Video.
+- Для Mediasniper и Hybrid runtime показывает размеры `240x400`, `300x600`, `300x500`; для Яндекс Видео, Mediasniper Video и GetIntent Video — единственный menu-format `1920x1080`.
+- Маски берутся из `reports_ad/reports_ad/data/masks/<Network>/<Size>.png`. Для Яндекс Видео используется `reports_ad/reports_ad/data/masks/YandexVideo/1920x1080.png`, для Mediasniper Video — `reports_ad/reports_ad/data/masks/MediasniperVideo/1920x1080.png`; после загрузки креатива бот дополнительно запрашивает адрес целевого сайта и сохраняет прежнее поведение favicon/domain.
+- GetIntent Video использует `reports_ad/reports_ad/data/masks/GetIntentVideo/1920x1080.png`. Существующий production asset имеет исходный размер `1920×1215`, поэтому композиция сохраняет этот размер и пересчитывает утвержденную для reference-size `1920×1080` age-box `(1746, 184, 112, 49)` в `(1746, 207, 112, 55)`. Белое жирное значение `<age>+` центрируется в этой области без фоновой панели.
+- GetIntent Video использует отдельный flow: сеть → `1920×1080` → PNG/JPEG → адрес целевого сайта → минимальный возраст → генерация. Адрес обязателен и хранится в request как normalized URL/display, но **не отрисовывается**: координаты нижнего блока не утверждены. Это явное отложенное ограничение MVP; speculative coordinates не используются.
+- GetIntent Video никогда не скачивает, не запрашивает, не принимает и не отрисовывает favicon.
 - Валидация проверяет MIME, расширение, размер файла и корректность PNG/JPEG; точное совпадение размеров входного креатива не требуется, потому что креатив приводится к выбранному размеру перед наложением маски.
 - Pillow generator изменяет креатив до выбранного размера, накладывает PNG-маску поверх и сохраняет итоговый PNG.
 - Нет сохранения истории задач; состояние диалога и per-user locks только в памяти процесса.
@@ -25,7 +29,7 @@
 - PyPI package name в lock/dependency metadata отображается как `telegram-menu`/`telegram_menu`; импорт в Python выполняется как `telegram_menu`.
 - Используется легкий adapter на `telegram_menu.BaseMessage`: бот остается на существующем `python-telegram-bot` `ConversationHandler` и polling lifecycle, а `telegram_menu` применяется для построения keyboard buttons только в двух шагах выбора.
 - После выбора рекламной сети бот сразу отправляет prompt `Теперь выберите размер баннера кнопкой меню telegram_menu:` и показывает `telegram_menu` reply-keyboard с размерами `240x400`, `300x600`, `300x500`; выбранный label вида `240×400 [240x400]` мапится обратно в slug размера.
-- После выбора размера бот просит отправить PNG/JPEG-креатив. После успешной проверки upload генерация запускается сразу: отдельные шаги screenshot, landing URL, UTM и review в новом flow не используются.
+- После выбора размера бот просит отправить PNG/JPEG-креатив. Для обычных масок генерация запускается сразу; Яндекс Видео и Mediasniper Video запрашивают адрес/favicon по прежнему flow, а GetIntent Video запрашивает адрес и минимальный возраст без favicon. Отдельные шаги screenshot, landing URL, UTM и review в новом flow не используются.
 - Полная `TelegramMenuSession` из библиотеки не включена, потому что она создает собственное приложение, persistence и handlers; это конфликтовало бы с текущим no-history runtime и существующим polling flow. Остальные шаги по-прежнему принимают текст/файл без меню.
 - На случай ручного ввода бот принимает как menu label вида `Mediasniper [mediasniper] — 3 размера`, так и сам slug.
 

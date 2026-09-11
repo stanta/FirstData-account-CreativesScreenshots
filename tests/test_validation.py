@@ -9,6 +9,7 @@ from reports_ad.bot import (
     CREATIVE,
     EDIT_TARGETS,
     FAVICON,
+    MINIMUM_AGE,
     REVIEW,
     REVIEW_MENU_ACTIONS,
     REVIEW_MENU_PROMPT,
@@ -29,6 +30,7 @@ from reports_ad.bot import (
     collect_banner_type,
     collect_creative,
     collect_favicon,
+    collect_minimum_age,
     collect_network,
     collect_target_site,
     review_menu_action,
@@ -42,7 +44,7 @@ from reports_ad.bot import (
 )
 from reports_ad.catalog import choose_placement_for_url, get_site_placement, get_spec, infer_media_type_from_spec, list_placement_site_entries, list_placement_sites, list_runtime_specs, placement_site_urls
 from reports_ad.config import BotConfig
-from reports_ad.mask_catalog import get_banner_size, resolve_mask_asset
+from reports_ad.mask_catalog import get_banner_size, get_mask_network, normalize_mask_network_slug, resolve_mask_asset
 from reports_ad.masked_banner import MaskedBannerResult
 from reports_ad.models import CreativeInfo, Placement
 from reports_ad.validation import (
@@ -54,6 +56,7 @@ from reports_ad.validation import (
     parse_utm_params,
     validate_creative_file,
     validate_creative_against_spec,
+    validate_minimum_age,
     validate_screenshot_file,
 )
 
@@ -92,6 +95,20 @@ def test_normalize_target_site_for_display_rejects_unsafe_hosts() -> None:
         normalize_target_site_for_display("file:///tmp/private.html")
     with pytest.raises(ValidationError):
         normalize_target_site_for_display("localhost:8000")
+
+
+@pytest.mark.parametrize(
+    ("raw_value", "expected"),
+    [("0", "0"), ("00", "0"), ("09", "9"), ("12", "12"), ("99", "99")],
+)
+def test_validate_minimum_age_accepts_ascii_boundaries_and_canonicalizes(raw_value: str, expected: str) -> None:
+    assert validate_minimum_age(raw_value) == expected
+
+
+@pytest.mark.parametrize("raw_value", ["", "12+", "100", "-1", "1.5", "age", "1 2", " 12", "12 ", "١٢", "１２"])
+def test_validate_minimum_age_rejects_invalid_forms(raw_value: str) -> None:
+    with pytest.raises(ValidationError, match="от 0 до 99"):
+        validate_minimum_age(raw_value)
 
 
 def test_parse_utm_rejects_duplicates() -> None:
@@ -309,6 +326,7 @@ def test_telegram_menu_network_keyboard_contains_catalog_slug() -> None:
     assert any("[hybrid]" in label for row in labels for label in row)
     assert any("[yandex_video]" in label for row in labels for label in row)
     assert any("[mediasniper_video]" in label for row in labels for label in row)
+    assert any("[getintent_video]" in label for row in labels for label in row)
     assert _menu_value("Mediasniper [mediasniper] — 3 размера") == "mediasniper"
 
 
@@ -345,6 +363,28 @@ def test_mediasniper_video_spec_keyboard_contains_only_1920x1080() -> None:
     assert mask_asset.path.exists()
     assert mask_asset.size.width == 1920
     assert mask_asset.size.height == 1080
+
+
+def test_getintent_video_catalog_aliases_menu_size_and_production_mask() -> None:
+    network = get_mask_network("getintent-video")
+    assert network is not None
+    assert network.slug == "getintent_video"
+    assert network.display_name == "GetIntent Video"
+    assert network.directory_name == "GetIntentVideo"
+    assert network.flow_kind == "getintent_video"
+    for alias in ("getintent_video", "getintent-video", "getintentvideo", "гетинтент видео", "гетинтент-видео"):
+        assert normalize_mask_network_slug(alias) == "getintent_video"
+
+    labels = [button.text for row in spec_menu_keyboard("getintent_video").keyboard for button in row]
+    assert labels == ["1920×1080 [1920x1080]"]
+    mask_asset = resolve_mask_asset("getintent_video", "1920x1080")
+    assert mask_asset.size.width == 1920
+    assert mask_asset.size.height == 1215
+    with Image.open(mask_asset.path) as image:
+        assert image.format == "PNG"
+        assert image.mode == "RGBA"
+        assert image.size == (1920, 1215)
+        image.verify()
 
 
 def test_spec_menu_prompt_uses_requested_telegram_menu_wording() -> None:
@@ -721,6 +761,61 @@ async def test_mediasniper_video_valid_creative_prompts_for_target_site_before_g
 
 
 @pytest.mark.asyncio
+async def test_getintent_video_flow_transitions_and_never_fetches_favicon(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    image_path = tmp_path / "creative.png"
+    Image.new("RGB", (640, 360), "red").save(image_path)
+    context = _FakeContext(BotConfig(telegram_token="test", allow_local_creative_path=True, temp_root=tmp_path))
+    context.user_data.update(_selected_getintent_video_flow_data(tmp_path))
+
+    def fail_favicon_fetch(target_site_url: str | None):
+        raise AssertionError("GetIntent Video must not fetch a favicon")
+
+    monkeypatch.setattr("reports_ad.bot._load_target_site_favicon", fail_favicon_fetch)
+    creative_message = _FakeMessage(str(image_path))
+    assert await collect_creative(_FakeUpdate(creative_message), context) == TARGET_SITE
+
+    target_message = _FakeMessage("https://www.sberbank.com/path")
+    assert await collect_target_site(_FakeUpdate(target_message), context) == MINIMUM_AGE
+    assert context.user_data["target_site_url"] == "https://www.sberbank.com/path"
+    assert context.user_data["target_site_display"] == "sberbank.com"
+    assert "возраст" in target_message.replies[-1]["text"]
+
+    captured_requests = []
+
+    async def fake_generator(request):
+        captured_requests.append(request)
+        request.output_path.write_bytes(b"fake-png")
+        return MaskedBannerResult(output_path=request.output_path, width=1920, height=1215, request_id=request.request_id, mask_asset=resolve_mask_asset(request.network_slug, request.size_slug))
+
+    context.bot_data["banner_generator"] = fake_generator
+    context.bot_data["user_locks"] = {}
+    age_message = _FakeMessage("09")
+    assert await collect_minimum_age(_FakeUpdate(age_message), context) == -1
+    request = captured_requests[0]
+    assert request.network_slug == "getintent_video"
+    assert request.target_site_url == "https://www.sberbank.com/path"
+    assert request.target_site_display == "sberbank.com"
+    assert request.minimum_age == "9"
+    assert request.favicon_path is None
+    assert age_message.documents[-1]["filename"] == "getintent_video-1920x1080-masked-banner.png"
+
+
+@pytest.mark.asyncio
+async def test_getintent_video_invalid_age_stays_in_minimum_age_state(tmp_path: Path) -> None:
+    context = _FakeContext(BotConfig(telegram_token="test", temp_root=tmp_path))
+    context.user_data.update(_selected_getintent_video_flow_data(tmp_path, with_creative=True))
+    context.user_data["target_site_url"] = "https://example.com"
+    context.user_data["target_site_display"] = "example.com"
+    message = _FakeMessage("12+")
+
+    state = await collect_minimum_age(_FakeUpdate(message), context)
+
+    assert state == MINIMUM_AGE
+    assert "minimum_age" not in context.user_data
+    assert "Минимальный возраст не подходит" in message.replies[-1]["text"]
+
+
+@pytest.mark.asyncio
 async def test_yandex_video_target_site_starts_generation_and_passes_display(tmp_path: Path) -> None:
     context = _FakeContext(BotConfig(telegram_token="test", temp_root=tmp_path))
     context.user_data.update(_selected_yandex_video_flow_data(tmp_path, with_creative=True))
@@ -944,6 +1039,23 @@ def _selected_mediasniper_video_flow_data(tmp_path: Path, *, with_creative: bool
     }
     if with_creative:
         creative_path = tmp_path / "creative-mediasniper-video.png"
+        Image.new("RGB", (640, 360), "red").save(creative_path)
+        data["creative"] = CreativeInfo(path=creative_path, mime_type="image/png", width=640, height=360, size_bytes=creative_path.stat().st_size)
+    return data
+
+
+def _selected_getintent_video_flow_data(tmp_path: Path, *, with_creative: bool = False) -> dict:
+    size = resolve_mask_asset("getintent_video", "1920x1080").size
+    data = {
+        "request_id": "test-request-getintent-video",
+        "network_slug": "getintent_video",
+        "network_display_name": "GetIntent Video",
+        "banner_size_slug": "1920x1080",
+        "banner_size": size,
+        "banner_type": size.label,
+    }
+    if with_creative:
+        creative_path = tmp_path / "creative-getintent-video.png"
         Image.new("RGB", (640, 360), "red").save(creative_path)
         data["creative"] = CreativeInfo(path=creative_path, mime_type="image/png", width=640, height=360, size_bytes=creative_path.stat().st_size)
     return data

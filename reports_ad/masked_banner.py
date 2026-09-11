@@ -17,7 +17,7 @@ from PIL import Image, ImageChops, ImageDraw, ImageFont, UnidentifiedImageError
 from .mask_catalog import BannerSize, MaskAsset, resolve_mask_asset
 from .models import CreativeInfo
 from .proof import ScreenshotGenerationError
-from .validation import ValidationError
+from .validation import ValidationError, validate_minimum_age
 
 logger = logging.getLogger(__name__)
 OPAQUE_MASK_BACKGROUND_ALPHA = 80
@@ -26,6 +26,7 @@ VIDEO_FLOW_SIZE_SLUG = "1920x1080"
 VIDEO_FLOW_BASE_SIZE = (1536, 1024)
 YANDEX_VIDEO_NETWORK_SLUG = "yandex_video"
 MEDIASNIPER_VIDEO_NETWORK_SLUG = "mediasniper_video"
+GETINTENT_VIDEO_NETWORK_SLUG = "getintent_video"
 YANDEX_VIDEO_SIZE_SLUG = VIDEO_FLOW_SIZE_SLUG
 YANDEX_VIDEO_MASK_SIZE = VIDEO_FLOW_BASE_SIZE
 YANDEX_VIDEO_FAVICON_BBOX = (56, 799, 32, 32)
@@ -45,6 +46,11 @@ MEDIASNIPER_VIDEO_CTA_BBOX = (780, 780, 370, 70)
 MEDIASNIPER_VIDEO_SKIP_BBOX = (1355, 800, 460, 60)
 MEDIASNIPER_VIDEO_AD_LABEL_BBOX = (90, 945, 270, 65)
 MEDIASNIPER_VIDEO_TEXT_FILL = (255, 255, 255, 255)
+GETINTENT_VIDEO_SIZE_SLUG = "1920x1080"
+GETINTENT_VIDEO_MASK_SIZE = (1920, 1215)
+GETINTENT_VIDEO_MINIMUM_AGE_BBOX = (1670, 130, 224, 60)
+GETINTENT_VIDEO_MINIMUM_AGE_FONT_SIZE = 90
+GETINTENT_VIDEO_TEXT_FILL = (255, 255, 255, 255)
 YANDEX_VIDEO_FONT_CANDIDATES = (
     "/usr/share/fonts/truetype/msttcorefonts/arialbd.ttf",
     "/usr/share/fonts/truetype/msttcorefonts/Arial_Bold.ttf",
@@ -88,6 +94,7 @@ class MaskedBannerRequest:
     target_site_url: str | None = None
     target_site_display: str | None = None
     favicon_path: Path | None = None
+    minimum_age: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,6 +135,7 @@ async def generate_masked_banner(request: MaskedBannerRequest) -> MaskedBannerRe
             target_site_url=request.target_site_url,
             target_site_display=request.target_site_display,
             favicon_path=request.favicon_path,
+            minimum_age=request.minimum_age,
         )
     except ValidationError:
         raise
@@ -158,6 +166,7 @@ def compose_masked_banner(
     target_site_url: str | None = None,
     target_site_display: str | None = None,
     favicon_path: Path | None = None,
+    minimum_age: str | None = None,
 ) -> tuple[int, int]:
     if width <= 0 or height <= 0:
         raise ValidationError("Размер баннера должен быть положительным.")
@@ -169,6 +178,12 @@ def compose_masked_banner(
                     raise ValidationError("Для видео-flow нужно указать адрес целевого сайта.")
                 raw_mask = mask_raw.convert("RGBA")
                 creative = _clear_yandex_video_mask_region(creative, raw_mask)
+            if network_slug == GETINTENT_VIDEO_NETWORK_SLUG:
+                if not target_site_url or not target_site_display:
+                    raise ValidationError("Для GetIntent Video нужно указать адрес целевого сайта.")
+                minimum_age = validate_minimum_age(minimum_age or "")
+                if (width, height) != GETINTENT_VIDEO_MASK_SIZE:
+                    raise ValidationError("Маска GetIntent Video должна использовать исходный размер 1920×1215.")
             mask = _prepare_mask_overlay(mask_raw.convert("RGBA"))
             if mask.size != (width, height):
                 raise ValidationError("Размер файла маски не совпадает с выбранным размером баннера.")
@@ -178,6 +193,9 @@ def compose_masked_banner(
                 result = render_yandex_video_target_site(result, target_site_display or "", target_site_url=target_site_url, favicon_path=favicon_path)
             elif network_slug == MEDIASNIPER_VIDEO_NETWORK_SLUG:
                 result = render_mediasniper_video_overlay(result, target_site_display or "", target_site_url=target_site_url, favicon_path=favicon_path)
+            elif network_slug == GETINTENT_VIDEO_NETWORK_SLUG:
+                # TODO: Render target_site_display when approved lower-block coordinates are supplied.
+                result = render_getintent_video_minimum_age(result, minimum_age or "")
             _log_composition_diagnostics(
                 network_slug=network_slug,
                 size=(width, height),
@@ -282,6 +300,37 @@ def render_mediasniper_video_overlay(base: Image.Image, display_text: str, *, ta
         getattr(cta_font, "size", "unknown"),
         getattr(skip_font, "size", "unknown"),
         getattr(ad_font, "size", "unknown"),
+    )
+    return result
+
+
+def render_getintent_video_minimum_age(base: Image.Image, minimum_age: str) -> Image.Image:
+    age_text = f"{validate_minimum_age(minimum_age)}+"
+    result = base.copy().convert("RGBA")
+    if result.size != GETINTENT_VIDEO_MASK_SIZE:
+        raise ValidationError("Маска GetIntent Video должна использовать исходный размер 1920×1215.")
+
+    draw = ImageDraw.Draw(result)
+    x, y, box_width, box_height = GETINTENT_VIDEO_MINIMUM_AGE_BBOX
+    font = _fit_text_font(
+        text=age_text,
+        box_width=box_width,
+        box_height=box_height,
+        preferred_size=GETINTENT_VIDEO_MINIMUM_AGE_FONT_SIZE,
+    )
+    text_bbox = draw.textbbox((0, 0), age_text, font=font)
+    text_width = text_bbox[2] - text_bbox[0]
+    text_height = text_bbox[3] - text_bbox[1]
+    text_x = x + (box_width - text_width) // 2 - text_bbox[0]
+    text_y = y + (box_height - text_height) // 2 - text_bbox[1]
+    draw.text((text_x, text_y), age_text, fill=GETINTENT_VIDEO_TEXT_FILL, font=font)
+    logger.info(
+        "getintent_video_minimum_age_rendered age=%s age_box=%s font_size=%s rendered_size=%sx%s",
+        minimum_age,
+        GETINTENT_VIDEO_MINIMUM_AGE_BBOX,
+        getattr(font, "size", "unknown"),
+        text_width,
+        text_height,
     )
     return result
 
@@ -554,6 +603,14 @@ def _validate_masked_banner_request(request: MaskedBannerRequest) -> None:
             raise ValidationError("Видео-flow поддерживает только формат 1920×1080.")
         if not request.target_site_display:
             raise ValidationError("Для видео-flow нужно указать адрес целевого сайта.")
+    if request.network_slug == GETINTENT_VIDEO_NETWORK_SLUG:
+        if request.size_slug != GETINTENT_VIDEO_SIZE_SLUG:
+            raise ValidationError("GetIntent Video поддерживает только формат 1920×1080.")
+        if request.size.width != GETINTENT_VIDEO_MASK_SIZE[0] or request.size.height != GETINTENT_VIDEO_MASK_SIZE[1]:
+            raise ValidationError("Маска GetIntent Video должна использовать исходный размер 1920×1215.")
+        if not request.target_site_url or not request.target_site_display:
+            raise ValidationError("Для GetIntent Video нужно указать адрес целевого сайта.")
+        validate_minimum_age(request.minimum_age or "")
 
 
 def _is_video_flow(network_slug: str | None) -> bool:

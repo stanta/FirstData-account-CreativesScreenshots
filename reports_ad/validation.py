@@ -132,6 +132,13 @@ def normalize_target_site_for_display(raw_value: str, *, allow_local: bool = Fal
     return normalized_url, display
 
 
+def validate_minimum_age(raw_value: str) -> str:
+    value = raw_value or ""
+    if not (1 <= len(value) <= 2) or any(character < "0" or character > "9" for character in value):
+        raise ValidationError("Введите минимальный возраст цифрами от 0 до 99 без знака «+», например 12.")
+    return str(int(value))
+
+
 def validate_banner_type(raw_value: str) -> str:
     value = (raw_value or "").strip()
     if not value:

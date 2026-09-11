@@ -29,13 +29,13 @@ from .mask_catalog import (
 from .masked_banner import MaskedBannerRequest, MaskedBannerResult, generate_masked_banner, _load_target_site_favicon
 from .models import CreativeInfo
 from .proof import ScreenshotGenerationError
-from .validation import ValidationError, normalize_target_site_for_display, validate_creative_file
+from .validation import ValidationError, normalize_target_site_for_display, validate_creative_file, validate_minimum_age
 
 logger = logging.getLogger(__name__)
 
-NETWORK, BANNER_TYPE, CREATIVE, TARGET_SITE, FAVICON = range(5)
+NETWORK, BANNER_TYPE, CREATIVE, TARGET_SITE, FAVICON, MINIMUM_AGE = range(6)
 BANNER_SIZE = BANNER_TYPE
-SCREENSHOT, LANDING_URL, UTM, REVIEW = range(5, 9)
+SCREENSHOT, LANDING_URL, UTM, REVIEW = range(6, 10)
 EDIT_TARGETS = {
     "network": NETWORK,
     "spec": BANNER_TYPE,
@@ -103,6 +103,7 @@ def build_application(
             CREATIVE: [_start_button_handler(), MessageHandler((filters.PHOTO | filters.Document.IMAGE | filters.TEXT) & ~filters.COMMAND, collect_creative)],
             TARGET_SITE: [_start_button_handler(), MessageHandler(filters.TEXT & ~filters.COMMAND, collect_target_site)],
             FAVICON: [_start_button_handler(), MessageHandler((filters.PHOTO | filters.Document.IMAGE | filters.TEXT) & ~filters.COMMAND, collect_favicon)],
+            MINIMUM_AGE: [_start_button_handler(), MessageHandler(filters.TEXT & ~filters.COMMAND, collect_minimum_age)],
         },
         fallbacks=[CommandHandler("cancel", cancel), CommandHandler("start", start), _start_button_handler()],
         allow_reentry=True,
@@ -118,7 +119,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await _reply_text_with_retry(
         update.effective_message,
         "Я сформирую баннер: выберите рекламную сеть → размер баннера → загрузите PNG/JPEG-креатив. "
-        "Для Медиаснайпер видео-flow дополнительно попрошу адрес целевого сайта для поля слева от кнопки «Перейти». "
+        "Для видео-flow дополнительно попрошу адрес целевого сайта. Для GetIntent Video после адреса попрошу минимальный возраст от 0 до 99 без знака «+». "
         "Система проверит файл, изменит его до выбранного размера, наложит маску и вернет результат в Telegram.\n\n"
         f"{NETWORK_MENU_PROMPT}\n"
         f"{catalog_summary()}\n\n"
@@ -216,12 +217,17 @@ async def collect_creative(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return CREATIVE
 
     context.user_data["creative"] = creative_info
-    if _selected_flow_kind(context.user_data) == "yandex_video":
+    if _selected_flow_kind(context.user_data) in {"yandex_video", "getintent_video"}:
+        flow_kind = _selected_flow_kind(context.user_data)
+        prompt = (
+            "Креатив принят. Отправьте адрес целевого сайта. Для GetIntent Video адрес сохраняется в заявке, но пока не отрисовывается.\n"
+            if flow_kind == "getintent_video"
+            else "Креатив принят. Отправьте адрес целевого сайта, который нужно показать слева от кнопки «Перейти».\n"
+        )
         await _reply_text_with_retry(
             message,
-            "Креатив принят. Отправьте адрес целевого сайта, который нужно показать слева от кнопки «Перейти».\n"
-            "Например: sberbank.com или https://www.sberbank.com",
-            operation="collect_creative.yandex_video_target_site_prompt.reply_text",
+            prompt + "Например: sberbank.com или https://www.sberbank.com",
+            operation="collect_creative.video_target_site_prompt.reply_text",
         )
         return TARGET_SITE
     return await _generate(update, context)
@@ -241,6 +247,13 @@ async def collect_target_site(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     context.user_data["target_site_url"] = target_site_url
     context.user_data["target_site_display"] = target_site_display
+    if _selected_flow_kind(context.user_data) == "getintent_video":
+        await _reply_text_with_retry(
+            message,
+            "Адрес принят. Введите минимальный возраст цифрами от 0 до 99 без знака «+», например 12. На баннере будет показано 12+.",
+            operation="collect_target_site.minimum_age_prompt.reply_text",
+        )
+        return MINIMUM_AGE
     if _selected_flow_kind(context.user_data) == "yandex_video" and _load_target_site_favicon(target_site_url) is None:
         await _reply_text_with_retry(
             message,
@@ -248,6 +261,24 @@ async def collect_target_site(update: Update, context: ContextTypes.DEFAULT_TYPE
             operation="collect_target_site.favicon_prompt.reply_text",
         )
         return FAVICON
+    return await _generate(update, context)
+
+
+async def collect_minimum_age(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    message = update.effective_message
+    if _selected_flow_kind(context.user_data) != "getintent_video":
+        return await _generate(update, context)
+    try:
+        minimum_age = validate_minimum_age(message.text or "")
+    except ValidationError as exc:
+        await _reply_text_with_retry(
+            message,
+            f"Минимальный возраст не подходит: {exc.safe_message}",
+            operation="collect_minimum_age.invalid.reply_text",
+        )
+        return MINIMUM_AGE
+
+    context.user_data["minimum_age"] = minimum_age
     return await _generate(update, context)
 
 
@@ -402,6 +433,7 @@ def _build_masked_banner_request(user_data: dict[str, Any], output_path: Path) -
         target_site_url=user_data.get("target_site_url"),
         target_site_display=user_data.get("target_site_display"),
         favicon_path=user_data["favicon"].path if isinstance(user_data.get("favicon"), CreativeInfo) else None,
+        minimum_age=user_data.get("minimum_age"),
     )
 
 
@@ -420,6 +452,7 @@ def _review_text(user_data: dict[str, Any]) -> str:
         f"• размер баннера: {size.label}\n"
         f"• креатив: {creative.mime_type}, {creative.width}×{creative.height}, {creative.size_bytes} байт\n"
         f"• целевой сайт: {user_data.get('target_site_display', 'не требуется')}\n"
+        f"• минимальный возраст: {user_data.get('minimum_age', 'не требуется')}\n"
         "• режим: resize + mask overlay/Pillow\n\n"
         f"{REVIEW_MENU_PROMPT}"
     )
@@ -635,7 +668,7 @@ def _clear_for_edit(user_data: dict[str, Any], target: str) -> None:
 
 
 def _clear_from(user_data: dict[str, Any], key: str) -> None:
-    order = ["network_slug", "network_display_name", "banner_size_slug", "banner_size", "banner_type", "creative", "target_site_url", "target_site_display", "favicon"]
+    order = ["network_slug", "network_display_name", "banner_size_slug", "banner_size", "banner_type", "creative", "target_site_url", "target_site_display", "minimum_age", "favicon"]
     if key not in order:
         return
     for candidate in order[order.index(key) :]:
