@@ -12,8 +12,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 REPORTS_AD_ROOT = REPO_ROOT / "reports_ad"
 DEFAULT_ARTIFACT_DIR = REPORTS_AD_ROOT / "tmp" / "telegram-e2e-artifacts"
 
-SOURCE_YANDEX_BANNER = REPO_ROOT / "docs" / "reports" / "examples" / "FD -- Примеры скриншотов" / "Яндекс" / "Яндекс_графический баннер.jpeg"
-CREATIVE_300_250 = REPO_ROOT / "docs" / "reports" / "examples" / "FD -- Примеры скриншотов" / "Медийка Ферст Дата" / "300-250.png"
+CREATIVE_240_400 = REPO_ROOT / "docs" / "reports" / "examples" / "FD -- Примеры скриншотов" / "Медийка Ферст Дата" / "240-400.png"
 
 REQUIRED_ENV_VARS = (
     "TELEGRAM_API_ID",
@@ -72,7 +71,7 @@ def require_live_e2e_config() -> TelegramE2EConfig:
 
 
 def assert_fixture_files_exist() -> None:
-    missing = [path for path in (SOURCE_YANDEX_BANNER, CREATIVE_300_250) if not path.exists()]
+    missing = [path for path in (CREATIVE_240_400,) if not path.exists()]
     if missing:
         pytest.fail("Missing E2E fixture files: " + redact_sensitive(", ".join(str(path) for path in missing)))
 

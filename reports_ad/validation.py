@@ -111,6 +111,34 @@ def merge_url_with_utm(target_url: str, utm_params: dict[str, str], *, allow_loc
     return urlunparse(parsed._replace(query=urlencode(merged_pairs, doseq=False)))
 
 
+def normalize_target_site_for_display(raw_value: str, *, allow_local: bool = False, max_display_chars: int = 42) -> tuple[str, str]:
+    value = (raw_value or "").strip()
+    if not value:
+        raise ValidationError("Адрес целевого сайта не должен быть пустым.")
+
+    candidate = value if value.startswith(("http://", "https://")) else f"https://{value}"
+    normalized_url = normalize_public_url(candidate, allow_local=allow_local)
+    parsed = urlparse(normalized_url)
+    hostname = (parsed.hostname or "").strip().lower()
+    if not hostname:
+        raise ValidationError("Адрес целевого сайта должен содержать домен.")
+
+    display_host = hostname[4:] if hostname.startswith("www.") else hostname
+    display = display_host.strip("/")
+    if not display or "." not in display:
+        raise ValidationError("Введите публичный домен или http/https URL целевого сайта.")
+    if max_display_chars > 1 and len(display) > max_display_chars:
+        display = f"{display[: max_display_chars - 1]}…"
+    return normalized_url, display
+
+
+def validate_minimum_age(raw_value: str) -> str:
+    value = raw_value or ""
+    if not (1 <= len(value) <= 2) or any(character < "0" or character > "9" for character in value):
+        raise ValidationError("Введите минимальный возраст цифрами от 0 до 99 без знака «+», например 12.")
+    return str(int(value))
+
+
 def validate_banner_type(raw_value: str) -> str:
     value = (raw_value or "").strip()
     if not value:

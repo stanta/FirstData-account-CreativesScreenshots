@@ -8,6 +8,8 @@ from telegram.error import NetworkError, TimedOut
 from reports_ad.bot import (
     CREATIVE,
     EDIT_TARGETS,
+    FAVICON,
+    MINIMUM_AGE,
     REVIEW,
     REVIEW_MENU_ACTIONS,
     REVIEW_MENU_PROMPT,
@@ -15,6 +17,7 @@ from reports_ad.bot import (
     SPEC_MENU_PROMPT,
     START_MENU_BUTTON,
     START_MENU_PROMPT,
+    TARGET_SITE,
     TELEGRAM_KEYBOARD_BUTTON_TEXT_LIMIT,
     TELEGRAM_SEND_MAX_ATTEMPTS,
     _menu_label,
@@ -26,7 +29,10 @@ from reports_ad.bot import (
     _telegram_send_with_retry,
     collect_banner_type,
     collect_creative,
+    collect_favicon,
+    collect_minimum_age,
     collect_network,
+    collect_target_site,
     review_menu_action,
     review_menu_keyboard,
     review_or_generate,
@@ -38,15 +44,19 @@ from reports_ad.bot import (
 )
 from reports_ad.catalog import choose_placement_for_url, get_site_placement, get_spec, infer_media_type_from_spec, list_placement_site_entries, list_placement_sites, list_runtime_specs, placement_site_urls
 from reports_ad.config import BotConfig
-from reports_ad.models import CreativeInfo, Placement, ProofResult
+from reports_ad.mask_catalog import get_banner_size, get_mask_network, normalize_mask_network_slug, resolve_mask_asset
+from reports_ad.masked_banner import MaskedBannerResult
+from reports_ad.models import CreativeInfo, Placement
 from reports_ad.validation import (
     ValidationError,
     merge_url_with_utm,
     normalize_placement,
     normalize_public_url,
+    normalize_target_site_for_display,
     parse_utm_params,
     validate_creative_file,
     validate_creative_against_spec,
+    validate_minimum_age,
     validate_screenshot_file,
 )
 
@@ -69,6 +79,36 @@ def test_parse_and_merge_utm_preserves_existing_query() -> None:
     utm = parse_utm_params("utm_source=telegram&utm_medium=cpc&utm_campaign=test")
     merged = merge_url_with_utm("https://example.com/landing?existing=1&utm_source=old", utm)
     assert merged == "https://example.com/landing?existing=1&utm_source=telegram&utm_medium=cpc&utm_campaign=test"
+
+
+def test_normalize_target_site_for_display_accepts_domain_and_full_url() -> None:
+    assert normalize_target_site_for_display("sberbank.com") == ("https://sberbank.com", "sberbank.com")
+
+    normalized_url, display = normalize_target_site_for_display("https://www.sberbank.com/ru/person/avto?utm_source=x")
+
+    assert normalized_url == "https://www.sberbank.com/ru/person/avto?utm_source=x"
+    assert display == "sberbank.com"
+
+
+def test_normalize_target_site_for_display_rejects_unsafe_hosts() -> None:
+    with pytest.raises(ValidationError):
+        normalize_target_site_for_display("file:///tmp/private.html")
+    with pytest.raises(ValidationError):
+        normalize_target_site_for_display("localhost:8000")
+
+
+@pytest.mark.parametrize(
+    ("raw_value", "expected"),
+    [("0", "0"), ("00", "0"), ("09", "9"), ("12", "12"), ("99", "99")],
+)
+def test_validate_minimum_age_accepts_ascii_boundaries_and_canonicalizes(raw_value: str, expected: str) -> None:
+    assert validate_minimum_age(raw_value) == expected
+
+
+@pytest.mark.parametrize("raw_value", ["", "12+", "100", "-1", "1.5", "age", "1 2", " 12", "12 ", "١٢", "１２"])
+def test_validate_minimum_age_rejects_invalid_forms(raw_value: str) -> None:
+    with pytest.raises(ValidationError, match="от 0 до 99"):
+        validate_minimum_age(raw_value)
 
 
 def test_parse_utm_rejects_duplicates() -> None:
@@ -282,26 +322,75 @@ def test_telegram_menu_network_keyboard_contains_catalog_slug() -> None:
     labels = [[button.text for button in row] for row in keyboard.keyboard]
     assert labels[0]
     assert all(row for row in labels)
-    assert any("[yandex_graphic_banners]" in label for row in labels for label in row)
-    assert _menu_value("Яндекс [yandex_graphic_banners] — 12 specs") == "yandex_graphic_banners"
+    assert any("[mediasniper]" in label for row in labels for label in row)
+    assert any("[hybrid]" in label for row in labels for label in row)
+    assert any("[yandex_video]" in label for row in labels for label in row)
+    assert any("[mediasniper_video]" in label for row in labels for label in row)
+    assert any("[getintent_video]" in label for row in labels for label in row)
+    assert _menu_value("Mediasniper [mediasniper] — 3 размера") == "mediasniper"
 
 
 def test_telegram_menu_spec_keyboard_is_filtered_by_network() -> None:
-    keyboard = spec_menu_keyboard("yandex_graphic_banners")
+    keyboard = spec_menu_keyboard("mediasniper")
     labels = [[button.text for button in row] for row in keyboard.keyboard]
     assert labels
     assert labels[0]
     assert all(row for row in labels)
     assert all(len(label) <= TELEGRAM_KEYBOARD_BUTTON_TEXT_LIMIT for row in labels for label in row)
-    assert any("[yandex-graphic-banners-300x250-image]" in label for row in labels for label in row)
-    assert all("yandex-graphic-banners" in label for row in labels for label in row)
+    assert any("[240x400]" in label for row in labels for label in row)
+    assert any("[300x600]" in label for row in labels for label in row)
+    assert any("[300x500]" in label for row in labels for label in row)
+    assert not any("[1920x1080]" in label for row in labels for label in row)
     assert keyboard.input_field_placeholder == SPEC_MENU_PROMPT
 
 
+def test_yandex_video_spec_keyboard_contains_only_1920x1080() -> None:
+    keyboard = spec_menu_keyboard("yandex_video")
+    labels = [button.text for row in keyboard.keyboard for button in row]
+
+    assert labels == ["1920×1080 [1920x1080]"]
+    assert resolve_mask_asset("yandex_video", "1920x1080").path.exists()
+    with pytest.raises(ValidationError):
+        resolve_mask_asset("mediasniper", "1920x1080")
+
+
+def test_mediasniper_video_spec_keyboard_contains_only_1920x1080() -> None:
+    keyboard = spec_menu_keyboard("mediasniper_video")
+    labels = [button.text for row in keyboard.keyboard for button in row]
+
+    assert labels == ["1920×1080 [1920x1080]"]
+    mask_asset = resolve_mask_asset("mediasniper_video", "1920x1080")
+    assert mask_asset.path.exists()
+    assert mask_asset.size.width == 1920
+    assert mask_asset.size.height == 1080
+
+
+def test_getintent_video_catalog_aliases_menu_size_and_production_mask() -> None:
+    network = get_mask_network("getintent-video")
+    assert network is not None
+    assert network.slug == "getintent_video"
+    assert network.display_name == "GetIntent Video"
+    assert network.directory_name == "GetIntentVideo"
+    assert network.flow_kind == "getintent_video"
+    for alias in ("getintent_video", "getintent-video", "getintentvideo", "гетинтент видео", "гетинтент-видео"):
+        assert normalize_mask_network_slug(alias) == "getintent_video"
+
+    labels = [button.text for row in spec_menu_keyboard("getintent_video").keyboard for button in row]
+    assert labels == ["1920×1080 [1920x1080]"]
+    mask_asset = resolve_mask_asset("getintent_video", "1920x1080")
+    assert mask_asset.size.width == 1920
+    assert mask_asset.size.height == 1215
+    with Image.open(mask_asset.path) as image:
+        assert image.format == "PNG"
+        assert image.mode == "RGBA"
+        assert image.size == (1920, 1215)
+        image.verify()
+
+
 def test_spec_menu_prompt_uses_requested_telegram_menu_wording() -> None:
-    prompt = spec_menu_prompt("yandex_graphic_banners")
-    assert prompt.startswith("Теперь выберите тип баннера/spec кнопкой меню telegram_menu:\n")
-    assert "yandex-graphic-banners-300x250-image" in prompt
+    prompt = spec_menu_prompt("mediasniper")
+    assert prompt.startswith("Теперь выберите размер баннера кнопкой меню telegram_menu:\n")
+    assert "240x400" in prompt
 
 
 def test_review_text_uses_russian_menu_prompt_without_old_instruction(tmp_path: Path) -> None:
@@ -311,8 +400,9 @@ def test_review_text_uses_russian_menu_prompt_without_old_instruction(tmp_path: 
 
     assert text.startswith("Проверьте заявку перед запуском:")
     assert REVIEW_MENU_PROMPT in text
-    assert "screenshot-only/Pillow" in text
-    assert "скриншот площадки:" in text
+    assert "resize + mask overlay/Pillow" in text
+    assert "размер баннера:" in text
+    assert "скриншот площадки:" not in text
     assert "Ответьте `yes`" not in text
     assert "edit network" not in text
 
@@ -342,11 +432,11 @@ def test_review_menu_action_maps_all_russian_labels_and_legacy_fallbacks() -> No
     assert review_menu_action("yes") == "generate"
     assert review_menu_action("edit network") == "network"
     assert review_menu_action("edit spec") == "spec"
-    assert review_menu_action("edit screenshot") == "screenshot"
+    assert review_menu_action("edit size") == "size"
     assert review_menu_action("edit creative") == "creative"
-    assert review_menu_action("edit landing") == "landing"
-    assert review_menu_action("edit utm") == "utm"
-    assert {action for action in REVIEW_MENU_ACTIONS.values() if action != "generate"} == set(EDIT_TARGETS) - {"banner", "screen"}
+    assert review_menu_action("edit landing") == "unknown_edit"
+    assert review_menu_action("edit utm") == "unknown_edit"
+    assert {action for action in REVIEW_MENU_ACTIONS.values() if action != "generate"} == {"network", "size", "creative"}
 
 
 @pytest.mark.asyncio
@@ -479,9 +569,9 @@ async def test_review_launch_menu_label_starts_generation_like_yes(tmp_path: Pat
     async def fake_generator(request):
         captured_requests.append(request)
         request.output_path.write_bytes(b"fake-png")
-        return ProofResult(output_path=request.output_path, width=1, height=1, effective_click_url="https://example.com", request_id=request.request_id)
+        return MaskedBannerResult(output_path=request.output_path, width=1, height=1, request_id=request.request_id, mask_asset=resolve_mask_asset(request.network_slug, request.size_slug))
 
-    context.bot_data["proof_generator"] = fake_generator
+    context.bot_data["banner_generator"] = fake_generator
     context.bot_data["user_locks"] = {}
     message = _FakeMessage("Запустить")
 
@@ -490,8 +580,8 @@ async def test_review_launch_menu_label_starts_generation_like_yes(tmp_path: Pat
     assert state == -1
     assert captured_requests
     assert message.replies[0]["reply_markup"].__class__.__name__ == "ReplyKeyboardRemove"
-    assert message.photos[-1]["caption"] == "Proof-скриншот готов."
-    assert message.documents[-1]["caption"] == "Proof-скриншот как документ без сжатия."
+    assert message.photos[-1]["caption"] == "Баннер с маской готов."
+    assert message.documents[-1]["caption"] == "PNG-баннер с маской без сжатия."
     document_keyboard_labels = [button.text for row in message.documents[-1]["reply_markup"].keyboard for button in row]
     assert document_keyboard_labels == ["Старт"]
     assert context.user_data == {}
@@ -507,9 +597,9 @@ async def test_start_button_invokes_existing_start_flow_and_resets_state(tmp_pat
 
     assert state == 0
     assert set(context.user_data) == {"request_id"}
-    assert message.replies[-1]["text"].startswith("Я сформирую proof-скриншот рекламного размещения.")
+    assert message.replies[-1]["text"].startswith("Я сформирую баннер:")
     labels = [[button.text for button in row] for row in message.replies[-1]["reply_markup"].keyboard]
-    assert any("[yandex_graphic_banners]" in label for row in labels for label in row)
+    assert any("[mediasniper]" in label for row in labels for label in row)
 
 
 @pytest.mark.asyncio
@@ -517,10 +607,8 @@ async def test_review_russian_edit_labels_transition_to_expected_states(tmp_path
     expected_states = {
         "Изменить рекламную сеть": 0,
         "Изменить тип баннера": 1,
-        "Изменить скриншот площадки": SCREENSHOT,
+        "Изменить размер баннера": 1,
         "Изменить креатив": CREATIVE,
-        "Изменить landing URL": 4,
-        "Изменить UTM-строку": 5,
     }
     for label, expected_state in expected_states.items():
         context = _FakeContext(BotConfig(telegram_token="test", temp_root=tmp_path))
@@ -543,7 +631,7 @@ async def test_review_russian_edit_labels_transition_to_expected_states(tmp_path
 
 @pytest.mark.asyncio
 async def test_network_selection_immediately_sends_filtered_spec_menu() -> None:
-    message = _FakeMessage("Яндекс [yandex_graphic_banners] — 12 specs")
+    message = _FakeMessage("Mediasniper [mediasniper] — 3 размера")
     update = _FakeUpdate(message)
     context = _FakeContext()
 
@@ -552,15 +640,40 @@ async def test_network_selection_immediately_sends_filtered_spec_menu() -> None:
     reply = message.replies[-1]
     labels = [[button.text for button in row] for row in reply["reply_markup"].keyboard]
     assert state == 1
-    assert reply["text"].startswith("Сеть выбрана: Яндекс.\nТеперь выберите тип баннера/spec кнопкой меню telegram_menu:")
-    assert any("[yandex-graphic-banners-300x250-image]" in label for row in labels for label in row)
-    assert all("yandex-graphic-banners" in label for row in labels for label in row)
+    assert reply["text"].startswith("Сеть выбрана: Mediasniper.\nТеперь выберите размер баннера кнопкой меню telegram_menu:")
+    assert any("[240x400]" in label for row in labels for label in row)
 
 
 @pytest.mark.asyncio
-async def test_network_menu_button_then_spec_menu_button_advances_to_screenshot_upload_step() -> None:
+async def test_yandex_video_network_selection_sends_1920x1080_spec_menu() -> None:
+    message = _FakeMessage("Яндекс Видео [yandex_video] — 1 размер")
     context = _FakeContext()
-    network_message = _FakeMessage("Яндекс [yandex_graphic_banners] — 12 specs")
+
+    state = await collect_network(_FakeUpdate(message), context)
+
+    labels = [button.text for row in message.replies[-1]["reply_markup"].keyboard for button in row]
+    assert state == 1
+    assert context.user_data["network_slug"] == "yandex_video"
+    assert labels == ["1920×1080 [1920x1080]"]
+
+
+@pytest.mark.asyncio
+async def test_mediasniper_video_network_selection_sends_1920x1080_spec_menu() -> None:
+    message = _FakeMessage("Mediasniper Video [mediasniper_video] — 1 размер")
+    context = _FakeContext()
+
+    state = await collect_network(_FakeUpdate(message), context)
+
+    labels = [button.text for row in message.replies[-1]["reply_markup"].keyboard for button in row]
+    assert state == 1
+    assert context.user_data["network_slug"] == "mediasniper_video"
+    assert labels == ["1920×1080 [1920x1080]"]
+
+
+@pytest.mark.asyncio
+async def test_network_menu_button_then_size_menu_button_advances_to_creative_upload_step() -> None:
+    context = _FakeContext()
+    network_message = _FakeMessage("Mediasniper [mediasniper] — 3 размера")
 
     network_state = await collect_network(_FakeUpdate(network_message), context)
     spec_keyboard = network_message.replies[-1]["reply_markup"]
@@ -568,30 +681,28 @@ async def test_network_menu_button_then_spec_menu_button_advances_to_screenshot_
         button.text
         for row in spec_keyboard.keyboard
         for button in row
-        if "[yandex-graphic-banners-300x250-image]" in button.text
+        if "[240x400]" in button.text
     )
     spec_message = _FakeMessage(spec_label)
 
     spec_state = await collect_banner_type(_FakeUpdate(spec_message), context)
 
     assert network_state == 1
-    assert spec_state == SCREENSHOT
-    assert context.user_data["network_slug"] == "yandex_graphic_banners"
-    assert context.user_data["spec"].slug == "yandex-graphic-banners-300x250-image"
-    assert "Отправьте готовый скриншот площадки" in spec_message.replies[-1]["text"]
-    assert "до 10 МБ" in spec_message.replies[-1]["text"]
+    assert spec_state == CREATIVE
+    assert context.user_data["network_slug"] == "mediasniper"
+    assert context.user_data["banner_size_slug"] == "240x400"
+    assert "Отправьте PNG/JPEG-креатив" in spec_message.replies[-1]["text"]
+    assert "240×400" in spec_message.replies[-1]["text"]
     assert "Введите URL рекламной страницы" not in spec_message.replies[-1]["text"]
 
 
 @pytest.mark.asyncio
 async def test_invalid_creative_stays_in_creative_upload_state_and_asks_reupload(tmp_path: Path) -> None:
-    spec = get_spec("yandex-graphic-banners-300x250-image")
-    assert spec is not None
     image_path = tmp_path / "wrong-type.gif"
     Image.new("RGB", (320, 250), "red").save(image_path)
     message = _FakeMessage(str(image_path))
     context = _FakeContext(BotConfig(telegram_token="test", allow_local_creative_path=True, temp_root=tmp_path))
-    context.user_data["spec"] = spec
+    context.user_data.update(_selected_mask_flow_data(tmp_path))
 
     state = await collect_creative(_FakeUpdate(message), context)
 
@@ -602,23 +713,206 @@ async def test_invalid_creative_stays_in_creative_upload_state_and_asks_reupload
 
 
 @pytest.mark.asyncio
-async def test_valid_creative_transitions_to_landing_prompt_state(tmp_path: Path) -> None:
-    spec = get_spec("yandex-graphic-banners-300x250-image")
-    assert spec is not None
+async def test_valid_creative_generates_masked_banner_and_cleans_state(tmp_path: Path) -> None:
     image_path = tmp_path / "creative.png"
     Image.new("RGB", (300, 250), "red").save(image_path)
     message = _FakeMessage(str(image_path))
     context = _FakeContext(BotConfig(telegram_token="test", allow_local_creative_path=True, temp_root=tmp_path))
-    context.user_data["spec"] = spec
-    screenshot_path = tmp_path / "source.png"
-    Image.new("RGB", (800, 600), "white").save(screenshot_path)
-    context.user_data["source_screenshot"] = validate_screenshot_file(screenshot_path)
+    context.user_data.update(_selected_mask_flow_data(tmp_path))
 
     state = await collect_creative(_FakeUpdate(message), context)
 
-    assert state == 4
-    assert context.user_data["creative"].width == 300
-    assert message.replies[-1]["text"] == "Креатив принят. Введите landing URL, который нужно показать в нижней области proof-скриншота."
+    assert state == -1
+    assert context.user_data == {}
+    assert message.photos[-1]["caption"] == "Баннер с маской готов."
+    assert message.documents[-1]["filename"] == "mediasniper-240x400-masked-banner.png"
+
+
+@pytest.mark.asyncio
+async def test_yandex_video_valid_creative_prompts_for_target_site_before_generation(tmp_path: Path) -> None:
+    image_path = tmp_path / "creative.png"
+    Image.new("RGB", (640, 360), "red").save(image_path)
+    message = _FakeMessage(str(image_path))
+    context = _FakeContext(BotConfig(telegram_token="test", allow_local_creative_path=True, temp_root=tmp_path))
+    context.user_data.update(_selected_yandex_video_flow_data(tmp_path))
+
+    state = await collect_creative(_FakeUpdate(message), context)
+
+    assert state == TARGET_SITE
+    assert context.user_data["creative"].path == image_path
+    assert "адрес целевого сайта" in message.replies[-1]["text"]
+    assert not message.photos
+
+
+@pytest.mark.asyncio
+async def test_mediasniper_video_valid_creative_prompts_for_target_site_before_generation(tmp_path: Path) -> None:
+    image_path = tmp_path / "creative.png"
+    Image.new("RGB", (640, 360), "red").save(image_path)
+    message = _FakeMessage(str(image_path))
+    context = _FakeContext(BotConfig(telegram_token="test", allow_local_creative_path=True, temp_root=tmp_path))
+    context.user_data.update(_selected_mediasniper_video_flow_data(tmp_path))
+
+    state = await collect_creative(_FakeUpdate(message), context)
+
+    assert state == TARGET_SITE
+    assert context.user_data["creative"].path == image_path
+    assert "адрес целевого сайта" in message.replies[-1]["text"]
+    assert not message.photos
+
+
+@pytest.mark.asyncio
+async def test_getintent_video_flow_transitions_and_never_fetches_favicon(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    image_path = tmp_path / "creative.png"
+    Image.new("RGB", (640, 360), "red").save(image_path)
+    context = _FakeContext(BotConfig(telegram_token="test", allow_local_creative_path=True, temp_root=tmp_path))
+    context.user_data.update(_selected_getintent_video_flow_data(tmp_path))
+
+    def fail_favicon_fetch(target_site_url: str | None):
+        raise AssertionError("GetIntent Video must not fetch a favicon")
+
+    monkeypatch.setattr("reports_ad.bot._load_target_site_favicon", fail_favicon_fetch)
+    creative_message = _FakeMessage(str(image_path))
+    assert await collect_creative(_FakeUpdate(creative_message), context) == TARGET_SITE
+
+    target_message = _FakeMessage("https://www.sberbank.com/path")
+    assert await collect_target_site(_FakeUpdate(target_message), context) == MINIMUM_AGE
+    assert context.user_data["target_site_url"] == "https://www.sberbank.com/path"
+    assert context.user_data["target_site_display"] == "sberbank.com"
+    assert "возраст" in target_message.replies[-1]["text"]
+
+    captured_requests = []
+
+    async def fake_generator(request):
+        captured_requests.append(request)
+        request.output_path.write_bytes(b"fake-png")
+        return MaskedBannerResult(output_path=request.output_path, width=1920, height=1215, request_id=request.request_id, mask_asset=resolve_mask_asset(request.network_slug, request.size_slug))
+
+    context.bot_data["banner_generator"] = fake_generator
+    context.bot_data["user_locks"] = {}
+    age_message = _FakeMessage("09")
+    assert await collect_minimum_age(_FakeUpdate(age_message), context) == -1
+    request = captured_requests[0]
+    assert request.network_slug == "getintent_video"
+    assert request.target_site_url == "https://www.sberbank.com/path"
+    assert request.target_site_display == "sberbank.com"
+    assert request.minimum_age == "9"
+    assert request.favicon_path is None
+    assert age_message.documents[-1]["filename"] == "getintent_video-1920x1080-masked-banner.png"
+
+
+@pytest.mark.asyncio
+async def test_getintent_video_invalid_age_stays_in_minimum_age_state(tmp_path: Path) -> None:
+    context = _FakeContext(BotConfig(telegram_token="test", temp_root=tmp_path))
+    context.user_data.update(_selected_getintent_video_flow_data(tmp_path, with_creative=True))
+    context.user_data["target_site_url"] = "https://example.com"
+    context.user_data["target_site_display"] = "example.com"
+    message = _FakeMessage("12+")
+
+    state = await collect_minimum_age(_FakeUpdate(message), context)
+
+    assert state == MINIMUM_AGE
+    assert "minimum_age" not in context.user_data
+    assert "Минимальный возраст не подходит" in message.replies[-1]["text"]
+
+
+@pytest.mark.asyncio
+async def test_yandex_video_target_site_starts_generation_and_passes_display(tmp_path: Path) -> None:
+    context = _FakeContext(BotConfig(telegram_token="test", temp_root=tmp_path))
+    context.user_data.update(_selected_yandex_video_flow_data(tmp_path, with_creative=True))
+    captured_requests = []
+
+    async def fake_generator(request):
+        captured_requests.append(request)
+        request.output_path.write_bytes(b"fake-png")
+        return MaskedBannerResult(output_path=request.output_path, width=1536, height=1024, request_id=request.request_id, mask_asset=resolve_mask_asset(request.network_slug, request.size_slug))
+
+    context.bot_data["banner_generator"] = fake_generator
+    context.bot_data["user_locks"] = {}
+    message = _FakeMessage("https://www.sberbank.com/ru/person/avto?utm_source=x")
+
+    state = await collect_target_site(_FakeUpdate(message), context)
+
+    assert state == -1
+    assert captured_requests[0].network_slug == "yandex_video"
+    assert captured_requests[0].size_slug == "1920x1080"
+    assert captured_requests[0].target_site_display == "sberbank.com"
+    assert message.documents[-1]["filename"] == "yandex_video-1920x1080-masked-banner.png"
+
+
+@pytest.mark.asyncio
+async def test_yandex_video_target_site_prompts_for_manual_favicon_when_auto_fetch_fails(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    context = _FakeContext(BotConfig(telegram_token="test", temp_root=tmp_path))
+    context.user_data.update(_selected_yandex_video_flow_data(tmp_path, with_creative=True))
+    monkeypatch.setattr("reports_ad.bot._load_target_site_favicon", lambda target_site_url: None)
+    message = _FakeMessage("https://www.firstdata.io")
+
+    state = await collect_target_site(_FakeUpdate(message), context)
+
+    assert state == FAVICON
+    assert context.user_data["target_site_display"] == "firstdata.io"
+    assert "favicon" in message.replies[-1]["text"]
+
+
+@pytest.mark.asyncio
+async def test_video_flow_manual_favicon_upload_starts_generation(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    favicon_path = tmp_path / "favicon.png"
+    Image.new("RGB", (64, 64), "green").save(favicon_path)
+    context = _FakeContext(BotConfig(telegram_token="test", allow_local_creative_path=True, temp_root=tmp_path))
+    context.user_data.update(_selected_mediasniper_video_flow_data(tmp_path, with_creative=True))
+    context.user_data["target_site_url"] = "https://www.firstdata.io"
+    context.user_data["target_site_display"] = "firstdata.io"
+    captured_requests = []
+
+    async def fake_generator(request):
+        captured_requests.append(request)
+        request.output_path.write_bytes(b"fake-png")
+        return MaskedBannerResult(output_path=request.output_path, width=1920, height=1080, request_id=request.request_id, mask_asset=resolve_mask_asset(request.network_slug, request.size_slug))
+
+    context.bot_data["banner_generator"] = fake_generator
+    context.bot_data["user_locks"] = {}
+    message = _FakeMessage(str(favicon_path))
+
+    state = await collect_favicon(_FakeUpdate(message), context)
+
+    assert state == -1
+    assert captured_requests[0].favicon_path == favicon_path
+    assert message.documents[-1]["filename"] == "mediasniper_video-1920x1080-masked-banner.png"
+
+
+@pytest.mark.asyncio
+async def test_mediasniper_video_target_site_starts_generation_and_passes_display(tmp_path: Path) -> None:
+    context = _FakeContext(BotConfig(telegram_token="test", temp_root=tmp_path))
+    context.user_data.update(_selected_mediasniper_video_flow_data(tmp_path, with_creative=True))
+    captured_requests = []
+
+    async def fake_generator(request):
+        captured_requests.append(request)
+        request.output_path.write_bytes(b"fake-png")
+        return MaskedBannerResult(output_path=request.output_path, width=1920, height=1080, request_id=request.request_id, mask_asset=resolve_mask_asset(request.network_slug, request.size_slug))
+
+    context.bot_data["banner_generator"] = fake_generator
+    context.bot_data["user_locks"] = {}
+    message = _FakeMessage("https://www.sberbank.com/ru/person/avto?utm_source=x")
+
+    state = await collect_target_site(_FakeUpdate(message), context)
+
+    assert state == -1
+    assert captured_requests[0].network_slug == "mediasniper_video"
+    assert captured_requests[0].size_slug == "1920x1080"
+    assert captured_requests[0].target_site_display == "sberbank.com"
+    assert message.documents[-1]["filename"] == "mediasniper_video-1920x1080-masked-banner.png"
+
+
+@pytest.mark.asyncio
+async def test_yandex_video_invalid_target_site_stays_in_target_site_state(tmp_path: Path) -> None:
+    context = _FakeContext(BotConfig(telegram_token="test", temp_root=tmp_path))
+    context.user_data.update(_selected_yandex_video_flow_data(tmp_path, with_creative=True))
+    message = _FakeMessage("file:///tmp/private.html")
+
+    state = await collect_target_site(_FakeUpdate(message), context)
+
+    assert state == TARGET_SITE
+    assert "Адрес целевого сайта не подходит" in message.replies[-1]["text"]
 
 
 def test_menu_label_roundtrip_preserves_slug_for_validation() -> None:
@@ -628,10 +922,8 @@ def test_menu_label_roundtrip_preserves_slug_for_validation() -> None:
 
 
 def test_spec_menu_label_roundtrip_preserves_slug_for_validation() -> None:
-    spec = get_spec("yandex-graphic-banners-300x250-image")
-    assert spec is not None
-    label = _menu_label(spec.display_name, spec.slug, spec.dimensions_label)
-    assert _menu_value(label) == "yandex-graphic-banners-300x250-image"
+    label = _menu_label("240×400", "240x400")
+    assert _menu_value(label) == "240x400"
 
 
 class _FakeMessage:
@@ -688,24 +980,82 @@ class _FakeContext:
 
 
 def _review_user_data(tmp_path: Path) -> dict:
-    spec = get_spec("yandex-graphic-banners-300x250-image")
-    assert spec is not None
     creative_path = tmp_path / "creative.png"
     if not creative_path.exists():
-        Image.new("RGB", (300, 250), "red").save(creative_path)
-    screenshot_path = tmp_path / "source.png"
-    if not screenshot_path.exists():
-        Image.new("RGB", (800, 600), "white").save(screenshot_path)
-    screenshot_info = validate_screenshot_file(screenshot_path)
+        Image.new("RGB", (240, 400), "red").save(creative_path)
+    size = get_banner_size("240x400")
+    assert size is not None
     return {
         "request_id": "test-request",
-        "network_slug": "yandex_graphic_banners",
-        "network_display_name": "Яндекс",
-        "spec": spec,
-        "banner_type": spec.display_name,
-        "placement": Placement(mode="template", value="top-banner"),
-        "source_screenshot": screenshot_info,
-        "creative": CreativeInfo(path=creative_path, mime_type="image/png", width=300, height=250, size_bytes=creative_path.stat().st_size),
-        "landing_url": "https://example.com/landing",
-        "utm_params": {"utm_source": "telegram", "utm_medium": "cpc"},
+        "network_slug": "mediasniper",
+        "network_display_name": "Mediasniper",
+        "banner_size_slug": "240x400",
+        "banner_size": size,
+        "banner_type": size.label,
+        "creative": CreativeInfo(path=creative_path, mime_type="image/png", width=240, height=400, size_bytes=creative_path.stat().st_size),
     }
+
+
+def _selected_mask_flow_data(tmp_path: Path) -> dict:
+    size = get_banner_size("240x400")
+    assert size is not None
+    return {
+        "request_id": "test-request",
+        "network_slug": "mediasniper",
+        "network_display_name": "Mediasniper",
+        "banner_size_slug": "240x400",
+        "banner_size": size,
+        "banner_type": size.label,
+    }
+
+
+def _selected_yandex_video_flow_data(tmp_path: Path, *, with_creative: bool = False) -> dict:
+    size = get_banner_size("1920x1080")
+    assert size is not None
+    data = {
+        "request_id": "test-request-yandex-video",
+        "network_slug": "yandex_video",
+        "network_display_name": "Яндекс Видео",
+        "banner_size_slug": "1920x1080",
+        "banner_size": size,
+        "banner_type": size.label,
+    }
+    if with_creative:
+        creative_path = tmp_path / "creative-yandex-video.png"
+        Image.new("RGB", (640, 360), "red").save(creative_path)
+        data["creative"] = CreativeInfo(path=creative_path, mime_type="image/png", width=640, height=360, size_bytes=creative_path.stat().st_size)
+    return data
+
+
+def _selected_mediasniper_video_flow_data(tmp_path: Path, *, with_creative: bool = False) -> dict:
+    size = resolve_mask_asset("mediasniper_video", "1920x1080").size
+    data = {
+        "request_id": "test-request-mediasniper-video",
+        "network_slug": "mediasniper_video",
+        "network_display_name": "Mediasniper Video",
+        "banner_size_slug": "1920x1080",
+        "banner_size": size,
+        "banner_type": size.label,
+    }
+    if with_creative:
+        creative_path = tmp_path / "creative-mediasniper-video.png"
+        Image.new("RGB", (640, 360), "red").save(creative_path)
+        data["creative"] = CreativeInfo(path=creative_path, mime_type="image/png", width=640, height=360, size_bytes=creative_path.stat().st_size)
+    return data
+
+
+def _selected_getintent_video_flow_data(tmp_path: Path, *, with_creative: bool = False) -> dict:
+    size = resolve_mask_asset("getintent_video", "1920x1080").size
+    data = {
+        "request_id": "test-request-getintent-video",
+        "network_slug": "getintent_video",
+        "network_display_name": "GetIntent Video",
+        "banner_size_slug": "1920x1080",
+        "banner_size": size,
+        "banner_type": size.label,
+    }
+    if with_creative:
+        creative_path = tmp_path / "creative-getintent-video.png"
+        Image.new("RGB", (640, 360), "red").save(creative_path)
+        data["creative"] = CreativeInfo(path=creative_path, mime_type="image/png", width=640, height=360, size_bytes=creative_path.stat().st_size)
+    return data

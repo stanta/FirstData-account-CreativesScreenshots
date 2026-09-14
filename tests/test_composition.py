@@ -6,6 +6,9 @@ from PIL import Image, ImageChops, ImageDraw, ImageFont
 from reports_ad.bot import build_application
 from reports_ad.config import BotConfig
 from reports_ad.gemma_client import GemmaClientError, HeaderAuthGemmaClient, _banner_prompt, _composition_validation_crop_rect, _composition_validation_prompt, _parse_bbox_result, _parse_composition_validation_result, build_gemma_client_from_config
+from reports_ad.mask_catalog import get_banner_size, resolve_mask_asset
+from reports_ad import masked_banner as masked_banner_module
+from reports_ad.masked_banner import GETINTENT_VIDEO_MASK_SIZE, GETINTENT_VIDEO_MINIMUM_AGE_BBOX, MEDIASNIPER_VIDEO_AD_LABEL_BBOX, MEDIASNIPER_VIDEO_CTA_BBOX, MEDIASNIPER_VIDEO_FAVICON_BBOX, MEDIASNIPER_VIDEO_SKIP_BBOX, MEDIASNIPER_VIDEO_TARGET_SITE_BBOX, YANDEX_VIDEO_FAVICON_BBOX, YANDEX_VIDEO_TARGET_SITE_BBOX, MaskedBannerRequest, MaskedBannerResult, compose_masked_banner, generate_masked_banner
 from reports_ad.models import BBoxDetectionResult, BoundingBox, CompositionValidationResult, CreativeInfo, Placement, ProofRequest, ProofResult, SourceScreenshotInfo
 from reports_ad.proof import compose_final_image
 from reports_ad.stage2_proof import AD_MARK_LABEL, compose_stage2_image, fallback_landing_bbox, generate_stage2_proof, validate_banner_bbox_semantics, select_valid_banner_bbox_with_feedback, compose_stage2_image_with_validation, _address_bar_only_height, _load_cyrillic_font, _render_ad_mark_label, _select_next_composition_bbox
@@ -63,6 +66,397 @@ def test_stage2_compose_fits_creative_proportionally_draws_landing_and_ad_mark(t
         assert result.getpixel((100, 70)) != (255, 255, 255)
         assert result.getpixel((62, 53)) != result.getpixel((200, 20))
         assert result.getpixel((200, 285)) != (255, 255, 255)
+
+
+def test_resolve_mask_asset_supports_required_networks_and_sizes() -> None:
+    for network_slug in ("mediasniper", "hybrid"):
+        for size_slug in ("240x400", "300x600", "300x500"):
+            asset = resolve_mask_asset(network_slug, size_slug)
+
+            assert asset.network.slug == network_slug
+            assert asset.size.slug == size_slug
+            assert asset.path.exists()
+
+    yandex_video_asset = resolve_mask_asset("yandex_video", "1920x1080")
+    assert yandex_video_asset.network.slug == "yandex_video"
+    assert yandex_video_asset.size.slug == "1920x1080"
+    assert yandex_video_asset.path.exists()
+
+    mediasniper_video_asset = resolve_mask_asset("mediasniper_video", "1920x1080")
+    assert mediasniper_video_asset.network.slug == "mediasniper_video"
+    assert mediasniper_video_asset.size.slug == "1920x1080"
+    assert mediasniper_video_asset.path.exists()
+
+    getintent_video_asset = resolve_mask_asset("getintent_video", "1920x1080")
+    assert getintent_video_asset.network.slug == "getintent_video"
+    assert (getintent_video_asset.size.width, getintent_video_asset.size.height) == GETINTENT_VIDEO_MASK_SIZE
+    assert getintent_video_asset.path.exists()
+
+
+def test_compose_masked_banner_resizes_creative_and_overlays_mask(tmp_path: Path) -> None:
+    creative_path = tmp_path / "creative.png"
+    output_path = tmp_path / "masked.png"
+    Image.new("RGB", (60, 100), (220, 0, 0)).save(creative_path)
+    mask_asset = resolve_mask_asset("mediasniper", "240x400")
+
+    width, height = compose_masked_banner(
+        creative_path=creative_path,
+        mask_path=mask_asset.path,
+        output_path=output_path,
+        width=240,
+        height=400,
+    )
+
+    assert (width, height) == (240, 400)
+    with Image.open(output_path) as result:
+        assert result.size == (240, 400)
+        assert result.getpixel((120, 200))[:3] != (255, 255, 255)
+        assert result.getpixel((10, 10))[:3] != (220, 0, 0)
+
+
+def test_compose_yandex_video_renders_target_site_after_mask_overlay_without_favicon(tmp_path: Path) -> None:
+    creative_path = tmp_path / "creative.png"
+    output_path = tmp_path / "yandex-video.png"
+    Image.new("RGB", (640, 360), (20, 30, 40)).save(creative_path)
+    mask_asset = resolve_mask_asset("yandex_video", "1920x1080")
+
+    width, height = compose_masked_banner(
+        creative_path=creative_path,
+        mask_path=mask_asset.path,
+        output_path=output_path,
+        width=1536,
+        height=1024,
+        network_slug="yandex_video",
+        target_site_display="sberbank.com",
+    )
+
+    assert (width, height) == (1536, 1024)
+    x, y, box_width, box_height = YANDEX_VIDEO_TARGET_SITE_BBOX
+    with Image.open(output_path) as result:
+        assert result.size == (1536, 1024)
+        target_crop = result.crop((x, y, x + box_width, y + box_height)).convert("RGB")
+        blank = Image.new("RGB", target_crop.size, (20, 30, 40))
+        assert ImageChops.difference(target_crop, blank).getbbox() is not None
+
+
+def test_compose_mediasniper_video_renders_own_overlay_coordinates(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    creative_path = tmp_path / "creative.png"
+    output_path = tmp_path / "mediasniper-video.png"
+    Image.new("RGB", (640, 360), (20, 30, 40)).save(creative_path)
+    mask_asset = resolve_mask_asset("mediasniper_video", "1920x1080")
+
+    def fake_load_favicon(target_site_url: str | None) -> Image.Image:
+        assert target_site_url == "https://aliexpress.ru"
+        return Image.new("RGBA", (16, 16), (230, 20, 20, 255))
+
+    monkeypatch.setattr(masked_banner_module, "_load_target_site_favicon", fake_load_favicon)
+
+    width, height = compose_masked_banner(
+        creative_path=creative_path,
+        mask_path=mask_asset.path,
+        output_path=output_path,
+        width=1920,
+        height=1080,
+        network_slug="mediasniper_video",
+        target_site_url="https://aliexpress.ru",
+        target_site_display="aliexpress.ru",
+    )
+
+    assert (width, height) == (1920, 1080)
+    with Image.open(output_path) as result:
+        assert result.size == (1920, 1080)
+        rgba = result.convert("RGBA")
+        icon_x, icon_y, icon_width, icon_height = MEDIASNIPER_VIDEO_FAVICON_BBOX
+        assert rgba.getpixel((icon_x + icon_width // 2, icon_y + icon_height // 2))[:3] == (230, 20, 20)
+        for box in (MEDIASNIPER_VIDEO_TARGET_SITE_BBOX, MEDIASNIPER_VIDEO_CTA_BBOX, MEDIASNIPER_VIDEO_SKIP_BBOX, MEDIASNIPER_VIDEO_AD_LABEL_BBOX):
+            x, y, box_width, box_height = box
+            target_crop = result.crop((x, y, x + box_width, y + box_height)).convert("RGB")
+            blank = Image.new("RGB", target_crop.size, (20, 30, 40))
+            assert ImageChops.difference(target_crop, blank).getbbox() is not None
+
+
+def test_compose_yandex_video_renders_target_site_favicon(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    creative_path = tmp_path / "creative.png"
+    output_path = tmp_path / "yandex-video-favicon.png"
+    Image.new("RGB", (640, 360), (20, 30, 40)).save(creative_path)
+    mask_asset = resolve_mask_asset("yandex_video", "1920x1080")
+
+    def fake_load_favicon(target_site_url: str | None) -> Image.Image:
+        assert target_site_url == "https://sberbank.com"
+        return Image.new("RGBA", (16, 16), (230, 20, 20, 255))
+
+    monkeypatch.setattr(masked_banner_module, "_load_target_site_favicon", fake_load_favicon)
+
+    width, height = compose_masked_banner(
+        creative_path=creative_path,
+        mask_path=mask_asset.path,
+        output_path=output_path,
+        width=1536,
+        height=1024,
+        network_slug="yandex_video",
+        target_site_url="https://sberbank.com",
+        target_site_display="sberbank.com",
+    )
+
+    assert (width, height) == (1536, 1024)
+    x, y, box_width, box_height = YANDEX_VIDEO_FAVICON_BBOX
+    with Image.open(output_path) as result:
+        assert result.size == (1536, 1024)
+        center_pixel = result.convert("RGBA").getpixel((x + box_width // 2, y + box_height // 2))
+        assert center_pixel[:3] == (230, 20, 20)
+
+
+def test_compose_yandex_video_uses_uploaded_favicon_when_provided(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    creative_path = tmp_path / "creative.png"
+    favicon_path = tmp_path / "favicon.png"
+    output_path = tmp_path / "yandex-video-uploaded-favicon.png"
+    Image.new("RGB", (640, 360), (20, 30, 40)).save(creative_path)
+    Image.new("RGBA", (24, 24), (20, 230, 40, 255)).save(favicon_path)
+    mask_asset = resolve_mask_asset("yandex_video", "1920x1080")
+    monkeypatch.setattr(masked_banner_module, "_load_target_site_favicon", lambda target_site_url: None)
+
+    width, height = compose_masked_banner(
+        creative_path=creative_path,
+        mask_path=mask_asset.path,
+        output_path=output_path,
+        width=1536,
+        height=1024,
+        network_slug="yandex_video",
+        target_site_url="https://missing-icon.example.com",
+        target_site_display="missing-icon.example.com",
+        favicon_path=favicon_path,
+    )
+
+    assert (width, height) == (1536, 1024)
+    x, y, box_width, box_height = YANDEX_VIDEO_FAVICON_BBOX
+    with Image.open(output_path) as result:
+        center_pixel = result.convert("RGBA").getpixel((x + box_width // 2, y + box_height // 2))
+        assert center_pixel[:3] == (20, 230, 40)
+
+
+def test_compose_yandex_video_ignores_missing_favicon(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    creative_path = tmp_path / "creative.png"
+    output_path = tmp_path / "yandex-video-no-favicon.png"
+    Image.new("RGB", (640, 360), (20, 30, 40)).save(creative_path)
+    mask_asset = resolve_mask_asset("yandex_video", "1920x1080")
+
+    monkeypatch.setattr(masked_banner_module, "_load_target_site_favicon", lambda target_site_url: None)
+
+    width, height = compose_masked_banner(
+        creative_path=creative_path,
+        mask_path=mask_asset.path,
+        output_path=output_path,
+        width=1536,
+        height=1024,
+        network_slug="yandex_video",
+        target_site_url="https://missing-icon.example.com",
+        target_site_display="missing-icon.example.com",
+    )
+
+    assert (width, height) == (1536, 1024)
+    assert output_path.exists()
+
+
+def test_favicon_link_parser_discovers_svg_icon_from_single_line_html() -> None:
+    html = '<!doctype html><html><head><link rel="shortcut icon" href="https://static.example.com/icon.svg" type="image/x-icon"></head></html>'
+    parser = masked_banner_module._FaviconLinkParser(base_url="https://firstdata.io")
+
+    parser.feed(html)
+
+    assert parser.icon_urls == ["https://static.example.com/icon.svg"]
+
+
+def test_target_site_origin_urls_adds_apex_fallback_for_www_domain(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(masked_banner_module, "_hostname_resolves_to_private_address", lambda hostname: False)
+
+    origins = masked_banner_module._target_site_origin_urls(masked_banner_module.urlparse("https://www.firstdata.io/path?q=1"))
+
+    assert origins == ("https://www.firstdata.io", "https://firstdata.io")
+
+
+def test_render_svg_favicon_converts_svg_to_rgba_image() -> None:
+    svg = b'<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><rect width="16" height="16" fill="#18a058"/></svg>'
+
+    icon = masked_banner_module._render_svg_favicon(svg)
+
+    assert icon.mode == "RGBA"
+    assert icon.size == (masked_banner_module.YANDEX_VIDEO_FAVICON_SVG_RENDER_SIZE, masked_banner_module.YANDEX_VIDEO_FAVICON_SVG_RENDER_SIZE)
+    assert icon.getpixel((icon.width // 2, icon.height // 2))[:3] == (24, 160, 88)
+
+
+def test_compose_yandex_video_requires_target_site_display(tmp_path: Path) -> None:
+    creative_path = tmp_path / "creative.png"
+    output_path = tmp_path / "yandex-video.png"
+    Image.new("RGB", (640, 360), (20, 30, 40)).save(creative_path)
+    mask_asset = resolve_mask_asset("yandex_video", "1920x1080")
+
+    with pytest.raises(ValidationError):
+        compose_masked_banner(
+            creative_path=creative_path,
+            mask_path=mask_asset.path,
+            output_path=output_path,
+            width=1536,
+            height=1024,
+            network_slug="yandex_video",
+        )
+
+
+def test_compose_mediasniper_video_requires_target_site_display(tmp_path: Path) -> None:
+    creative_path = tmp_path / "creative.png"
+    output_path = tmp_path / "mediasniper-video.png"
+    Image.new("RGB", (640, 360), (20, 30, 40)).save(creative_path)
+    mask_asset = resolve_mask_asset("mediasniper_video", "1920x1080")
+
+    with pytest.raises(ValidationError):
+        compose_masked_banner(
+            creative_path=creative_path,
+            mask_path=mask_asset.path,
+            output_path=output_path,
+            width=1920,
+            height=1080,
+            network_slug="mediasniper_video",
+        )
+
+
+@pytest.mark.parametrize("minimum_age", ["0", "12", "99"])
+def test_compose_getintent_video_renders_centered_age_without_background_panel(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, minimum_age: str) -> None:
+    creative_path = tmp_path / f"creative-{minimum_age}.png"
+    pre_age_path = tmp_path / f"pre-age-{minimum_age}.png"
+    output_path = tmp_path / f"getintent-{minimum_age}.png"
+    Image.new("RGB", GETINTENT_VIDEO_MASK_SIZE, (24, 36, 48)).save(creative_path)
+    mask_asset = resolve_mask_asset("getintent_video", "1920x1080")
+
+    original_renderer = masked_banner_module.render_getintent_video_minimum_age
+
+    def identity_renderer(base: Image.Image, age: str) -> Image.Image:
+        assert age == minimum_age
+        return base.copy()
+
+    monkeypatch.setattr(masked_banner_module, "render_getintent_video_minimum_age", identity_renderer)
+    compose_masked_banner(
+        creative_path=creative_path,
+        mask_path=mask_asset.path,
+        output_path=pre_age_path,
+        width=GETINTENT_VIDEO_MASK_SIZE[0],
+        height=GETINTENT_VIDEO_MASK_SIZE[1],
+        network_slug="getintent_video",
+        target_site_url="https://example.com",
+        target_site_display="example.com",
+        minimum_age=minimum_age,
+    )
+    monkeypatch.setattr(masked_banner_module, "render_getintent_video_minimum_age", original_renderer)
+
+    favicon_calls = 0
+
+    def fail_favicon_fetch(target_site_url: str | None):
+        nonlocal favicon_calls
+        favicon_calls += 1
+        raise AssertionError("GetIntent Video must not fetch a favicon")
+
+    monkeypatch.setattr(masked_banner_module, "_load_target_site_favicon", fail_favicon_fetch)
+    compose_masked_banner(
+        creative_path=creative_path,
+        mask_path=mask_asset.path,
+        output_path=output_path,
+        width=GETINTENT_VIDEO_MASK_SIZE[0],
+        height=GETINTENT_VIDEO_MASK_SIZE[1],
+        network_slug="getintent_video",
+        target_site_url="https://example.com",
+        target_site_display="example.com",
+        minimum_age=minimum_age,
+    )
+
+    assert favicon_calls == 0
+    assert GETINTENT_VIDEO_MINIMUM_AGE_BBOX == (1670, 180, 224, 110)
+    with Image.open(pre_age_path) as before_raw, Image.open(output_path) as after_raw:
+        before = before_raw.convert("RGB")
+        after = after_raw.convert("RGB")
+        diff_bbox = ImageChops.difference(before, after).getbbox()
+        assert diff_bbox is not None
+        x, y, box_width, box_height = GETINTENT_VIDEO_MINIMUM_AGE_BBOX
+        assert x <= diff_bbox[0] < diff_bbox[2] <= x + box_width
+        assert y <= diff_bbox[1] < diff_bbox[3] <= y + box_height
+        glyph_center = ((diff_bbox[0] + diff_bbox[2]) / 2, (diff_bbox[1] + diff_bbox[3]) / 2)
+        box_center = (x + box_width / 2, y + box_height / 2)
+        assert abs(glyph_center[0] - box_center[0]) <= 2
+        assert abs(glyph_center[1] - box_center[1]) <= 2
+        changed_pixels = sum(1 for pixel in ImageChops.difference(before, after).crop((x, y, x + box_width, y + box_height)).get_flattened_data() if pixel != (0, 0, 0))
+        assert changed_pixels < box_width * box_height * 0.45
+
+
+@pytest.mark.parametrize(
+    ("target_site_url", "target_site_display", "minimum_age"),
+    [(None, "example.com", "12"), ("https://example.com", None, "12"), ("https://example.com", "example.com", None), ("https://example.com", "example.com", "100")],
+)
+def test_compose_getintent_video_requires_address_and_valid_age(tmp_path: Path, target_site_url: str | None, target_site_display: str | None, minimum_age: str | None) -> None:
+    creative_path = tmp_path / "creative.png"
+    output_path = tmp_path / "getintent-invalid.png"
+    Image.new("RGB", GETINTENT_VIDEO_MASK_SIZE, (20, 30, 40)).save(creative_path)
+    mask_asset = resolve_mask_asset("getintent_video", "1920x1080")
+
+    with pytest.raises(ValidationError):
+        compose_masked_banner(
+            creative_path=creative_path,
+            mask_path=mask_asset.path,
+            output_path=output_path,
+            width=GETINTENT_VIDEO_MASK_SIZE[0],
+            height=GETINTENT_VIDEO_MASK_SIZE[1],
+            network_slug="getintent_video",
+            target_site_url=target_site_url,
+            target_site_display=target_site_display,
+            minimum_age=minimum_age,
+        )
+
+
+@pytest.mark.asyncio
+async def test_generate_getintent_video_passes_minimum_age(tmp_path: Path) -> None:
+    mask_asset = resolve_mask_asset("getintent_video", "1920x1080")
+    creative_path = tmp_path / "creative.png"
+    Image.new("RGB", (640, 360), (10, 120, 220)).save(creative_path)
+    creative = CreativeInfo(path=creative_path, mime_type="image/png", width=640, height=360, size_bytes=creative_path.stat().st_size)
+    request = MaskedBannerRequest(
+        request_id="req-getintent",
+        network_slug="getintent_video",
+        network_display_name="GetIntent Video",
+        size_slug="1920x1080",
+        size=mask_asset.size,
+        creative=creative,
+        output_path=tmp_path / "getintent.png",
+        target_site_url="https://example.com",
+        target_site_display="example.com",
+        minimum_age="12",
+    )
+
+    result = await generate_masked_banner(request)
+
+    assert (result.width, result.height) == GETINTENT_VIDEO_MASK_SIZE
+    assert result.output_path.exists()
+
+
+@pytest.mark.asyncio
+async def test_generate_masked_banner_uses_selected_hybrid_mask(tmp_path: Path) -> None:
+    size = get_banner_size("300x500")
+    assert size is not None
+    creative_path = tmp_path / "creative.jpg"
+    output_path = tmp_path / "masked.png"
+    Image.new("RGB", (150, 250), (10, 120, 220)).save(creative_path)
+    request = MaskedBannerRequest(
+        request_id="req-mask-hybrid",
+        network_slug="hybrid",
+        network_display_name="Hybrid",
+        size_slug=size.slug,
+        size=size,
+        creative=CreativeInfo(path=creative_path, mime_type="image/jpeg", width=150, height=250, size_bytes=creative_path.stat().st_size),
+        output_path=output_path,
+    )
+
+    result = await generate_masked_banner(request)
+
+    assert result.output_path == output_path
+    assert result.width == 300
+    assert result.height == 500
+    assert result.mask_asset.network.slug == "hybrid"
+    assert result.mask_asset.size.slug == "300x500"
 
 
 def test_stage2_compose_centers_proportionally_fitted_creative_in_banner_region(tmp_path: Path) -> None:
@@ -1637,49 +2031,43 @@ async def test_stage2_generate_handles_invalid_composition_validation_response(t
 
 
 @pytest.mark.asyncio
-async def test_build_application_injects_runtime_config_into_stage2_generator(tmp_path: Path) -> None:
-    spec = get_spec("yandex-graphic-banners-300x250-image")
-    assert spec is not None
-    source_path = tmp_path / "source.png"
+async def test_build_application_injects_runtime_config_into_masked_banner_generator(tmp_path: Path) -> None:
+    size = get_banner_size("240x400")
+    assert size is not None
     creative_path = tmp_path / "creative.png"
     output_path = tmp_path / "final.png"
-    Image.new("RGB", (400, 300), "white").save(source_path)
-    Image.new("RGB", (300, 250), "blue").save(creative_path)
+    Image.new("RGB", (240, 400), "blue").save(creative_path)
     config = BotConfig(
         telegram_token="test",
         temp_root=tmp_path,
         ocr_llm_base_url="http://gemma.firstdata.io/v1",
         ocr_llm_model="cyankiwi/gemma-4-26B-A4B-it-AWQ-4bit",
     )
-    request = ProofRequest(
-        request_id="req-stage2-config",
-        network_display_name="Яндекс",
-        network_slug="yandex_graphic_banners",
-        spec=spec,
-        banner_type=spec.display_name,
-        source_screenshot=SourceScreenshotInfo(path=source_path, mime_type="image/png", width=400, height=300, size_bytes=source_path.stat().st_size),
-        creative=CreativeInfo(path=creative_path, mime_type="image/png", width=300, height=250, size_bytes=creative_path.stat().st_size),
-        landing_url="https://example.com/landing",
-        utm_params={"utm_source": "test"},
-        placement=Placement(mode="template", value="screenshot-detected"),
+    request = MaskedBannerRequest(
+        request_id="req-mask-config",
+        network_display_name="Mediasniper",
+        network_slug="mediasniper",
+        size_slug=size.slug,
+        size=size,
+        creative=CreativeInfo(path=creative_path, mime_type="image/png", width=240, height=400, size_bytes=creative_path.stat().st_size),
         output_path=output_path,
     )
     captured: dict[str, object] = {}
 
-    async def fake_stage2_generator(stage2_request: ProofRequest, *, config: BotConfig | None = None):
-        captured["request"] = stage2_request
+    async def fake_masked_banner_generator(mask_request: MaskedBannerRequest, *, config: BotConfig | None = None):
+        captured["request"] = mask_request
         captured["config"] = config
         output_path.write_bytes(b"fake-png")
-        return ProofResult(
+        return MaskedBannerResult(
             output_path=output_path,
-            width=400,
-            height=300,
-            effective_click_url="https://example.com/landing?utm_source=test",
-            request_id=stage2_request.request_id,
+            width=240,
+            height=400,
+            request_id=mask_request.request_id,
+            mask_asset=resolve_mask_asset(mask_request.network_slug, mask_request.size_slug),
         )
 
-    application = build_application(config, proof_generator=fake_stage2_generator)
-    configured_generator = application.bot_data["proof_generator"]
+    application = build_application(config, banner_generator=fake_masked_banner_generator)
+    configured_generator = application.bot_data["banner_generator"]
 
     await configured_generator(request)
 

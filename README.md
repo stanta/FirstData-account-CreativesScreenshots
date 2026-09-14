@@ -1,38 +1,37 @@
 # reports_ad
 
-`reports_ad` — MVP Python-приложение для формирования proof-скриншота рекламного размещения через Telegram-бота в режиме polling.
+`reports_ad` — MVP Python-приложение для формирования баннера с маской рекламной сети через Telegram-бота в режиме polling.
 
 ## Что реализовано в MVP
 
 - Telegram polling bot на `python-telegram-bot` 21+.
 - Пошаговый сценарий ввода:
   1. выбор рекламной сети кнопкой reply-menu, построенной через `telegram_menu`;
-  2. выбор типа баннера/spec кнопкой `telegram_menu`, отфильтрованной по сети;
+  2. выбор размера баннера кнопкой `telegram_menu`;
   3. PNG/JPEG-креатив через Telegram-файл/фото или локальный путь в тестовом режиме;
-  4. URL страницы рекламной площадки;
-  5. URL landing page;
-  6. UTM-параметры строкой;
-  7. review screen со всеми параметрами и русским reply-menu правок, построенным через `telegram_menu`;
-  8. явное подтверждение генерации кнопкой `Запустить`.
-- Валидация URL, UTM, MIME/размера/точной размерности изображения по выбранному spec и placement.
-- Локальный каталог `reports_ad/reports_ad/data/creative_catalog.json` нормализован из `validator-ai/backend/app/seed/creative_specs.json`: сохранены slug, display name, network/platform, format/dimensions, source MIME/extensions и file-size limit.
-- Playwright/Chromium генератор: открывает страницу, вставляет статичный баннер, назначает click URL с UTM, эмулирует клик, получает landing page и собирает итоговое изображение, где нижние 20% заняты landing page.
+  4. для GetIntent Video — адрес целевого сайта и минимальный возраст `0..99` без знака `+`;
+  5. автоматическая проверка файла, resize до выбранного размера, наложение маски и возврат результата пользователю.
+- Runtime показывает рекламные сети Mediasniper, Hybrid, Яндекс Видео, Mediasniper Video и GetIntent Video.
+- Для Mediasniper и Hybrid runtime показывает размеры `240x400`, `300x600`, `300x500`; для Яндекс Видео, Mediasniper Video и GetIntent Video — единственный menu-format `1920x1080`.
+- Маски берутся из `reports_ad/reports_ad/data/masks/<Network>/<Size>.png`. Для Яндекс Видео используется `reports_ad/reports_ad/data/masks/YandexVideo/1920x1080.png`, для Mediasniper Video — `reports_ad/reports_ad/data/masks/MediasniperVideo/1920x1080.png`; после загрузки креатива бот дополнительно запрашивает адрес целевого сайта и сохраняет прежнее поведение favicon/domain.
+- GetIntent Video использует `reports_ad/reports_ad/data/masks/GetIntentVideo/1920x1080.png`. Production asset имеет исходный размер `1920×1215`; белое жирное значение `<age>+` центрируется без фоновой панели в области `(1670, 180, 224, 110)`. Область увеличена и сдвинута влево относительно исходной маркировки, чтобы перекрывать её.
+- GetIntent Video использует отдельный flow: сеть → `1920×1080` → PNG/JPEG → адрес целевого сайта → минимальный возраст → генерация. Адрес обязателен и хранится в request как normalized URL/display, но **не отрисовывается**: координаты нижнего блока не утверждены. Это явное отложенное ограничение MVP; speculative coordinates не используются.
+- GetIntent Video никогда не скачивает, не запрашивает, не принимает и не отрисовывает favicon.
+- Валидация проверяет MIME, расширение, размер файла и корректность PNG/JPEG; точное совпадение размеров входного креатива не требуется, потому что креатив приводится к выбранному размеру перед наложением маски.
+- Pillow generator изменяет креатив до выбранного размера, накладывает PNG-маску поверх и сохраняет итоговый PNG.
 - Нет сохранения истории задач; состояние диалога и per-user locks только в памяти процесса.
 - Временные файлы удаляются после отправки результата, отмены или ошибки.
-- После успешной вставки креатива дополнительно сохраняется промежуточный PNG в `reports_ad/tmp`: это снимок рекламной страницы уже с вставленным креативом, но еще до клика по landing URL. Он не отправляется пользователю вместо итогового proof.
 
 ## Menu selection dependency note
 
-Выбор рекламной сети и размера/spec переведен с ручного ввода slug на reply-keyboard меню, построенные через библиотеку `telegram_menu`.
+Выбор рекламной сети и размера переведен с ручного ввода slug на reply-keyboard меню, построенные через библиотеку `telegram_menu`.
 
 - PyPI package name в lock/dependency metadata отображается как `telegram-menu`/`telegram_menu`; импорт в Python выполняется как `telegram_menu`.
 - Используется легкий adapter на `telegram_menu.BaseMessage`: бот остается на существующем `python-telegram-bot` `ConversationHandler` и polling lifecycle, а `telegram_menu` применяется для построения keyboard buttons только в двух шагах выбора.
-- После выбора рекламной сети бот сразу отправляет prompt `Теперь выберите тип баннера/spec кнопкой меню telegram_menu:` и показывает `telegram_menu` reply-keyboard только со spec-кнопками выбранной сети; выбранный label вида `Display [spec-slug] — размер` мапится обратно в slug.
-- После выбора spec бот сначала просит отправить PNG/JPEG-креатив с указанными размерами и лимитом файла, валидирует upload по выбранному spec и только после успешной проверки переходит к prompt `Введите URL рекламной страницы, где нужно разместить рекламу.`. При правке spec ранее загруженный креатив сбрасывается и требуется повторная загрузка, чтобы не сохранить файл, несовместимый с новым spec.
-- На review screen бот больше не просит вводить `yes`/`edit ...` как основной способ управления. Вместо этого показывается `telegram_menu` reply-keyboard с русскими пунктами: `Изменить рекламную сеть`, `Изменить тип баннера`, `Изменить креатив`, `Изменить URL рекламной страницы`, `Изменить landing URL`, `Изменить UTM-строку`, `Запустить`. Последний пункт меню — ровно `Запустить`; при его выборе reply-keyboard снимается и начинается генерация proof-скриншота.
-- При переходе из review screen в правку текстовых/файловых полей меню снимается. Для правки сети и spec показываются соответствующие `telegram_menu` reply-keyboards; правка spec по-прежнему требует повторной загрузки креатива.
+- После выбора рекламной сети бот сразу отправляет prompt `Теперь выберите размер баннера кнопкой меню telegram_menu:` и показывает `telegram_menu` reply-keyboard с размерами `240x400`, `300x600`, `300x500`; выбранный label вида `240×400 [240x400]` мапится обратно в slug размера.
+- После выбора размера бот просит отправить PNG/JPEG-креатив. Для обычных масок генерация запускается сразу; Яндекс Видео и Mediasniper Video запрашивают адрес/favicon по прежнему flow, а GetIntent Video запрашивает адрес и минимальный возраст без favicon. Отдельные шаги screenshot, landing URL, UTM и review в новом flow не используются.
 - Полная `TelegramMenuSession` из библиотеки не включена, потому что она создает собственное приложение, persistence и handlers; это конфликтовало бы с текущим no-history runtime и существующим polling flow. Остальные шаги по-прежнему принимают текст/файл без меню.
-- На случай ручного ввода бот сохраняет обратную совместимость: принимает как menu label вида `Яндекс [yandex_graphic_banners] — 12 specs`, так и сам slug; на review screen старые команды `yes` и `edit network`/`edit spec`/`edit creative`/`edit ad_url`/`edit landing`/`edit utm` оставлены fallback-вводом.
+- На случай ручного ввода бот принимает как menu label вида `Mediasniper [mediasniper] — 3 размера`, так и сам slug.
 
 ## Быстрый старт
 
@@ -281,37 +280,15 @@ networks:
 
 Use these changes as operational experiments, not default code changes: the correct DNS, proxy, and MTU values depend on the server/VPN/cloud network. After each change, re-run `reports-ad-diagnostics` and a Chromium smoke check from the same running container.
 
-## Catalog and placement behavior
+## Mask catalog behavior
 
-Stage 2 не использует live browser/Playwright для production flow: каталог нужен для выбора рекламной сети/spec, подсказок размеров и контекста OCR/vision LLM. Сайты площадки и landing URL не скачиваются и не проверяются; landing URL используется только как строка, объединенная с UTM и нарисованная в нижней области proof.
+Runtime-каталог масок находится в `reports_ad/reports_ad/mask_catalog.py` и жестко ограничивает production flow двумя сетями и тремя размерами:
 
-Каталог содержит 96 source specs из `creative_specs.json` и 19 рекламных сетей/platform groups. Runtime-фильтр бота показывает в `telegram_menu` только specs, которые можно принять как статичный PNG/JPEG с фиксированными размерами. Если source spec допускает GIF, PSD, ZIP, MP4 или HTML5, эти данные сохранены в catalog metadata, но Telegram runtime MVP их не принимает.
+- Mediasniper: `reports_ad/reports_ad/data/masks/Mediasniper/240x400.png`, `300x600.png`, `300x500.png`;
+- Hybrid: `reports_ad/reports_ad/data/masks/Hybrid/240x400.png`, `300x600.png`, `300x500.png`;
+- Яндекс Видео: `reports_ad/reports_ad/data/masks/YandexVideo/1920x1080.png`.
 
-После ввода advertising page URL бот выбирает placement автоматически:
-
-- если host есть в списке `reports_ad/docs/examples/FD -- Примеры скриншотов/площадки.txt` и для него есть слабонаблюдаемый selector из HTML sample, используется selector;
-- иначе применяется безопасный dimension-based fallback template по размеру выбранного spec;
-- если host неизвестен, используется template по размеру или `in-content` как последний fallback.
-
-Если исходная/current advertising page не открывается на фазе загрузки страницы (`commit`/bounded DOM/body), generator сначала фиксирует отказ по host, затем перебирает predefined fallback-площадки из `reports_ad/reports_ad/data/placement_sites.json`. Список мигрирован из `reports_ad/docs/examples/FD -- Примеры скриншотов/площадки.txt` и разделен по media type: `banner` и `video`. Runtime определяет media type по выбранному spec: source/video/in-stream/MP4 specs используют `video`, а статичные PNG/JPEG/image specs и все неясные случаи MVP используют documented default `banner`. Для каждого hostname строится только безопасный root HTTPS URL вида `https://host/`; пути, query, UTM, пользовательские URL и локальные файлы в JSON не сохраняются.
-
-Площадки, которые в Docker/Chromium logs не загружаются в пределах 30 секунд, сохранены в JSON как disabled metadata и не участвуют в активной fallback-цепочке. Сейчас из `banner` fallback исключены `dzen.ru` и `deti-online.com`; `dzen.ru` также исключен из `video` fallback, а `deti-online.com` помечен disabled для `video`, чтобы не тратить общий timeout на известные commit/TLS/SSO-зависания. Исторические entries не удалены: у каждого disabled host есть `disabled_reason`.
-
-Дополнительных Chromium smoke/checks для landing/target host не добавлено: landing URL по-прежнему используется только в стандартной фазе click/fallback-open текущей генерации.
-
-Fallback применяется только к connectivity/page-download/page-load этапу до вставки креатива. Ошибки selector/template insertion остаются фазой `creative_insert` и не запускают перебор площадок. Если все кандидаты не открылись, пользователь получает русское сообщение о том, что все fallback-площадки недоступны, а в логах остаются только sanitized причины по host.
-
-Статус проверки площадок сохранен в catalog metadata. Проверка выполнялась из workspace через `reports_ad/.venv/bin/python` с HTML-sample запросами. Ограничения: `dzen.ru`, `m.dzen.ru`, `yandex.ru` редиректили на Yandex Passport/SSO; `kniga-online.com` вернул HTTP 403; `m.video.yandex.ru` и `m.images.yandex.ru` дали TLS hostname mismatch; `drug.vokrug` не резолвился DNS. Поэтому selectors с confidence не `observed_sample` являются fallback heuristics, а не verified production selectors.
-
-## Intermediate artifacts in `reports_ad/tmp`
-
-Каждая успешная генерация после `creative_insert` сохраняет дополнительный artifact в project-level `reports_ad/tmp` или, в Docker Compose, в mounted `/app/tmp` → `./tmp`. Это нужно для операторской проверки, что креатив был вставлен до клика и композиции landing page. Artifact не заменяет итоговый screenshot и не отправляется в Telegram пользователю; в Telegram уходит только финальный proof image.
-
-Безопасность имени файла:
-
-- включает только stem исходного имени креатива, host выбранной площадки и UTC timestamp вида `YYYYMMDD-HHMMSS`;
-- не включает полный advertising URL, landing URL, UTM, Telegram user/chat IDs, token или локальный путь upload-файла;
-- небезопасные символы заменяются дефисами.
+Если файл маски отсутствует или размер PNG-маски не совпадает с выбранным размером, пользователь получает безопасную ошибку без traceback и без внутренних путей. Итоговый файл отправляется как Telegram photo и как PNG document без сжатия.
 
 ## Manual placement syntax for internal validation helpers
 
