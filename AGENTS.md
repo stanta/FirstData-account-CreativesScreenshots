@@ -622,3 +622,34 @@ Manual diagnostics внутри контейнера: для `dzen.ru` DNS/TCP/T
 ### Проверки
 
 - `.venv/bin/python -m pytest -c pyproject.toml tests/ -q --ignore=tests/e2e --ignore=tests/test_diagnostics.py` — 156 passed. `tests/test_diagnostics.py` не собирается из-за pre-existing импорта `_safe_host` (отсутствует в `reports_ad/bot.py` и на HEAD), не связано с этим изменением.
+
+---
+
+## Ход проекта — 2026-09-20 — MediaSniperVideo: исправление на прямой creative→output flow
+
+Исправлена предыдущая реализация, которая не соответствовала утверждённому требованию. Для сети `Mediasniper Video` оба варианта маски теперь **только** накладывают выбранный PNG на загруженный креатив; адрес целевого сайта, favicon и весь дополнительный текст (домен, CTA, skip, «Реклама») не используются.
+
+### Итоговое поведение
+
+- Меню после выбора сети содержит ровно два пункта:
+  - `1920_1080 наложить все элементы` → `reports_ad/reports_ad/data/masks/MediasniperVideo/1920_1080_all.png`;
+  - `1920_1080 наложить только линию видеоплеера внизу` → `reports_ad/reports_ad/data/masks/MediasniperVideo/1920_1080_br_only.png`.
+- Оба варианта: `выбор сети → выбор одной из двух масок → загрузка PNG/JPEG → генерация → photo + document`, без шагов `TARGET_SITE`/`FAVICON`.
+- Результат — только `Image.alpha_composite(creative, mask)`; для Mediasniper Video не выполняется валидация target-site, не вызываются `_clear_yandex_video_mask_region` и `render_mediasniper_video_overlay`.
+
+### Декодированные размеры ассетов и политика композиции
+
+- `1920_1080_all.png`: 2941×1080, RGBA.
+- `1920_1080_br_only.png`: 1920×1091, RGBA.
+- Каталог закрепляет фактические decoded-размеры каждого варианта, а `compose_masked_banner()` приводит креатив к нативному размеру маски и накладывает маску 1:1 без растяжения маски; иной размер маски отклоняется безопасной ошибкой.
+
+### Остальные сети не меняются
+
+- `yandex_video`: по-прежнему запрашивает target-site и использует favicon/свой рендерер.
+- `getintent_video`: по-прежнему запрашивает target-site и минимальный возраст.
+- `mediasniper` и `hybrid`: по-прежнему генерируются напрямую.
+
+### Проверки
+
+- `.venv/bin/python -m pytest -c pyproject.toml -q -o addopts="" tests/ --ignore=tests/e2e --ignore=tests/test_diagnostics.py` — 161 passed.
+- `tests/test_diagnostics.py` по-прежнему не собирается из-за pre-existing импорта `_safe_host`, не связанного с этим изменением.

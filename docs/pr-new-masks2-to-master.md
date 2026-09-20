@@ -21,7 +21,7 @@ Users select a network and supported banner size, upload a PNG/JPEG creative, an
   - Mediasniper: `240×400`, `300×500`, and `300×600`;
   - Hybrid: `240×400`, `300×500`, and `300×600`;
   - Yandex Video: `1920×1080` menu format;
-  - Mediasniper Video: `1920×1080`;
+  - Mediasniper Video: two mask variants (`1920_1080_all.png` and `1920_1080_br_only.png`);
   - GetIntent Video: `1920×1080` menu format.
 - Adds aliases for Yandex Video, Mediasniper Video, and GetIntent Video so menu values and accepted alternative spellings resolve to stable network slugs.
 - Extends package data in [`pyproject.toml`](../pyproject.toml) so mask PNG files ship with the application package.
@@ -48,9 +48,9 @@ The bot sends every completed banner as both a Telegram photo and an uncompresse
 
 #### Mediasniper Video
 
-- Adds the `mediasniper_video` network and its `1920×1080` mask.
-- Reuses the target-site step and favicon fallback behavior.
-- Renders network-specific domain, favicon, CTA, skip, and advertising-label overlays.
+- Adds the `mediasniper_video` network with exactly two mask choices: `1920_1080 наложить все элементы` → `1920_1080_all.png` and `1920_1080 наложить только линию видеоплеера внизу` → `1920_1080_br_only.png`.
+- Both choices generate immediately after the creative upload: no target-site step, no favicon fetch/upload, and no domain/CTA/skip/«Реклама» text overlays.
+- The result is only `Image.alpha_composite(creative, mask)`.
 
 #### GetIntent Video
 
@@ -80,7 +80,7 @@ The bot sends every completed banner as both a Telegram photo and an uncompresse
   - mask catalog resolution and network-size menus;
   - PNG mask availability and dimensions;
   - creative resize/mask composition;
-  - Yandex and Mediasniper target-site/favicon behavior;
+  - Yandex target-site/favicon behavior and the Mediasniper Video direct two-mask flow;
   - GetIntent address/age transition, strict age validation, label composition, and favicon exclusion;
   - Telegram retry/file-send behavior.
 - Updates the Telegram E2E fixture and happy-path coverage in [`tests/e2e/fixtures.py`](../tests/e2e/fixtures.py) and [`tests/e2e/test_telegram_user_flow.py`](../tests/e2e/test_telegram_user_flow.py).
@@ -112,7 +112,7 @@ The bot sends every completed banner as both a Telegram photo and an uncompresse
 
 Review the pull request in this order:
 
-1. **Conversation contract:** verify states and transitions in [`reports_ad/bot.py`](../reports_ad/bot.py), especially that standard networks generate after upload while video networks take their additional inputs.
+1. **Conversation contract:** verify states and transitions in [`reports_ad/bot.py`](../reports_ad/bot.py), especially that standard networks and Mediasniper Video generate after upload, while Yandex Video and GetIntent Video take their additional inputs.
 2. **Mask safety:** verify that [`resolve_mask_asset()`](../reports_ad/mask_catalog.py:175) restricts resolution to declared network/size pairs and returns a safe user error when a file is absent.
 3. **Composition:** inspect [`compose_masked_banner()`](../reports_ad/masked_banner.py:158) and the network-specific renderer branches.
 4. **GetIntent constraints:** confirm that GetIntent requires a target site and a valid age, but does not invoke the favicon flow.
@@ -142,13 +142,13 @@ Review the pull request in this order:
 
 Replaces the active `reports_ad` Telegram workflow with a network-mask banner compositor. Users now select a network and size, upload a PNG/JPEG creative, and receive a resized PNG with the selected mask applied.
 
-Adds Yandex Video, Mediasniper Video, and GetIntent Video flows, including target-site/favicons where required and GetIntent minimum-age labeling.
+Adds Yandex Video, Mediasniper Video, and GetIntent Video flows, including Yandex target-site/favicon handling and GetIntent minimum-age labeling. Mediasniper Video offers two masks and generates directly from the creative.
 
 ## Key changes
 
 - Add typed mask catalog and packaged production mask assets.
 - Add Pillow masked-banner generator and safe validation.
-- Add target-site/domain/favicon overlays for Yandex and Mediasniper Video.
+- Add target-site/domain/favicon overlays for Yandex Video; add two direct Mediasniper Video mask variants.
 - Add GetIntent Video flow: target site + validated `0..99` age input rendered as `<age>+`; no favicon flow.
 - Add container font dependencies for reliable bold overlay text.
 - Update README, implementation plan, unit tests, and Telegram E2E fixture coverage.

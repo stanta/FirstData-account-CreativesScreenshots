@@ -12,8 +12,8 @@
   4. для GetIntent Video — адрес целевого сайта и минимальный возраст `0..99` без знака `+`;
   5. автоматическая проверка файла, resize до выбранного размера, наложение маски и возврат результата пользователю.
 - Runtime показывает рекламные сети Mediasniper, Hybrid, Яндекс Видео, Mediasniper Video и GetIntent Video.
-- Для Mediasniper и Hybrid runtime показывает размеры `240x400`, `300x600`, `300x500`; для Яндекс Видео и GetIntent Video — единственный menu-format `1920x1080`; для Mediasniper Video — два варианта маски: `1920_1080 наложить все элементы` и `1920_1080 наложить только нижнюю  ленту плеера`.
-- Маски берутся из `reports_ad/reports_ad/data/masks/<Network>/<Size>.png`. Для Яндекс Видео используется `reports_ad/reports_ad/data/masks/YandexVideo/1920x1080.png`, для Mediasniper Video — `reports_ad/reports_ad/data/masks/MediasniperVideo/1920_1080_all.png` (все элементы; запрашивает адрес целевого сайта и favicon) или `reports_ad/reports_ad/data/masks/MediasniperVideo/1920_1080_br_only.png` (только нижняя лента плеера; адрес целевого сайта не запрашивается).
+- Для Mediasniper и Hybrid runtime показывает размеры `240x400`, `300x600`, `300x500`; для Яндекс Видео и GetIntent Video — единственный menu-format `1920x1080`; для Mediasniper Video — два варианта маски: `1920_1080 наложить все элементы` и `1920_1080 наложить только линию видеоплеера внизу`.
+- Маски берутся из `reports_ad/reports_ad/data/masks/<Network>/<file>.png`. Для Яндекс Видео используется `reports_ad/reports_ad/data/masks/YandexVideo/1920x1080.png`, для Mediasniper Video — `reports_ad/reports_ad/data/masks/MediasniperVideo/1920_1080_all.png` (все элементы) или `reports_ad/reports_ad/data/masks/MediasniperVideo/1920_1080_br_only.png` (только линия видеоплеера внизу). Оба варианта Mediasniper Video генерируются сразу после загрузки креатива: бот не запрашивает адрес целевого сайта, не скачивает favicon и не добавляет текст/оверлеи; результат — только `Image.alpha_composite(creative, mask)`.
 - GetIntent Video использует `reports_ad/reports_ad/data/masks/GetIntentVideo/1920x1080.png`. Production asset имеет исходный размер `1920×1215`; белое жирное значение `<age>+` центрируется без фоновой панели в области `(1670, 180, 224, 110)`. Область увеличена и сдвинута влево относительно исходной маркировки, чтобы перекрывать её.
 - GetIntent Video использует отдельный flow: сеть → `1920×1080` → PNG/JPEG → адрес целевого сайта → минимальный возраст → генерация. Адрес обязателен и хранится в request как normalized URL/display, но **не отрисовывается**: координаты нижнего блока не утверждены. Это явное отложенное ограничение MVP; speculative coordinates не используются.
 - GetIntent Video никогда не скачивает, не запрашивает, не принимает и не отрисовывает favicon.
@@ -29,7 +29,7 @@
 - PyPI package name в lock/dependency metadata отображается как `telegram-menu`/`telegram_menu`; импорт в Python выполняется как `telegram_menu`.
 - Используется легкий adapter на `telegram_menu.BaseMessage`: бот остается на существующем `python-telegram-bot` `ConversationHandler` и polling lifecycle, а `telegram_menu` применяется для построения keyboard buttons только в двух шагах выбора.
 - После выбора рекламной сети бот сразу отправляет prompt `Теперь выберите размер баннера кнопкой меню telegram_menu:` и показывает `telegram_menu` reply-keyboard с размерами `240x400`, `300x600`, `300x500`; выбранный label вида `240×400 [240x400]` мапится обратно в slug размера.
-- После выбора размера бот просит отправить PNG/JPEG-креатив. Для обычных масок генерация запускается сразу; Яндекс Видео и Mediasniper Video запрашивают адрес/favicon по прежнему flow, а GetIntent Video запрашивает адрес и минимальный возраст без favicon. Отдельные шаги screenshot, landing URL, UTM и review в новом flow не используются.
+- После выбора размера бот просит отправить PNG/JPEG-креатив. Для обычных масок и обоих вариантов Mediasniper Video генерация запускается сразу; Яндекс Видео запрашивает адрес/favicon по прежнему flow, а GetIntent Video запрашивает адрес и минимальный возраст без favicon. Отдельные шаги screenshot, landing URL, UTM и review в новом flow не используются.
 - Полная `TelegramMenuSession` из библиотеки не включена, потому что она создает собственное приложение, persistence и handlers; это конфликтовало бы с текущим no-history runtime и существующим polling flow. Остальные шаги по-прежнему принимают текст/файл без меню.
 - На случай ручного ввода бот принимает как menu label вида `Mediasniper [mediasniper] — 3 размера`, так и сам slug.
 
@@ -282,11 +282,13 @@ Use these changes as operational experiments, not default code changes: the corr
 
 ## Mask catalog behavior
 
-Runtime-каталог масок находится в `reports_ad/reports_ad/mask_catalog.py` и жестко ограничивает production flow двумя сетями и тремя размерами:
+Runtime-каталог масок находится в `reports_ad/reports_ad/mask_catalog.py` и ограничивает production flow заявленными сетями и размерами:
 
 - Mediasniper: `reports_ad/reports_ad/data/masks/Mediasniper/240x400.png`, `300x600.png`, `300x500.png`;
 - Hybrid: `reports_ad/reports_ad/data/masks/Hybrid/240x400.png`, `300x600.png`, `300x500.png`;
-- Яндекс Видео: `reports_ad/reports_ad/data/masks/YandexVideo/1920x1080.png`.
+- Яндекс Видео: `reports_ad/reports_ad/data/masks/YandexVideo/1920x1080.png`;
+- Mediasniper Video: два варианта `reports_ad/reports_ad/data/masks/MediasniperVideo/1920_1080_all.png` и `reports_ad/reports_ad/data/masks/MediasniperVideo/1920_1080_br_only.png`; оба генерируются сразу после загрузки креатива без адреса целевого сайта и favicon;
+- GetIntent Video: `reports_ad/reports_ad/data/masks/GetIntentVideo/1920x1080.png`.
 
 Если файл маски отсутствует или размер PNG-маски не совпадает с выбранным размером, пользователь получает безопасную ошибку без traceback и без внутренних путей. Итоговый файл отправляется как Telegram photo и как PNG document без сжатия.
 

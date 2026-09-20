@@ -194,6 +194,10 @@ async def collect_banner_type(update: Update, context: ContextTypes.DEFAULT_TYPE
     context.user_data["banner_size_slug"] = size.slug
     context.user_data["banner_size"] = size
     context.user_data["banner_type"] = size.label
+    if network_slug == "mediasniper_video":
+        context.user_data["mask_variant_slug"] = size.slug
+    else:
+        context.user_data.pop("mask_variant_slug", None)
     context.user_data.pop("creative", None)
     await _reply_text_with_retry(
         update.effective_message,
@@ -624,6 +628,8 @@ def _menu_label(display_name: str, slug: str, detail: str = "") -> str:
 
 
 def _size_menu_label(size: BannerSize) -> str:
+    if size.menu_label:
+        return size.menu_label
     label = f"{size.menu_text} [{size.slug}]"
     if len(label) <= TELEGRAM_KEYBOARD_BUTTON_TEXT_LIMIT:
         return label
@@ -638,6 +644,10 @@ def _menu_value(text: str | None) -> str:
     value = (text or "").strip()
     if "[" in value and "]" in value:
         return value.split("[", 1)[1].split("]", 1)[0].strip()
+    for network in list_mask_networks():
+        for size in list_banner_sizes_for_network(network.slug):
+            if size.menu_label == value:
+                return size.slug
     return value
 
 
@@ -668,7 +678,7 @@ def _clear_for_edit(user_data: dict[str, Any], target: str) -> None:
 
 
 def _clear_from(user_data: dict[str, Any], key: str) -> None:
-    order = ["network_slug", "network_display_name", "banner_size_slug", "banner_size", "banner_type", "creative", "target_site_url", "target_site_display", "minimum_age", "favicon"]
+    order = ["network_slug", "network_display_name", "banner_size_slug", "mask_variant_slug", "banner_size", "banner_type", "creative", "target_site_url", "target_site_display", "minimum_age", "favicon"]
     if key not in order:
         return
     for candidate in order[order.index(key) :]:
@@ -702,12 +712,6 @@ def _selected_flow_kind(user_data: dict[str, Any]) -> str:
 
 
 def _requires_target_site(user_data: dict[str, Any]) -> bool:
-    size = user_data.get("banner_size")
-    if isinstance(size, BannerSize):
-        if size.requires_target_site:
-            return True
-        if user_data.get("network_slug") == "mediasniper_video":
-            return False
     flow_kind = _selected_flow_kind(user_data)
     return flow_kind in {"yandex_video", "getintent_video"}
 

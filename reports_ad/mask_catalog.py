@@ -26,7 +26,6 @@ class BannerSize:
     display_label: str | None = None
     menu_label: str | None = None
     mask_file_name: str | None = None
-    requires_target_site: bool = False
 
     @property
     def label(self) -> str:
@@ -50,7 +49,9 @@ MASK_NETWORKS: tuple[MaskNetwork, ...] = (
     MaskNetwork(slug="mediasniper", display_name="Mediasniper", directory_name="Mediasniper"),
     MaskNetwork(slug="hybrid", display_name="Hybrid", directory_name="Hybrid"),
     MaskNetwork(slug="yandex_video", display_name="Яндекс Видео", directory_name="YandexVideo", flow_kind="yandex_video"),
-    MaskNetwork(slug="mediasniper_video", display_name="Mediasniper Video", directory_name="MediasniperVideo", flow_kind="yandex_video"),
+    # MediaSniperVideo decouples from the Yandex video flow: mask-only composition,
+    # no target-site prompt, no favicon, no extra text rendering.
+    MaskNetwork(slug="mediasniper_video", display_name="Mediasniper Video", directory_name="MediasniperVideo", flow_kind="mediasniper_video"),
     MaskNetwork(slug="getintent_video", display_name="GetIntent Video", directory_name="GetIntentVideo", flow_kind="getintent_video"),
 )
 
@@ -62,22 +63,24 @@ STANDARD_BANNER_SIZES: tuple[BannerSize, ...] = (
 YANDEX_VIDEO_BANNER_SIZES: tuple[BannerSize, ...] = (
     BannerSize(slug="1920x1080", width=1536, height=1024, display_label="1920×1080"),
 )
+# MediaSniperVideo masks are pinned to their decoded asset sizes so the
+# compositor overlays each PNG 1:1 at native resolution (no mask rescaling):
+# 1920_1080_all.png decodes at 2941x1080; 1920_1080_br_only.png at 1920x1091.
 MEDIASNIPER_VIDEO_BANNER_SIZES: tuple[BannerSize, ...] = (
     BannerSize(
         slug="1920_1080_all",
-        width=1920,
+        width=2941,
         height=1080,
         display_label="1920×1080",
         menu_label="1920_1080 наложить все элементы",
         mask_file_name="1920_1080_all.png",
-        requires_target_site=True,
     ),
     BannerSize(
         slug="1920_1080_br",
         width=1920,
-        height=1080,
+        height=1091,
         display_label="1920×1080",
-        menu_label="1920_1080 наложить только нижнюю  ленту плеера",
+        menu_label="1920_1080 наложить только линию видеоплеера внизу",
         mask_file_name="1920_1080_br_only.png",
     ),
 )

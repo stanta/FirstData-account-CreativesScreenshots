@@ -39,13 +39,6 @@ YANDEX_VIDEO_FAVICON_HTML_MAX_BYTES = 256 * 1024
 YANDEX_VIDEO_FAVICON_SVG_RENDER_SIZE = 96
 YANDEX_VIDEO_FAVICON_USER_AGENT = "reports-ad-bot/1.0"
 YANDEX_VIDEO_FAVICON_PATHS = ("/favicon.ico", "/favicon.png", "/apple-touch-icon.png")
-MEDIASNIPER_VIDEO_SIZE = (1920, 1080)
-MEDIASNIPER_VIDEO_FAVICON_BBOX = (90, 765, 128, 128)
-MEDIASNIPER_VIDEO_TARGET_SITE_BBOX = (270, 765, 465, 75)
-MEDIASNIPER_VIDEO_CTA_BBOX = (780, 780, 370, 70)
-MEDIASNIPER_VIDEO_SKIP_BBOX = (1355, 800, 460, 60)
-MEDIASNIPER_VIDEO_AD_LABEL_BBOX = (90, 945, 270, 65)
-MEDIASNIPER_VIDEO_TEXT_FILL = (255, 255, 255, 255)
 GETINTENT_VIDEO_SIZE_SLUG = "1920x1080"
 GETINTENT_VIDEO_MASK_SIZE = (1920, 1215)
 # Enlarged age-label area, shifted left to overlay the source age marker.
@@ -174,8 +167,7 @@ def compose_masked_banner(
     try:
         with Image.open(creative_path) as creative_raw, Image.open(mask_path) as mask_raw:
             creative = creative_raw.convert("RGBA").resize((width, height), Image.Resampling.LANCZOS)
-            requires_target_site = _requires_target_site(network_slug, mask_path)
-            if requires_target_site:
+            if network_slug == YANDEX_VIDEO_NETWORK_SLUG:
                 if not target_site_display:
                     raise ValidationError("Для видео-flow нужно указать адрес целевого сайта.")
                 raw_mask = mask_raw.convert("RGBA")
@@ -186,18 +178,20 @@ def compose_masked_banner(
                 minimum_age = validate_minimum_age(minimum_age or "")
                 if (width, height) != GETINTENT_VIDEO_MASK_SIZE:
                     raise ValidationError("Маска GetIntent Video должна использовать исходный размер 1920×1215.")
-            mask = _prepare_mask_overlay(mask_raw.convert("RGBA"))
+            # MediaSniperVideo is a mask-only flow: the decoded mask PNG is
+            # composited as-is at its native size (no blackening, no
+            # target-site/favicon, no text rendering, no mask rescaling).
+            mask = (
+                mask_raw.convert("RGBA")
+                if network_slug == MEDIASNIPER_VIDEO_NETWORK_SLUG
+                else _prepare_mask_overlay(mask_raw.convert("RGBA"))
+            )
             if mask.size != (width, height):
-                if _is_video_flow(network_slug) and network_slug == MEDIASNIPER_VIDEO_NETWORK_SLUG:
-                    mask = mask.resize((width, height), Image.Resampling.LANCZOS)
-                else:
-                    raise ValidationError("Размер файла маски не совпадает с выбранным размером баннера.")
+                raise ValidationError("Размер файла маски не совпадает с выбранным размером баннера.")
             pre_composite = creative.copy()
             result = Image.alpha_composite(creative, mask)
             if network_slug == YANDEX_VIDEO_NETWORK_SLUG:
                 result = render_yandex_video_target_site(result, target_site_display or "", target_site_url=target_site_url, favicon_path=favicon_path)
-            elif network_slug == MEDIASNIPER_VIDEO_NETWORK_SLUG and requires_target_site:
-                result = render_mediasniper_video_overlay(result, target_site_display or "", target_site_url=target_site_url, favicon_path=favicon_path)
             elif network_slug == GETINTENT_VIDEO_NETWORK_SLUG:
                 # TODO: Render target_site_display when approved lower-block coordinates are supplied.
                 result = render_getintent_video_minimum_age(result, minimum_age or "")
@@ -275,37 +269,6 @@ def render_yandex_video_target_site(base: Image.Image, display_text: str, *, tar
     )
     if text_width > text_box[2]:
         logger.debug("yandex_video_target_site_text_overflow text_length=%s box_width=%s rendered_width=%s", len(text), text_box[2], text_width)
-    return result
-
-
-def render_mediasniper_video_overlay(base: Image.Image, display_text: str, *, target_site_url: str | None = None, favicon_path: Path | None = None) -> Image.Image:
-    text = (display_text or "").strip()
-    if not text:
-        raise ValidationError("Адрес целевого сайта не должен быть пустым.")
-    result = base.copy().convert("RGBA")
-    if result.size != MEDIASNIPER_VIDEO_SIZE:
-        logger.warning("mediasniper_video_overlay_unexpected_size actual=%sx%s expected=%sx%s", result.width, result.height, *MEDIASNIPER_VIDEO_SIZE)
-
-    favicon_present = _paste_target_site_favicon(result, target_site_url=target_site_url, favicon_path=favicon_path, box=MEDIASNIPER_VIDEO_FAVICON_BBOX)
-    draw = ImageDraw.Draw(result)
-    site_font = _draw_fitted_text(draw, text=text, box=MEDIASNIPER_VIDEO_TARGET_SITE_BBOX, preferred_size=70, fill=MEDIASNIPER_VIDEO_TEXT_FILL)
-    cta_font = _draw_fitted_text(draw, text="Перейти", box=MEDIASNIPER_VIDEO_CTA_BBOX, preferred_size=58, fill=MEDIASNIPER_VIDEO_TEXT_FILL)
-    skip_font = _draw_fitted_text(draw, text="Пропустить 02", box=MEDIASNIPER_VIDEO_SKIP_BBOX, preferred_size=50, fill=MEDIASNIPER_VIDEO_TEXT_FILL)
-    ad_font = _draw_fitted_text(draw, text="Реклама", box=MEDIASNIPER_VIDEO_AD_LABEL_BBOX, preferred_size=58, fill=MEDIASNIPER_VIDEO_TEXT_FILL)
-    logger.info(
-        "mediasniper_video_overlay_rendered text_length=%s favicon_box=%s favicon_present=%s target_box=%s cta_box=%s skip_box=%s ad_box=%s site_font_size=%s cta_font_size=%s skip_font_size=%s ad_font_size=%s",
-        len(text),
-        MEDIASNIPER_VIDEO_FAVICON_BBOX,
-        favicon_present,
-        MEDIASNIPER_VIDEO_TARGET_SITE_BBOX,
-        MEDIASNIPER_VIDEO_CTA_BBOX,
-        MEDIASNIPER_VIDEO_SKIP_BBOX,
-        MEDIASNIPER_VIDEO_AD_LABEL_BBOX,
-        getattr(site_font, "size", "unknown"),
-        getattr(cta_font, "size", "unknown"),
-        getattr(skip_font, "size", "unknown"),
-        getattr(ad_font, "size", "unknown"),
-    )
     return result
 
 
@@ -606,7 +569,7 @@ def _validate_masked_banner_request(request: MaskedBannerRequest) -> None:
     if _is_video_flow(request.network_slug):
         if request.size_slug not in VIDEO_FLOW_SIZE_SLUGS:
             raise ValidationError("Видео-flow поддерживает только формат 1920×1080.")
-        if request.size.requires_target_site and not request.target_site_display:
+        if request.network_slug == YANDEX_VIDEO_NETWORK_SLUG and not request.target_site_display:
             raise ValidationError("Для видео-flow нужно указать адрес целевого сайта.")
     if request.network_slug == GETINTENT_VIDEO_NETWORK_SLUG:
         if request.size_slug != GETINTENT_VIDEO_SIZE_SLUG:
@@ -620,12 +583,6 @@ def _validate_masked_banner_request(request: MaskedBannerRequest) -> None:
 
 def _is_video_flow(network_slug: str | None) -> bool:
     return (network_slug or "") in VIDEO_FLOW_NETWORK_SLUGS
-
-
-def _requires_target_site(network_slug: str | None, mask_path: Path) -> bool:
-    if not _is_video_flow(network_slug):
-        return False
-    return network_slug != MEDIASNIPER_VIDEO_NETWORK_SLUG or mask_path.name == "1920_1080_all.png"
 
 
 def _prepare_mask_overlay(mask: Image.Image) -> Image.Image:
