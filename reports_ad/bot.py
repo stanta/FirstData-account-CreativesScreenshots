@@ -217,7 +217,7 @@ async def collect_creative(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return CREATIVE
 
     context.user_data["creative"] = creative_info
-    if _selected_flow_kind(context.user_data) in {"yandex_video", "getintent_video"}:
+    if _requires_target_site(context.user_data):
         flow_kind = _selected_flow_kind(context.user_data)
         prompt = (
             "Креатив принят. Отправьте адрес целевого сайта. Для GetIntent Video адрес сохраняется в заявке, но пока не отрисовывается.\n"
@@ -254,7 +254,7 @@ async def collect_target_site(update: Update, context: ContextTypes.DEFAULT_TYPE
             operation="collect_target_site.minimum_age_prompt.reply_text",
         )
         return MINIMUM_AGE
-    if _selected_flow_kind(context.user_data) == "yandex_video" and _load_target_site_favicon(target_site_url) is None:
+    if _requires_target_site(context.user_data) and _selected_flow_kind(context.user_data) == "yandex_video" and _load_target_site_favicon(target_site_url) is None:
         await _reply_text_with_retry(
             message,
             "Не удалось автоматически скачать favicon целевого сайта. Отправьте PNG/JPEG-иконку сайта как фото или документ — я добавлю её в видео-баннер.",
@@ -599,7 +599,7 @@ def catalog_summary(max_networks: int = 12) -> str:
 
 
 def specs_summary(network_slug: str = "", max_specs: int = 24) -> str:
-    return "\n".join(f"{index}. {size.label} — {size.slug}" for index, size in enumerate(_sizes_for_menu(network_slug)[:max_specs], start=1))
+    return "\n".join(f"{index}. {size.menu_text} — {size.slug}" for index, size in enumerate(_sizes_for_menu(network_slug)[:max_specs], start=1))
 
 
 def _sizes_for_menu(network_slug: str = "") -> list[BannerSize]:
@@ -624,7 +624,7 @@ def _menu_label(display_name: str, slug: str, detail: str = "") -> str:
 
 
 def _size_menu_label(size: BannerSize) -> str:
-    label = _menu_label(size.label, size.slug)
+    label = f"{size.menu_text} [{size.slug}]"
     if len(label) <= TELEGRAM_KEYBOARD_BUTTON_TEXT_LIMIT:
         return label
     return size.slug
@@ -699,6 +699,17 @@ def _edit_reply_markup(target: str, user_data: dict[str, Any]) -> ReplyKeyboardM
 def _selected_flow_kind(user_data: dict[str, Any]) -> str:
     network = get_mask_network(str(user_data.get("network_slug", "")))
     return network.flow_kind if network else "masked_banner"
+
+
+def _requires_target_site(user_data: dict[str, Any]) -> bool:
+    size = user_data.get("banner_size")
+    if isinstance(size, BannerSize):
+        if size.requires_target_site:
+            return True
+        if user_data.get("network_slug") == "mediasniper_video":
+            return False
+    flow_kind = _selected_flow_kind(user_data)
+    return flow_kind in {"yandex_video", "getintent_video"}
 
 
 async def _cleanup_state(user_data: dict[str, Any]) -> None:

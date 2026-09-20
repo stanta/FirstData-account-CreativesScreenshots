@@ -82,10 +82,15 @@ def test_resolve_mask_asset_supports_required_networks_and_sizes() -> None:
     assert yandex_video_asset.size.slug == "1920x1080"
     assert yandex_video_asset.path.exists()
 
-    mediasniper_video_asset = resolve_mask_asset("mediasniper_video", "1920x1080")
+    mediasniper_video_asset = resolve_mask_asset("mediasniper_video", "1920_1080_all")
     assert mediasniper_video_asset.network.slug == "mediasniper_video"
-    assert mediasniper_video_asset.size.slug == "1920x1080"
-    assert mediasniper_video_asset.path.exists()
+    assert mediasniper_video_asset.size.slug == "1920_1080_all"
+    assert mediasniper_video_asset.path.name == "1920_1080_all.png"
+
+    mediasniper_video_player_strip_asset = resolve_mask_asset("mediasniper_video", "1920_1080_br")
+    assert mediasniper_video_player_strip_asset.network.slug == "mediasniper_video"
+    assert mediasniper_video_player_strip_asset.size.slug == "1920_1080_br"
+    assert mediasniper_video_player_strip_asset.path.name == "1920_1080_br_only.png"
 
     getintent_video_asset = resolve_mask_asset("getintent_video", "1920x1080")
     assert getintent_video_asset.network.slug == "getintent_video"
@@ -143,7 +148,7 @@ def test_compose_mediasniper_video_renders_own_overlay_coordinates(monkeypatch: 
     creative_path = tmp_path / "creative.png"
     output_path = tmp_path / "mediasniper-video.png"
     Image.new("RGB", (640, 360), (20, 30, 40)).save(creative_path)
-    mask_asset = resolve_mask_asset("mediasniper_video", "1920x1080")
+    mask_asset = resolve_mask_asset("mediasniper_video", "1920_1080_all")
 
     def fake_load_favicon(target_site_url: str | None) -> Image.Image:
         assert target_site_url == "https://aliexpress.ru"
@@ -305,7 +310,7 @@ def test_compose_mediasniper_video_requires_target_site_display(tmp_path: Path) 
     creative_path = tmp_path / "creative.png"
     output_path = tmp_path / "mediasniper-video.png"
     Image.new("RGB", (640, 360), (20, 30, 40)).save(creative_path)
-    mask_asset = resolve_mask_asset("mediasniper_video", "1920x1080")
+    mask_asset = resolve_mask_asset("mediasniper_video", "1920_1080_all")
 
     with pytest.raises(ValidationError):
         compose_masked_banner(
@@ -316,6 +321,25 @@ def test_compose_mediasniper_video_requires_target_site_display(tmp_path: Path) 
             height=1080,
             network_slug="mediasniper_video",
         )
+
+
+def test_compose_mediasniper_video_player_strip_requires_no_target_site(tmp_path: Path) -> None:
+    creative_path = tmp_path / "creative.png"
+    output_path = tmp_path / "mediasniper-video-player-strip.png"
+    Image.new("RGB", (640, 360), (20, 30, 40)).save(creative_path)
+    mask_asset = resolve_mask_asset("mediasniper_video", "1920_1080_br")
+
+    width, height = compose_masked_banner(
+        creative_path=creative_path,
+        mask_path=mask_asset.path,
+        output_path=output_path,
+        width=1920,
+        height=1080,
+        network_slug="mediasniper_video",
+    )
+
+    assert (width, height) == (1920, 1080)
+    assert output_path.exists()
 
 
 @pytest.mark.parametrize("minimum_age", ["0", "12", "99"])

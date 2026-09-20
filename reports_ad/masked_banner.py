@@ -22,12 +22,12 @@ from .validation import ValidationError, validate_minimum_age
 logger = logging.getLogger(__name__)
 OPAQUE_MASK_BACKGROUND_ALPHA = 80
 VIDEO_FLOW_NETWORK_SLUGS = frozenset({"yandex_video", "mediasniper_video"})
-VIDEO_FLOW_SIZE_SLUG = "1920x1080"
+VIDEO_FLOW_SIZE_SLUGS = frozenset({"1920x1080", "1920_1080_all", "1920_1080_br"})
 VIDEO_FLOW_BASE_SIZE = (1536, 1024)
 YANDEX_VIDEO_NETWORK_SLUG = "yandex_video"
 MEDIASNIPER_VIDEO_NETWORK_SLUG = "mediasniper_video"
 GETINTENT_VIDEO_NETWORK_SLUG = "getintent_video"
-YANDEX_VIDEO_SIZE_SLUG = VIDEO_FLOW_SIZE_SLUG
+YANDEX_VIDEO_SIZE_SLUG = "1920x1080"
 YANDEX_VIDEO_MASK_SIZE = VIDEO_FLOW_BASE_SIZE
 YANDEX_VIDEO_FAVICON_BBOX = (56, 799, 32, 32)
 YANDEX_VIDEO_TARGET_SITE_BBOX = (100, 795, 250, 40)
@@ -174,7 +174,8 @@ def compose_masked_banner(
     try:
         with Image.open(creative_path) as creative_raw, Image.open(mask_path) as mask_raw:
             creative = creative_raw.convert("RGBA").resize((width, height), Image.Resampling.LANCZOS)
-            if _is_video_flow(network_slug):
+            requires_target_site = _requires_target_site(network_slug, mask_path)
+            if requires_target_site:
                 if not target_site_display:
                     raise ValidationError("Для видео-flow нужно указать адрес целевого сайта.")
                 raw_mask = mask_raw.convert("RGBA")
@@ -187,12 +188,15 @@ def compose_masked_banner(
                     raise ValidationError("Маска GetIntent Video должна использовать исходный размер 1920×1215.")
             mask = _prepare_mask_overlay(mask_raw.convert("RGBA"))
             if mask.size != (width, height):
-                raise ValidationError("Размер файла маски не совпадает с выбранным размером баннера.")
+                if _is_video_flow(network_slug) and network_slug == MEDIASNIPER_VIDEO_NETWORK_SLUG:
+                    mask = mask.resize((width, height), Image.Resampling.LANCZOS)
+                else:
+                    raise ValidationError("Размер файла маски не совпадает с выбранным размером баннера.")
             pre_composite = creative.copy()
             result = Image.alpha_composite(creative, mask)
             if network_slug == YANDEX_VIDEO_NETWORK_SLUG:
                 result = render_yandex_video_target_site(result, target_site_display or "", target_site_url=target_site_url, favicon_path=favicon_path)
-            elif network_slug == MEDIASNIPER_VIDEO_NETWORK_SLUG:
+            elif network_slug == MEDIASNIPER_VIDEO_NETWORK_SLUG and requires_target_site:
                 result = render_mediasniper_video_overlay(result, target_site_display or "", target_site_url=target_site_url, favicon_path=favicon_path)
             elif network_slug == GETINTENT_VIDEO_NETWORK_SLUG:
                 # TODO: Render target_site_display when approved lower-block coordinates are supplied.
@@ -600,9 +604,9 @@ def _load_font(size: int) -> ImageFont.ImageFont:
 
 def _validate_masked_banner_request(request: MaskedBannerRequest) -> None:
     if _is_video_flow(request.network_slug):
-        if request.size_slug != VIDEO_FLOW_SIZE_SLUG:
+        if request.size_slug not in VIDEO_FLOW_SIZE_SLUGS:
             raise ValidationError("Видео-flow поддерживает только формат 1920×1080.")
-        if not request.target_site_display:
+        if request.size.requires_target_site and not request.target_site_display:
             raise ValidationError("Для видео-flow нужно указать адрес целевого сайта.")
     if request.network_slug == GETINTENT_VIDEO_NETWORK_SLUG:
         if request.size_slug != GETINTENT_VIDEO_SIZE_SLUG:
@@ -616,6 +620,12 @@ def _validate_masked_banner_request(request: MaskedBannerRequest) -> None:
 
 def _is_video_flow(network_slug: str | None) -> bool:
     return (network_slug or "") in VIDEO_FLOW_NETWORK_SLUGS
+
+
+def _requires_target_site(network_slug: str | None, mask_path: Path) -> bool:
+    if not _is_video_flow(network_slug):
+        return False
+    return network_slug != MEDIASNIPER_VIDEO_NETWORK_SLUG or mask_path.name == "1920_1080_all.png"
 
 
 def _prepare_mask_overlay(mask: Image.Image) -> Image.Image:

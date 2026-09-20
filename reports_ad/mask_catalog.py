@@ -24,12 +24,19 @@ class BannerSize:
     width: int
     height: int
     display_label: str | None = None
+    menu_label: str | None = None
+    mask_file_name: str | None = None
+    requires_target_site: bool = False
 
     @property
     def label(self) -> str:
         if self.display_label:
             return self.display_label
         return f"{self.width}×{self.height}"
+
+    @property
+    def menu_text(self) -> str:
+        return self.menu_label or self.label
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,7 +63,23 @@ YANDEX_VIDEO_BANNER_SIZES: tuple[BannerSize, ...] = (
     BannerSize(slug="1920x1080", width=1536, height=1024, display_label="1920×1080"),
 )
 MEDIASNIPER_VIDEO_BANNER_SIZES: tuple[BannerSize, ...] = (
-    BannerSize(slug="1920x1080", width=1920, height=1080, display_label="1920×1080"),
+    BannerSize(
+        slug="1920_1080_all",
+        width=1920,
+        height=1080,
+        display_label="1920×1080",
+        menu_label="1920_1080 наложить все элементы",
+        mask_file_name="1920_1080_all.png",
+        requires_target_site=True,
+    ),
+    BannerSize(
+        slug="1920_1080_br",
+        width=1920,
+        height=1080,
+        display_label="1920×1080",
+        menu_label="1920_1080 наложить только нижнюю  ленту плеера",
+        mask_file_name="1920_1080_br_only.png",
+    ),
 )
 GETINTENT_VIDEO_BANNER_SIZES: tuple[BannerSize, ...] = (
     BannerSize(slug="1920x1080", width=1920, height=1215, display_label="1920×1080"),
@@ -144,7 +167,13 @@ def normalize_mask_network_slug(value: str | None) -> str:
 
 
 def normalize_banner_size_slug(value: str | None) -> str:
-    return (value or "").strip().lower().replace("×", "x").replace("*", "x").replace(" ", "")
+    normalized = (value or "").strip().lower().replace("×", "x").replace("*", "x").replace(" ", "")
+    aliases = {
+        "1920x1080_all": "1920_1080_all",
+        "1920x1080_br_only": "1920_1080_br",
+        "1920_1080_br_only": "1920_1080_br",
+    }
+    return aliases.get(normalized, normalized)
 
 
 def validate_mask_network_slug(raw_value: str, allowed_slugs: set[str] | None = None) -> str:
@@ -188,10 +217,11 @@ def resolve_mask_asset(network_slug: str, size_slug: str) -> MaskAsset:
 
 @lru_cache(maxsize=32)
 def _mask_path(network: MaskNetwork, size: BannerSize) -> Path:
-    resource = files("reports_ad").joinpath(MASKS_RESOURCE_ROOT, network.directory_name, f"{size.slug}.png")
+    mask_file_name = size.mask_file_name or f"{size.slug}.png"
+    resource = files("reports_ad").joinpath(MASKS_RESOURCE_ROOT, network.directory_name, mask_file_name)
     try:
         if resource.is_file():
             return Path(str(resource))
     except TypeError:
         pass
-    return Path(__file__).resolve().parent.joinpath(MASKS_RESOURCE_ROOT, network.directory_name, f"{size.slug}.png")
+    return Path(__file__).resolve().parent.joinpath(MASKS_RESOURCE_ROOT, network.directory_name, mask_file_name)

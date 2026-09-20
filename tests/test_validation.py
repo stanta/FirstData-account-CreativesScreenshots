@@ -354,15 +354,20 @@ def test_yandex_video_spec_keyboard_contains_only_1920x1080() -> None:
         resolve_mask_asset("mediasniper", "1920x1080")
 
 
-def test_mediasniper_video_spec_keyboard_contains_only_1920x1080() -> None:
+def test_mediasniper_video_spec_keyboard_contains_exactly_the_approved_mask_choices() -> None:
     keyboard = spec_menu_keyboard("mediasniper_video")
     labels = [button.text for row in keyboard.keyboard for button in row]
 
-    assert labels == ["1920×1080 [1920x1080]"]
-    mask_asset = resolve_mask_asset("mediasniper_video", "1920x1080")
-    assert mask_asset.path.exists()
-    assert mask_asset.size.width == 1920
-    assert mask_asset.size.height == 1080
+    assert labels == [
+        "1920_1080 наложить все элементы [1920_1080_all]",
+        "1920_1080 наложить только нижнюю  ленту плеера [1920_1080_br]",
+    ]
+    all_elements_asset = resolve_mask_asset("mediasniper_video", "1920_1080_all")
+    player_strip_asset = resolve_mask_asset("mediasniper_video", "1920_1080_br")
+    assert all_elements_asset.path.name == "1920_1080_all.png"
+    assert player_strip_asset.path.name == "1920_1080_br_only.png"
+    assert all_elements_asset.size.requires_target_site is True
+    assert player_strip_asset.size.requires_target_site is False
 
 
 def test_getintent_video_catalog_aliases_menu_size_and_production_mask() -> None:
@@ -658,8 +663,8 @@ async def test_yandex_video_network_selection_sends_1920x1080_spec_menu() -> Non
 
 
 @pytest.mark.asyncio
-async def test_mediasniper_video_network_selection_sends_1920x1080_spec_menu() -> None:
-    message = _FakeMessage("Mediasniper Video [mediasniper_video] — 1 размер")
+async def test_mediasniper_video_network_selection_sends_the_two_approved_mask_choices() -> None:
+    message = _FakeMessage("Mediasniper Video [mediasniper_video] — 2 размера")
     context = _FakeContext()
 
     state = await collect_network(_FakeUpdate(message), context)
@@ -667,7 +672,10 @@ async def test_mediasniper_video_network_selection_sends_1920x1080_spec_menu() -
     labels = [button.text for row in message.replies[-1]["reply_markup"].keyboard for button in row]
     assert state == 1
     assert context.user_data["network_slug"] == "mediasniper_video"
-    assert labels == ["1920×1080 [1920x1080]"]
+    assert labels == [
+        "1920_1080 наложить все элементы [1920_1080_all]",
+        "1920_1080 наложить только нижнюю  ленту плеера [1920_1080_br]",
+    ]
 
 
 @pytest.mark.asyncio
@@ -745,12 +753,12 @@ async def test_yandex_video_valid_creative_prompts_for_target_site_before_genera
 
 
 @pytest.mark.asyncio
-async def test_mediasniper_video_valid_creative_prompts_for_target_site_before_generation(tmp_path: Path) -> None:
+async def test_mediasniper_video_all_elements_creative_prompts_for_target_site_before_generation(tmp_path: Path) -> None:
     image_path = tmp_path / "creative.png"
     Image.new("RGB", (640, 360), "red").save(image_path)
     message = _FakeMessage(str(image_path))
     context = _FakeContext(BotConfig(telegram_token="test", allow_local_creative_path=True, temp_root=tmp_path))
-    context.user_data.update(_selected_mediasniper_video_flow_data(tmp_path))
+    context.user_data.update(_selected_mediasniper_video_flow_data(tmp_path, size_slug="1920_1080_all"))
 
     state = await collect_creative(_FakeUpdate(message), context)
 
@@ -758,6 +766,31 @@ async def test_mediasniper_video_valid_creative_prompts_for_target_site_before_g
     assert context.user_data["creative"].path == image_path
     assert "адрес целевого сайта" in message.replies[-1]["text"]
     assert not message.photos
+
+
+@pytest.mark.asyncio
+async def test_mediasniper_video_player_strip_creative_generates_without_target_site(tmp_path: Path) -> None:
+    image_path = tmp_path / "creative.png"
+    Image.new("RGB", (640, 360), "red").save(image_path)
+    message = _FakeMessage(str(image_path))
+    context = _FakeContext(BotConfig(telegram_token="test", allow_local_creative_path=True, temp_root=tmp_path))
+    context.user_data.update(_selected_mediasniper_video_flow_data(tmp_path, size_slug="1920_1080_br"))
+    captured_requests = []
+
+    async def fake_generator(request):
+        captured_requests.append(request)
+        request.output_path.write_bytes(b"fake-png")
+        return MaskedBannerResult(output_path=request.output_path, width=1920, height=1080, request_id=request.request_id, mask_asset=resolve_mask_asset(request.network_slug, request.size_slug))
+
+    context.bot_data["banner_generator"] = fake_generator
+    context.bot_data["user_locks"] = {}
+
+    state = await collect_creative(_FakeUpdate(message), context)
+
+    assert state == -1
+    assert captured_requests[0].size_slug == "1920_1080_br"
+    assert captured_requests[0].target_site_url is None
+    assert captured_requests[0].target_site_display is None
 
 
 @pytest.mark.asyncio
@@ -876,7 +909,7 @@ async def test_video_flow_manual_favicon_upload_starts_generation(monkeypatch: p
 
     assert state == -1
     assert captured_requests[0].favicon_path == favicon_path
-    assert message.documents[-1]["filename"] == "mediasniper_video-1920x1080-masked-banner.png"
+    assert message.documents[-1]["filename"] == "mediasniper_video-1920_1080_all-masked-banner.png"
 
 
 @pytest.mark.asyncio
@@ -898,9 +931,9 @@ async def test_mediasniper_video_target_site_starts_generation_and_passes_displa
 
     assert state == -1
     assert captured_requests[0].network_slug == "mediasniper_video"
-    assert captured_requests[0].size_slug == "1920x1080"
+    assert captured_requests[0].size_slug == "1920_1080_all"
     assert captured_requests[0].target_site_display == "sberbank.com"
-    assert message.documents[-1]["filename"] == "mediasniper_video-1920x1080-masked-banner.png"
+    assert message.documents[-1]["filename"] == "mediasniper_video-1920_1080_all-masked-banner.png"
 
 
 @pytest.mark.asyncio
@@ -1027,13 +1060,13 @@ def _selected_yandex_video_flow_data(tmp_path: Path, *, with_creative: bool = Fa
     return data
 
 
-def _selected_mediasniper_video_flow_data(tmp_path: Path, *, with_creative: bool = False) -> dict:
-    size = resolve_mask_asset("mediasniper_video", "1920x1080").size
+def _selected_mediasniper_video_flow_data(tmp_path: Path, *, size_slug: str = "1920_1080_all", with_creative: bool = False) -> dict:
+    size = resolve_mask_asset("mediasniper_video", size_slug).size
     data = {
         "request_id": "test-request-mediasniper-video",
         "network_slug": "mediasniper_video",
         "network_display_name": "Mediasniper Video",
-        "banner_size_slug": "1920x1080",
+        "banner_size_slug": size_slug,
         "banner_size": size,
         "banner_type": size.label,
     }

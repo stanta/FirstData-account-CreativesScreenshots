@@ -601,3 +601,24 @@ Manual diagnostics внутри контейнера: для `dzen.ru` DNS/TCP/T
 ## Ход проекта — 2026-07-10 — русское меню review screen
 
 По обратной связи пользователя review screen `Проверьте заявку перед запуском:` переведен с текстовой инструкции `yes`/`edit ...` на `telegram_menu` reply-keyboard с русскими пунктами правки всех доступных полей и финальной кнопкой `Запустить`. Старые текстовые команды оставлены только как fallback. При запуске генерации клавиатура снимается; при переходе к правке текстовых/файловых полей меню также снимается, а для сети/spec показываются соответствующие меню. Правка spec по-прежнему сбрасывает креатив и требует повторной загрузки. История задач не сохраняется, состояние остается in-memory.
+
+---
+
+## Ход проекта — 2026-09-20 — MediaSniperVideo: выбор из двух масок
+
+Реализовано пользовательское уточнение: меню сети `Mediasniper Video` вместо единственного формата `1920x1080` предлагает ровно два варианта наложения маски:
+
+- `1920_1080 наложить все элементы` — использует `reports_ad/reports_ad/data/masks/MediasniperVideo/1920_1080_all.png`; сохраняет прежний video-flow: после загрузки креатива запрашивается адрес целевого сайта (favicon/domain/CTA/skip/«Реклама»-оверлеи);
+- `1920_1080 наложить только нижнюю  ленту плеера` — использует `reports_ad/reports_ad/data/masks/MediasniperVideo/1920_1080_br_only.png`; адрес целевого сайта и favicon не запрашиваются, генерация начинается сразу после загрузки креатива.
+
+### Что изменено
+
+- `reports_ad/mask_catalog.py`: `BannerSize` расширен полями `menu_label`, `mask_file_name`, `requires_target_site`; для `mediasniper_video` каталог содержит два entry `1920_1080_all` и `1920_1080_br` (slug сокращен, чтобы кнопка `label [slug]` укладывалась в лимит Telegram 64 символа; файл маски остается `1920_1080_br_only.png`); `resolve_mask_asset()` строит путь по `mask_file_name`; `normalize_banner_size_slug()` содержит alias-маппинг старых написаний.
+- `reports_ad/bot.py`: `_size_menu_label()` рендерит человекочитаемое menu_label со slug в скобках; `specs_summary()` показывает `menu_text`; `_requires_target_site()` учитывает `size.requires_target_site` и для `mediasniper_video` без явного флага не запрашивает адрес.
+- `reports_ad/masked_banner.py`: `VIDEO_FLOW_SIZE_SLUGS` — множество допустимых slug; `_validate_masked_banner_request()` требует target-site только для `requires_target_site`; `compose_masked_banner()` для mediasniper_video растягивает маску до выбранного размера (новые ассеты имеют исходный размер 2941×1080 и 1920×1091) и рендерит Mediasniper-оверлеи только для варианта `all`.
+- `tests/test_validation.py` и `tests/test_composition.py`: обновлены/добавлены проверки точного состава меню из двух кнопок, разрешения обеих масок, skip/запроса target-site и генерации `br`-варианта без адреса.
+- `README.md`: обновлено описание меню и путей масок Mediasniper Video.
+
+### Проверки
+
+- `.venv/bin/python -m pytest -c pyproject.toml tests/ -q --ignore=tests/e2e --ignore=tests/test_diagnostics.py` — 156 passed. `tests/test_diagnostics.py` не собирается из-за pre-existing импорта `_safe_host` (отсутствует в `reports_ad/bot.py` и на HEAD), не связано с этим изменением.
