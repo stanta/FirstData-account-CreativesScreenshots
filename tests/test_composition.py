@@ -8,7 +8,7 @@ from reports_ad.config import BotConfig
 from reports_ad.gemma_client import GemmaClientError, HeaderAuthGemmaClient, _banner_prompt, _composition_validation_crop_rect, _composition_validation_prompt, _parse_bbox_result, _parse_composition_validation_result, build_gemma_client_from_config
 from reports_ad.mask_catalog import get_banner_size, resolve_mask_asset
 from reports_ad import masked_banner as masked_banner_module
-from reports_ad.masked_banner import GETINTENT_VIDEO_MASK_SIZE, GETINTENT_VIDEO_MINIMUM_AGE_BBOX, MEDIASNIPER_VIDEO_AD_LABEL_BBOX, MEDIASNIPER_VIDEO_CTA_BBOX, MEDIASNIPER_VIDEO_FAVICON_BBOX, MEDIASNIPER_VIDEO_SKIP_BBOX, MEDIASNIPER_VIDEO_TARGET_SITE_BBOX, YANDEX_VIDEO_FAVICON_BBOX, YANDEX_VIDEO_TARGET_SITE_BBOX, MaskedBannerRequest, MaskedBannerResult, compose_masked_banner, generate_masked_banner
+from reports_ad.masked_banner import GETINTENT_VIDEO_MASK_SIZE, GETINTENT_VIDEO_MINIMUM_AGE_BBOX, YANDEX_VIDEO_FAVICON_BBOX, YANDEX_VIDEO_TARGET_SITE_BBOX, MaskedBannerRequest, MaskedBannerResult, compose_masked_banner, generate_masked_banner
 from reports_ad.models import BBoxDetectionResult, BoundingBox, CompositionValidationResult, CreativeInfo, Placement, ProofRequest, ProofResult, SourceScreenshotInfo
 from reports_ad.proof import compose_final_image
 from reports_ad.stage2_proof import AD_MARK_LABEL, compose_stage2_image, fallback_landing_bbox, generate_stage2_proof, validate_banner_bbox_semantics, select_valid_banner_bbox_with_feedback, compose_stage2_image_with_validation, _address_bar_only_height, _load_cyrillic_font, _render_ad_mark_label, _select_next_composition_bbox
@@ -82,10 +82,15 @@ def test_resolve_mask_asset_supports_required_networks_and_sizes() -> None:
     assert yandex_video_asset.size.slug == "1920x1080"
     assert yandex_video_asset.path.exists()
 
-    mediasniper_video_asset = resolve_mask_asset("mediasniper_video", "1920x1080")
+    mediasniper_video_asset = resolve_mask_asset("mediasniper_video", "1920_1080_all")
     assert mediasniper_video_asset.network.slug == "mediasniper_video"
-    assert mediasniper_video_asset.size.slug == "1920x1080"
-    assert mediasniper_video_asset.path.exists()
+    assert mediasniper_video_asset.size.slug == "1920_1080_all"
+    assert mediasniper_video_asset.path.name == "1920_1080_all.png"
+
+    mediasniper_video_player_strip_asset = resolve_mask_asset("mediasniper_video", "1920_1080_br")
+    assert mediasniper_video_player_strip_asset.network.slug == "mediasniper_video"
+    assert mediasniper_video_player_strip_asset.size.slug == "1920_1080_br"
+    assert mediasniper_video_player_strip_asset.path.name == "1920_1080_br_only.png"
 
     getintent_video_asset = resolve_mask_asset("getintent_video", "1920x1080")
     assert getintent_video_asset.network.slug == "getintent_video"
@@ -139,40 +144,35 @@ def test_compose_yandex_video_renders_target_site_after_mask_overlay_without_fav
         assert ImageChops.difference(target_crop, blank).getbbox() is not None
 
 
-def test_compose_mediasniper_video_renders_own_overlay_coordinates(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    creative_path = tmp_path / "creative.png"
-    output_path = tmp_path / "mediasniper-video.png"
+@pytest.mark.parametrize("size_slug", ["1920_1080_all", "1920_1080_br"])
+def test_compose_mediasniper_video_is_exact_native_mask_alpha_composite(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, size_slug: str) -> None:
+    creative_path = tmp_path / f"creative-{size_slug}.png"
+    output_path = tmp_path / f"mediasniper-video-{size_slug}.png"
     Image.new("RGB", (640, 360), (20, 30, 40)).save(creative_path)
-    mask_asset = resolve_mask_asset("mediasniper_video", "1920x1080")
+    mask_asset = resolve_mask_asset("mediasniper_video", size_slug)
 
-    def fake_load_favicon(target_site_url: str | None) -> Image.Image:
-        assert target_site_url == "https://aliexpress.ru"
-        return Image.new("RGBA", (16, 16), (230, 20, 20, 255))
-
-    monkeypatch.setattr(masked_banner_module, "_load_target_site_favicon", fake_load_favicon)
+    monkeypatch.setattr(masked_banner_module, "_load_target_site_favicon", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("favicon loader must not run")))
+    monkeypatch.setattr(masked_banner_module, "_clear_yandex_video_mask_region", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("mask blackening must not run")))
 
     width, height = compose_masked_banner(
         creative_path=creative_path,
         mask_path=mask_asset.path,
         output_path=output_path,
-        width=1920,
-        height=1080,
+        width=mask_asset.size.width,
+        height=mask_asset.size.height,
         network_slug="mediasniper_video",
-        target_site_url="https://aliexpress.ru",
-        target_site_display="aliexpress.ru",
     )
 
-    assert (width, height) == (1920, 1080)
-    with Image.open(output_path) as result:
-        assert result.size == (1920, 1080)
-        rgba = result.convert("RGBA")
-        icon_x, icon_y, icon_width, icon_height = MEDIASNIPER_VIDEO_FAVICON_BBOX
-        assert rgba.getpixel((icon_x + icon_width // 2, icon_y + icon_height // 2))[:3] == (230, 20, 20)
-        for box in (MEDIASNIPER_VIDEO_TARGET_SITE_BBOX, MEDIASNIPER_VIDEO_CTA_BBOX, MEDIASNIPER_VIDEO_SKIP_BBOX, MEDIASNIPER_VIDEO_AD_LABEL_BBOX):
-            x, y, box_width, box_height = box
-            target_crop = result.crop((x, y, x + box_width, y + box_height)).convert("RGB")
-            blank = Image.new("RGB", target_crop.size, (20, 30, 40))
-            assert ImageChops.difference(target_crop, blank).getbbox() is not None
+    with Image.open(creative_path) as creative_raw, Image.open(mask_asset.path) as mask_raw, Image.open(output_path) as actual_raw:
+        creative = creative_raw.convert("RGBA").resize((width, height), Image.Resampling.LANCZOS)
+        mask = mask_raw.convert("RGBA")
+        mask_size = mask.size
+        expected = Image.alpha_composite(creative, mask)
+        actual = actual_raw.convert("RGBA")
+
+    assert (width, height) == (mask_asset.size.width, mask_asset.size.height)
+    assert actual.size == mask_size
+    assert ImageChops.difference(actual, expected).getbbox() is None
 
 
 def test_compose_yandex_video_renders_target_site_favicon(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -301,13 +301,13 @@ def test_compose_yandex_video_requires_target_site_display(tmp_path: Path) -> No
         )
 
 
-def test_compose_mediasniper_video_requires_target_site_display(tmp_path: Path) -> None:
+def test_compose_mediasniper_video_rejects_non_native_mask_dimensions(tmp_path: Path) -> None:
     creative_path = tmp_path / "creative.png"
     output_path = tmp_path / "mediasniper-video.png"
     Image.new("RGB", (640, 360), (20, 30, 40)).save(creative_path)
-    mask_asset = resolve_mask_asset("mediasniper_video", "1920x1080")
+    mask_asset = resolve_mask_asset("mediasniper_video", "1920_1080_all")
 
-    with pytest.raises(ValidationError):
+    with pytest.raises(ValidationError, match="Размер файла маски"):
         compose_masked_banner(
             creative_path=creative_path,
             mask_path=mask_asset.path,

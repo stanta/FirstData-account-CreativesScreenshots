@@ -24,12 +24,18 @@ class BannerSize:
     width: int
     height: int
     display_label: str | None = None
+    menu_label: str | None = None
+    mask_file_name: str | None = None
 
     @property
     def label(self) -> str:
         if self.display_label:
             return self.display_label
         return f"{self.width}×{self.height}"
+
+    @property
+    def menu_text(self) -> str:
+        return self.menu_label or self.label
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,7 +49,9 @@ MASK_NETWORKS: tuple[MaskNetwork, ...] = (
     MaskNetwork(slug="mediasniper", display_name="Mediasniper", directory_name="Mediasniper"),
     MaskNetwork(slug="hybrid", display_name="Hybrid", directory_name="Hybrid"),
     MaskNetwork(slug="yandex_video", display_name="Яндекс Видео", directory_name="YandexVideo", flow_kind="yandex_video"),
-    MaskNetwork(slug="mediasniper_video", display_name="Mediasniper Video", directory_name="MediasniperVideo", flow_kind="yandex_video"),
+    # MediaSniperVideo decouples from the Yandex video flow: mask-only composition,
+    # no target-site prompt, no favicon, no extra text rendering.
+    MaskNetwork(slug="mediasniper_video", display_name="Mediasniper Video", directory_name="MediasniperVideo", flow_kind="mediasniper_video"),
     MaskNetwork(slug="getintent_video", display_name="GetIntent Video", directory_name="GetIntentVideo", flow_kind="getintent_video"),
 )
 
@@ -55,8 +63,26 @@ STANDARD_BANNER_SIZES: tuple[BannerSize, ...] = (
 YANDEX_VIDEO_BANNER_SIZES: tuple[BannerSize, ...] = (
     BannerSize(slug="1920x1080", width=1536, height=1024, display_label="1920×1080"),
 )
+# MediaSniperVideo masks are pinned to their decoded asset sizes so the
+# compositor overlays each PNG 1:1 at native resolution (no mask rescaling):
+# 1920_1080_all.png decodes at 2941x1080; 1920_1080_br_only.png at 1920x1091.
 MEDIASNIPER_VIDEO_BANNER_SIZES: tuple[BannerSize, ...] = (
-    BannerSize(slug="1920x1080", width=1920, height=1080, display_label="1920×1080"),
+    BannerSize(
+        slug="1920_1080_all",
+        width=2941,
+        height=1080,
+        display_label="1920×1080",
+        menu_label="1920_1080 наложить все элементы",
+        mask_file_name="1920_1080_all.png",
+    ),
+    BannerSize(
+        slug="1920_1080_br",
+        width=1920,
+        height=1091,
+        display_label="1920×1080",
+        menu_label="1920_1080 наложить только линию видеоплеера внизу",
+        mask_file_name="1920_1080_br_only.png",
+    ),
 )
 GETINTENT_VIDEO_BANNER_SIZES: tuple[BannerSize, ...] = (
     BannerSize(slug="1920x1080", width=1920, height=1215, display_label="1920×1080"),
@@ -144,7 +170,13 @@ def normalize_mask_network_slug(value: str | None) -> str:
 
 
 def normalize_banner_size_slug(value: str | None) -> str:
-    return (value or "").strip().lower().replace("×", "x").replace("*", "x").replace(" ", "")
+    normalized = (value or "").strip().lower().replace("×", "x").replace("*", "x").replace(" ", "")
+    aliases = {
+        "1920x1080_all": "1920_1080_all",
+        "1920x1080_br_only": "1920_1080_br",
+        "1920_1080_br_only": "1920_1080_br",
+    }
+    return aliases.get(normalized, normalized)
 
 
 def validate_mask_network_slug(raw_value: str, allowed_slugs: set[str] | None = None) -> str:
@@ -188,10 +220,11 @@ def resolve_mask_asset(network_slug: str, size_slug: str) -> MaskAsset:
 
 @lru_cache(maxsize=32)
 def _mask_path(network: MaskNetwork, size: BannerSize) -> Path:
-    resource = files("reports_ad").joinpath(MASKS_RESOURCE_ROOT, network.directory_name, f"{size.slug}.png")
+    mask_file_name = size.mask_file_name or f"{size.slug}.png"
+    resource = files("reports_ad").joinpath(MASKS_RESOURCE_ROOT, network.directory_name, mask_file_name)
     try:
         if resource.is_file():
             return Path(str(resource))
     except TypeError:
         pass
-    return Path(__file__).resolve().parent.joinpath(MASKS_RESOURCE_ROOT, network.directory_name, f"{size.slug}.png")
+    return Path(__file__).resolve().parent.joinpath(MASKS_RESOURCE_ROOT, network.directory_name, mask_file_name)
