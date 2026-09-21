@@ -1,3 +1,4 @@
+import hashlib
 from pathlib import Path
 
 import pytest
@@ -144,12 +145,46 @@ def test_compose_yandex_video_renders_target_site_after_mask_overlay_without_fav
         assert ImageChops.difference(target_crop, blank).getbbox() is not None
 
 
+MEDIASNIPER_VIDEO_CANVAS_SIZE = (2941, 1080)
+
+
+def _mediasniper_video_distinctive_creative(path: Path, size: tuple[int, int] = (1920, 1080)) -> Path:
+    """Distinctive creative: semi-transparent yellow strip on top, red/blue halves."""
+    width, height = size
+    creative = Image.new("RGBA", size)
+    draw = ImageDraw.Draw(creative)
+    draw.rectangle((0, 0, width, height // 2), fill=(255, 0, 0, 255))
+    draw.rectangle((0, height // 2, width, height), fill=(0, 0, 255, 255))
+    draw.rectangle((0, 0, width, 40), fill=(255, 255, 0, 128))
+    creative.save(path)
+    return path
+
+
+def _reference_mediasniper_video_composite(creative: Image.Image, mask: Image.Image, canvas_size: tuple[int, int] = MEDIASNIPER_VIDEO_CANVAS_SIZE) -> Image.Image:
+    """Independent reference implementation of the approved placement contract."""
+    canvas_width, canvas_height = canvas_size
+    canvas = Image.new("RGBA", (canvas_width, canvas_height), (0, 0, 0, 255))
+    fitted_width = round(creative.width * canvas_height / creative.height)
+    fitted_creative = creative.resize((fitted_width, canvas_height), Image.Resampling.LANCZOS)
+    canvas.alpha_composite(fitted_creative, dest=((canvas_width - fitted_width) // 2, 0))
+    mask_x = (canvas_width - mask.width) // 2
+    mask_y = canvas_height - mask.height
+    x, y = mask_x, mask_y
+    left, top = max(x, 0), max(y, 0)
+    right, bottom = min(x + mask.width, canvas_width), min(y + mask.height, canvas_height)
+    canvas.alpha_composite(mask.crop((left - x, top - y, right - x, bottom - y)), dest=(left, top))
+    return canvas
+
+
 @pytest.mark.parametrize("size_slug", ["1920_1080_all", "1920_1080_br"])
-def test_compose_mediasniper_video_is_exact_native_mask_alpha_composite(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, size_slug: str) -> None:
-    creative_path = tmp_path / f"creative-{size_slug}.png"
+def test_compose_mediasniper_video_outputs_exact_2941x1080_with_centered_native_creative(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, size_slug: str) -> None:
+    creative_path = _mediasniper_video_distinctive_creative(tmp_path / f"creative-{size_slug}.png")
     output_path = tmp_path / f"mediasniper-video-{size_slug}.png"
-    Image.new("RGB", (640, 360), (20, 30, 40)).save(creative_path)
     mask_asset = resolve_mask_asset("mediasniper_video", size_slug)
+    assert (mask_asset.size.width, mask_asset.size.height) == MEDIASNIPER_VIDEO_CANVAS_SIZE
+
+    creative_sha_before = hashlib.sha256(creative_path.read_bytes()).hexdigest()
+    mask_sha_before = hashlib.sha256(mask_asset.path.read_bytes()).hexdigest()
 
     monkeypatch.setattr(masked_banner_module, "_load_target_site_favicon", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("favicon loader must not run")))
     monkeypatch.setattr(masked_banner_module, "_clear_yandex_video_mask_region", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("mask blackening must not run")))
@@ -161,18 +196,116 @@ def test_compose_mediasniper_video_is_exact_native_mask_alpha_composite(monkeypa
         width=mask_asset.size.width,
         height=mask_asset.size.height,
         network_slug="mediasniper_video",
+        expected_mask_size=mask_asset.size.expected_mask_size,
     )
 
+    assert hashlib.sha256(creative_path.read_bytes()).hexdigest() == creative_sha_before
+    assert hashlib.sha256(mask_asset.path.read_bytes()).hexdigest() == mask_sha_before
+
     with Image.open(creative_path) as creative_raw, Image.open(mask_asset.path) as mask_raw, Image.open(output_path) as actual_raw:
-        creative = creative_raw.convert("RGBA").resize((width, height), Image.Resampling.LANCZOS)
+        creative = creative_raw.convert("RGBA")
         mask = mask_raw.convert("RGBA")
-        mask_size = mask.size
-        expected = Image.alpha_composite(creative, mask)
+        assert mask.size == mask_asset.size.expected_mask_size
+        expected = _reference_mediasniper_video_composite(creative, mask)
         actual = actual_raw.convert("RGBA")
 
-    assert (width, height) == (mask_asset.size.width, mask_asset.size.height)
-    assert actual.size == mask_size
+    assert (width, height) == MEDIASNIPER_VIDEO_CANVAS_SIZE
+    assert actual.size == MEDIASNIPER_VIDEO_CANVAS_SIZE
     assert ImageChops.difference(actual, expected).getbbox() is None
+    # 16:9 creative is proportionally fitted to 1920x1080: 510 px left margin / 511 px right margin.
+    assert actual.getpixel((0, 540))[:3] == (0, 0, 0)
+    assert actual.getpixel((2940, 540))[:3] == (0, 0, 0)
+    assert actual.getpixel((509, 540))[:3] == (0, 0, 0)
+    assert actual.getpixel((2430, 540))[:3] == (0, 0, 0)
+    # Fitted 16:9 creative occupies x=510..2429; exact pixels remain where the mask is transparent.
+    if size_slug == "1920_1080_all":
+        assert actual.getpixel((510, 0)) == (128, 128, 0, 255)
+        assert actual.getpixel((510, 500)) == (255, 0, 0, 255)
+        assert actual.getpixel((2429, 700)) == (0, 0, 255, 255)
+
+
+def test_compose_mediasniper_video_line_only_mask_is_bottom_aligned_and_clips_only_top_11px(tmp_path: Path) -> None:
+    creative_path = _mediasniper_video_distinctive_creative(tmp_path / "creative.png", (1920, 1080))
+    mask_path = tmp_path / "synthetic-br-mask.png"
+    output_path = tmp_path / "mediasniper-video-br-geometry.png"
+    mask = Image.new("RGBA", (1920, 1091), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(mask)
+    draw.point((0, 5), fill=(255, 0, 0, 255))  # above the 11 px clip line: must disappear
+    draw.point((0, 11), fill=(0, 0, 255, 255))  # first visible mask row: lands at canvas (510, 0)
+    draw.line((0, 1087, 1919, 1087), fill=(255, 0, 255, 255))  # strong player line rows
+    draw.line((0, 1090, 1919, 1090), fill=(0, 255, 0, 255))  # mask bottom row: lands at canvas bottom
+    mask.save(mask_path)
+
+    width, height = compose_masked_banner(
+        creative_path=creative_path,
+        mask_path=mask_path,
+        output_path=output_path,
+        width=MEDIASNIPER_VIDEO_CANVAS_SIZE[0],
+        height=MEDIASNIPER_VIDEO_CANVAS_SIZE[1],
+        network_slug="mediasniper_video",
+        expected_mask_size=(1920, 1091),
+    )
+
+    assert (width, height) == MEDIASNIPER_VIDEO_CANVAS_SIZE
+    with Image.open(output_path) as actual_raw:
+        actual = actual_raw.convert("RGBA")
+        assert actual.size == MEDIASNIPER_VIDEO_CANVAS_SIZE
+        # Bottom alignment: mask bottom row (1090) is the canvas bottom row (1079) at x=510.
+        assert actual.getpixel((510, 1079)) == (0, 255, 0, 255)
+        assert actual.getpixel((510, 1076)) == (255, 0, 255, 255)
+        # Horizontal centering: mask col 0 lands at canvas x=510.
+        assert actual.getpixel((510, 0)) == (0, 0, 255, 255)
+        # The 11 overflowing top pixels are clipped, not shifted onto the canvas.
+        assert actual.getpixel((510, 5))[:3] != (255, 0, 0)
+        # Black margins stay untouched left/right of the centered mask.
+        assert actual.getpixel((509, 540))[:3] == (0, 0, 0)
+        assert actual.getpixel((2430, 540))[:3] == (0, 0, 0)
+
+
+def test_compose_mediasniper_video_smaller_creative_is_proportionally_fitted_to_canvas_height(tmp_path: Path) -> None:
+    creative_path = _mediasniper_video_distinctive_creative(tmp_path / "creative-small.png", (640, 360))
+    output_path = tmp_path / "mediasniper-video-small.png"
+    mask_asset = resolve_mask_asset("mediasniper_video", "1920_1080_all")
+
+    width, height = compose_masked_banner(
+        creative_path=creative_path,
+        mask_path=mask_asset.path,
+        output_path=output_path,
+        width=MEDIASNIPER_VIDEO_CANVAS_SIZE[0],
+        height=MEDIASNIPER_VIDEO_CANVAS_SIZE[1],
+        network_slug="mediasniper_video",
+        expected_mask_size=mask_asset.size.expected_mask_size,
+    )
+
+    assert (width, height) == MEDIASNIPER_VIDEO_CANVAS_SIZE
+    with Image.open(creative_path) as creative_raw, Image.open(mask_asset.path) as mask_raw, Image.open(output_path) as actual_raw:
+        expected = _reference_mediasniper_video_composite(creative_raw.convert("RGBA"), mask_raw.convert("RGBA"))
+        actual = actual_raw.convert("RGBA")
+    # 640x360 is fitted proportionally to 1920x1080, then centered at x=510, y=0.
+    assert actual.size == MEDIASNIPER_VIDEO_CANVAS_SIZE
+    assert ImageChops.difference(actual, expected).getbbox() is None
+    assert actual.getpixel((509, 540))[:3] == (0, 0, 0)
+    assert actual.getpixel((2430, 540))[:3] == (0, 0, 0)
+
+
+@pytest.mark.parametrize("oversized_size", [(2942, 1080), (6000, 2000)])
+def test_compose_mediasniper_video_rejects_creative_too_wide_after_proportional_fit(tmp_path: Path, oversized_size: tuple[int, int]) -> None:
+    creative_path = _mediasniper_video_distinctive_creative(tmp_path / f"creative-{oversized_size[0]}x{oversized_size[1]}.png", oversized_size)
+    output_path = tmp_path / "mediasniper-video-oversized.png"
+    mask_asset = resolve_mask_asset("mediasniper_video", "1920_1080_all")
+
+    with pytest.raises(ValidationError, match="не помещается"):
+        compose_masked_banner(
+            creative_path=creative_path,
+            mask_path=mask_asset.path,
+            output_path=output_path,
+            width=MEDIASNIPER_VIDEO_CANVAS_SIZE[0],
+            height=MEDIASNIPER_VIDEO_CANVAS_SIZE[1],
+            network_slug="mediasniper_video",
+            expected_mask_size=mask_asset.size.expected_mask_size,
+        )
+
+    assert not output_path.exists()
 
 
 def test_compose_yandex_video_renders_target_site_favicon(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -301,21 +434,30 @@ def test_compose_yandex_video_requires_target_site_display(tmp_path: Path) -> No
         )
 
 
-def test_compose_mediasniper_video_rejects_non_native_mask_dimensions(tmp_path: Path) -> None:
-    creative_path = tmp_path / "creative.png"
+@pytest.mark.parametrize(
+    ("canvas_size", "expected_mask_size"),
+    [
+        ((1920, 1080), None),  # wrong canvas with expected mask falling back to canvas size
+        ((2941, 1080), (2941, 1080)),  # br-only mask (1920x1091) is not the expected all-elements mask
+    ],
+)
+def test_compose_mediasniper_video_rejects_wrong_mask_dimensions(tmp_path: Path, canvas_size: tuple[int, int], expected_mask_size: tuple[int, int] | None) -> None:
+    creative_path = _mediasniper_video_distinctive_creative(tmp_path / "creative.png", (640, 360))
     output_path = tmp_path / "mediasniper-video.png"
-    Image.new("RGB", (640, 360), (20, 30, 40)).save(creative_path)
-    mask_asset = resolve_mask_asset("mediasniper_video", "1920_1080_all")
+    mask_asset = resolve_mask_asset("mediasniper_video", "1920_1080_br")
 
     with pytest.raises(ValidationError, match="Размер файла маски"):
         compose_masked_banner(
             creative_path=creative_path,
             mask_path=mask_asset.path,
             output_path=output_path,
-            width=1920,
-            height=1080,
+            width=canvas_size[0],
+            height=canvas_size[1],
             network_slug="mediasniper_video",
+            expected_mask_size=expected_mask_size,
         )
+
+    assert not output_path.exists()
 
 
 @pytest.mark.parametrize("minimum_age", ["0", "12", "99"])

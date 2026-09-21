@@ -368,10 +368,29 @@ def test_mediasniper_video_spec_keyboard_contains_exactly_the_approved_mask_choi
     player_strip_asset = resolve_mask_asset("mediasniper_video", "1920_1080_br")
     assert all_elements_asset.path.name == "1920_1080_all.png"
     assert player_strip_asset.path.name == "1920_1080_br_only.png"
-    assert all_elements_asset.size.width == 2941
-    assert all_elements_asset.size.height == 1080
-    assert player_strip_asset.size.width == 1920
-    assert player_strip_asset.size.height == 1091
+    # Both variants output the fixed 2941x1080 canvas while each mask keeps its
+    # own decoded source size for strict validation.
+    assert (all_elements_asset.size.width, all_elements_asset.size.height) == (2941, 1080)
+    assert (player_strip_asset.size.width, player_strip_asset.size.height) == (2941, 1080)
+    assert all_elements_asset.size.expected_mask_size == (2941, 1080)
+    assert player_strip_asset.size.expected_mask_size == (1920, 1091)
+    with Image.open(all_elements_asset.path) as all_mask, Image.open(player_strip_asset.path) as br_mask:
+        assert all_mask.size == all_elements_asset.size.expected_mask_size
+        assert br_mask.size == player_strip_asset.size.expected_mask_size
+
+
+def test_mediasniper_video_creative_upload_prompt_explains_proportional_height_fit() -> None:
+    size = resolve_mask_asset("mediasniper_video", "1920_1080_br").size
+
+    prompt = bot_module.creative_upload_prompt(size, "mediasniper_video")
+
+    assert "2941×1080" in prompt
+    assert "по центру" in prompt
+    assert "пропорционально масштабируется" in prompt
+    assert "изменен до размера" not in prompt
+
+    standard_prompt = bot_module.creative_upload_prompt(get_banner_size("240x400"), "mediasniper")
+    assert "изменен до размера" in standard_prompt
 
 
 def test_mediasniper_video_flow_kind_is_decoupled_from_yandex_video() -> None:
@@ -698,6 +717,22 @@ async def test_mediasniper_video_network_selection_sends_the_two_approved_mask_c
         "1920_1080 наложить все элементы",
         "1920_1080 наложить только линию видеоплеера внизу",
     ]
+
+
+@pytest.mark.asyncio
+async def test_mediasniper_video_variant_selection_prompt_explains_2941x1080_centered_placement() -> None:
+    message = _FakeMessage("1920_1080 наложить только линию видеоплеера внизу")
+    context = _FakeContext()
+    context.user_data["network_slug"] = "mediasniper_video"
+
+    state = await collect_banner_type(_FakeUpdate(message), context)
+
+    assert state == CREATIVE
+    reply_text = message.replies[-1]["text"]
+    assert "2941×1080" in reply_text
+    assert "по центру" in reply_text
+    assert "пропорционально масштабируется" in reply_text
+    assert "изменен до размера" not in reply_text
 
 
 @pytest.mark.asyncio

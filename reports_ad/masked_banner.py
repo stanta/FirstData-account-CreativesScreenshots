@@ -101,7 +101,12 @@ class MaskedBannerResult:
 
 
 async def generate_masked_banner(request: MaskedBannerRequest) -> MaskedBannerResult:
-    """Resize a user creative to the selected banner size and overlay the matching PNG mask."""
+    """Compose the banner for the selected network and overlay the matching PNG mask.
+
+    MediaSniperVideo never resizes the creative: it is centered at native
+    resolution on a fixed black canvas. Other networks resize the creative to
+    the selected banner size as before.
+    """
 
     started = time.monotonic()
     _validate_masked_banner_request(request)
@@ -130,6 +135,7 @@ async def generate_masked_banner(request: MaskedBannerRequest) -> MaskedBannerRe
             target_site_display=request.target_site_display,
             favicon_path=request.favicon_path,
             minimum_age=request.minimum_age,
+            expected_mask_size=request.size.expected_mask_size,
         )
     except ValidationError:
         raise
@@ -161,40 +167,47 @@ def compose_masked_banner(
     target_site_display: str | None = None,
     favicon_path: Path | None = None,
     minimum_age: str | None = None,
+    expected_mask_size: tuple[int, int] | None = None,
 ) -> tuple[int, int]:
     if width <= 0 or height <= 0:
         raise ValidationError("Размер баннера должен быть положительным.")
     try:
         with Image.open(creative_path) as creative_raw, Image.open(mask_path) as mask_raw:
-            creative = creative_raw.convert("RGBA").resize((width, height), Image.Resampling.LANCZOS)
-            if network_slug == YANDEX_VIDEO_NETWORK_SLUG:
-                if not target_site_display:
-                    raise ValidationError("Для видео-flow нужно указать адрес целевого сайта.")
-                raw_mask = mask_raw.convert("RGBA")
-                creative = _clear_yandex_video_mask_region(creative, raw_mask)
-            if network_slug == GETINTENT_VIDEO_NETWORK_SLUG:
-                if not target_site_url or not target_site_display:
-                    raise ValidationError("Для GetIntent Video нужно указать адрес целевого сайта.")
-                minimum_age = validate_minimum_age(minimum_age or "")
-                if (width, height) != GETINTENT_VIDEO_MASK_SIZE:
-                    raise ValidationError("Маска GetIntent Video должна использовать исходный размер 1920×1215.")
-            # MediaSniperVideo is a mask-only flow: the decoded mask PNG is
-            # composited as-is at its native size (no blackening, no
-            # target-site/favicon, no text rendering, no mask rescaling).
-            mask = (
-                mask_raw.convert("RGBA")
-                if network_slug == MEDIASNIPER_VIDEO_NETWORK_SLUG
-                else _prepare_mask_overlay(mask_raw.convert("RGBA"))
-            )
-            if mask.size != (width, height):
-                raise ValidationError("Размер файла маски не совпадает с выбранным размером баннера.")
-            pre_composite = creative.copy()
-            result = Image.alpha_composite(creative, mask)
-            if network_slug == YANDEX_VIDEO_NETWORK_SLUG:
-                result = render_yandex_video_target_site(result, target_site_display or "", target_site_url=target_site_url, favicon_path=favicon_path)
-            elif network_slug == GETINTENT_VIDEO_NETWORK_SLUG:
-                # TODO: Render target_site_display when approved lower-block coordinates are supplied.
-                result = render_getintent_video_minimum_age(result, minimum_age or "")
+            mask = mask_raw.convert("RGBA")
+            if network_slug == MEDIASNIPER_VIDEO_NETWORK_SLUG:
+                # MediaSniperVideo is a mask-only flow on a fixed black canvas:
+                # the creative is proportionally fitted to the canvas height,
+                # then centered horizontally. The decoded mask PNG overlays at
+                # its native size (no blackening, no target-site/favicon, no
+                # text rendering, no mask rescaling).
+                pre_composite, result = _compose_mediasniper_video_banner(
+                    creative_raw.convert("RGBA"),
+                    mask,
+                    canvas_size=(width, height),
+                    expected_mask_size=expected_mask_size,
+                )
+            else:
+                creative = creative_raw.convert("RGBA").resize((width, height), Image.Resampling.LANCZOS)
+                if network_slug == YANDEX_VIDEO_NETWORK_SLUG:
+                    if not target_site_display:
+                        raise ValidationError("Для видео-flow нужно указать адрес целевого сайта.")
+                    creative = _clear_yandex_video_mask_region(creative, mask)
+                if network_slug == GETINTENT_VIDEO_NETWORK_SLUG:
+                    if not target_site_url or not target_site_display:
+                        raise ValidationError("Для GetIntent Video нужно указать адрес целевого сайта.")
+                    minimum_age = validate_minimum_age(minimum_age or "")
+                    if (width, height) != GETINTENT_VIDEO_MASK_SIZE:
+                        raise ValidationError("Маска GetIntent Video должна использовать исходный размер 1920×1215.")
+                mask = _prepare_mask_overlay(mask)
+                if mask.size != (width, height):
+                    raise ValidationError("Размер файла маски не совпадает с выбранным размером баннера.")
+                pre_composite = creative.copy()
+                result = Image.alpha_composite(creative, mask)
+                if network_slug == YANDEX_VIDEO_NETWORK_SLUG:
+                    result = render_yandex_video_target_site(result, target_site_display or "", target_site_url=target_site_url, favicon_path=favicon_path)
+                elif network_slug == GETINTENT_VIDEO_NETWORK_SLUG:
+                    # TODO: Render target_site_display when approved lower-block coordinates are supplied.
+                    result = render_getintent_video_minimum_age(result, minimum_age or "")
             _log_composition_diagnostics(
                 network_slug=network_slug,
                 size=(width, height),
@@ -213,6 +226,76 @@ def compose_masked_banner(
         if check_img.size != (width, height):
             raise ScreenshotGenerationError("Итоговый баннер имеет неправильный размер.")
     return width, height
+
+
+def _compose_mediasniper_video_banner(
+    creative: Image.Image,
+    mask: Image.Image,
+    *,
+    canvas_size: tuple[int, int],
+    expected_mask_size: tuple[int, int] | None,
+) -> tuple[Image.Image, Image.Image]:
+    """Fit the creative to canvas height, center it, and overlay the mask.
+
+    The creative is proportionally scaled to the fixed canvas height, never
+    stretched independently by width. A 16:9 creative therefore becomes
+    1920x1080 and lands at x=510, y=0 on the 2941x1080 canvas. The mask is
+    overlaid at native size: horizontally centered and bottom-aligned, so the
+    1920x1091 line-only mask is placed at x=510, y=-11 and only the 11 px
+    overflowing above the canvas are clipped. Source files on disk are never
+    modified; composition happens in memory only.
+    """
+    canvas_width, canvas_height = canvas_size
+    expected = expected_mask_size or (canvas_width, canvas_height)
+    if mask.size != expected:
+        raise ValidationError("Размер файла маски не совпадает с выбранным вариантом наложения Mediasniper Video.")
+    scale = canvas_height / creative.height
+    fitted_width = round(creative.width * scale)
+    if fitted_width > canvas_width:
+        raise ValidationError(
+            f"Креатив {creative.width}×{creative.height} после пропорционального масштабирования до высоты "
+            f"{canvas_height} px имеет ширину {fitted_width} px и не помещается в холст {canvas_width}×{canvas_height}."
+        )
+
+    fitted_creative = creative.resize((fitted_width, canvas_height), Image.Resampling.LANCZOS)
+
+    canvas = Image.new("RGBA", (canvas_width, canvas_height), (0, 0, 0, 255))
+    creative_x = (canvas_width - fitted_creative.width) // 2
+    creative_y = 0
+    canvas.alpha_composite(fitted_creative, dest=(creative_x, creative_y))
+    pre_composite = canvas.copy()
+
+    mask_x = (canvas_width - mask.width) // 2
+    mask_y = canvas_height - mask.height
+    _alpha_composite_clipped(canvas, mask, dest=(mask_x, mask_y))
+    logger.info(
+        "mediasniper_video_composition canvas=%sx%s creative=%sx%s creative_dest=%s,%s mask=%sx%s mask_dest=%s,%s mask_top_clip_px=%s",
+        canvas_width,
+        canvas_height,
+        fitted_creative.width,
+        fitted_creative.height,
+        creative_x,
+        creative_y,
+        mask.width,
+        mask.height,
+        mask_x,
+        mask_y,
+        max(0, -mask_y),
+    )
+    return pre_composite, canvas
+
+
+def _alpha_composite_clipped(base: Image.Image, overlay: Image.Image, *, dest: tuple[int, int]) -> None:
+    """Alpha-composite overlay onto base at dest, clipping parts outside base."""
+    x, y = dest
+    left = max(x, 0)
+    top = max(y, 0)
+    right = min(x + overlay.width, base.width)
+    bottom = min(y + overlay.height, base.height)
+    if left >= right or top >= bottom:
+        return
+    visible = overlay.crop((left - x, top - y, right - x, bottom - y))
+    base.alpha_composite(visible, dest=(left, top))
 
 
 def _log_composition_diagnostics(*, network_slug: str | None, size: tuple[int, int], mask: Image.Image, pre_composite: Image.Image, result: Image.Image) -> None:

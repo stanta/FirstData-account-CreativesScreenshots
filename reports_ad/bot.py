@@ -201,7 +201,7 @@ async def collect_banner_type(update: Update, context: ContextTypes.DEFAULT_TYPE
     context.user_data.pop("creative", None)
     await _reply_text_with_retry(
         update.effective_message,
-        f"Размер баннера выбран: {size.label}.\n{creative_upload_prompt(size)}",
+        f"Размер баннера выбран: {size.label}.\n{creative_upload_prompt(size, network_slug)}",
         operation="collect_banner_type.accepted.reply_text",
         reply_markup=ReplyKeyboardRemove(),
     )
@@ -591,7 +591,14 @@ def spec_menu_prompt(network_slug: str = "") -> str:
     return f"{SPEC_MENU_PROMPT}\n{specs_summary(network_slug)}"
 
 
-def creative_upload_prompt(size: BannerSize) -> str:
+def creative_upload_prompt(size: BannerSize, network_slug: str = "") -> str:
+    if network_slug == "mediasniper_video":
+        return (
+            "Отправьте PNG/JPEG-креатив как фото или документ. Креатив 1920×1080 размещается по центру "
+            "холста 2941×1080. Изображение пропорционально масштабируется до высоты 1080 px без "
+            "искажения ширины (боковые поля 510/511 px для 16:9), "
+            "сверху накладывается выбранная маска."
+        )
     return f"Отправьте PNG/JPEG-креатив как фото или документ. Он будет изменен до размера {size.label} и наложен под выбранную маску."
 
 
@@ -693,7 +700,7 @@ def _edit_prompt(target: str, user_data: dict[str, Any]) -> str:
     if target == "creative":
         size = user_data.get("banner_size")
         if isinstance(size, BannerSize):
-            return creative_upload_prompt(size)
+            return creative_upload_prompt(size, str(user_data.get("network_slug", "")))
         return "Загрузите новый PNG/JPEG-креатив как фото или документ."
     return "Введите новое значение."
 
