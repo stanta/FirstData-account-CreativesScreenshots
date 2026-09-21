@@ -50,7 +50,9 @@ The bot sends every completed banner as both a Telegram photo and an uncompresse
 
 - Adds the `mediasniper_video` network with exactly two mask choices: `1920_1080 наложить все элементы` → `1920_1080_all.png` and `1920_1080 наложить только линию видеоплеера внизу` → `1920_1080_br_only.png`.
 - Both choices generate immediately after the creative upload: no target-site step, no favicon fetch/upload, and no domain/CTA/skip/«Реклама» text overlays.
-- The result is only `Image.alpha_composite(creative, mask)`.
+- Output is a fixed `2941×1080` PNG. The creative is proportionally scaled to the `1080` px canvas height while preserving aspect ratio, then centered horizontally on a black canvas via alpha-compositing. A `16:9` creative becomes `1920×1080` and lands at `x=510, y=0` (510/511 px side margins); a creative whose fitted width exceeds `2941` px is rejected with a safe validation error instead of cropping or independent width stretching.
+- Mask placement is native and deterministic: `1920_1080_all.png` (decoded `2941×1080`) overlays 1:1; `1920_1080_br_only.png` (decoded `1920×1091`) is horizontally centered and bottom-aligned (`dest x=510, y=-11`), clipping only the 11 px that overflow above the canvas — a nearly invisible veil band (mean alpha ≈ 10.5, max 28), while the strong bottom player-line rows (alpha > 200) land at the canvas bottom.
+- Source creative and mask PNG files on disk are never modified; composition is in-memory only. The upload prompt explains proportional fit to `1080` px height and centered placement on the `2941×1080` canvas; menu labels describe the creative format, not the output size.
 
 #### GetIntent Video
 
@@ -64,7 +66,7 @@ The bot sends every completed banner as both a Telegram photo and an uncompresse
 ### 4. Image composition and validation
 
 - Adds the generator and typed request/result contracts in [`reports_ad/masked_banner.py`](../reports_ad/masked_banner.py).
-- Resizes user creatives with Pillow, overlays the selected PNG mask, validates final dimensions, and writes a PNG result.
+- Resizes user creatives with Pillow, overlays the selected PNG mask, validates final dimensions, and writes a PNG result. For Mediasniper Video, composition uses a fixed `2941×1080` black canvas and fits the creative proportionally to the full `1080` px height before horizontal centering; mask files are validated against each variant's expected decoded source size, decoupled from the output canvas size.
 - Adds safe target-site normalization and strict minimum-age validation in [`reports_ad/validation.py`](../reports_ad/validation.py).
 - Keeps validation errors suitable for Telegram users rather than exposing internal paths or tracebacks.
 

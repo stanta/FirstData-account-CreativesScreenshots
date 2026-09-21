@@ -26,12 +26,24 @@ class BannerSize:
     display_label: str | None = None
     menu_label: str | None = None
     mask_file_name: str | None = None
+    # Expected decoded size of the source mask PNG. When set, it is independent
+    # from width/height (the output canvas size) so strict mask validation stays
+    # meaningful even when the mask asset and the canvas differ.
+    mask_width: int | None = None
+    mask_height: int | None = None
 
     @property
     def label(self) -> str:
         if self.display_label:
             return self.display_label
         return f"{self.width}×{self.height}"
+
+    @property
+    def expected_mask_size(self) -> tuple[int, int]:
+        return (
+            self.mask_width if self.mask_width is not None else self.width,
+            self.mask_height if self.mask_height is not None else self.height,
+        )
 
     @property
     def menu_text(self) -> str:
@@ -63,9 +75,15 @@ STANDARD_BANNER_SIZES: tuple[BannerSize, ...] = (
 YANDEX_VIDEO_BANNER_SIZES: tuple[BannerSize, ...] = (
     BannerSize(slug="1920x1080", width=1536, height=1024, display_label="1920×1080"),
 )
-# MediaSniperVideo masks are pinned to their decoded asset sizes so the
-# compositor overlays each PNG 1:1 at native resolution (no mask rescaling):
-# 1920_1080_all.png decodes at 2941x1080; 1920_1080_br_only.png at 1920x1091.
+# MediaSniperVideo outputs a fixed 2941x1080 canvas. The uploaded creative is
+# proportionally scaled to the 1080 px canvas height and centered horizontally
+# (a 16:9 creative becomes 1920x1080 and lands at x=510, y=0 with 510/511 px side
+# margins). mask_width/mask_height pin the expected decoded source-mask size so
+# validation stays strict while mask and canvas sizes are decoupled:
+# 1920_1080_all.png decodes at 2941x1080 and overlays 1:1;
+# 1920_1080_br_only.png decodes at 1920x1091 and is horizontally centered and
+# bottom-aligned at native size (dest x=510, y=-11), clipping only the 11 px
+# that overflow above the canvas.
 MEDIASNIPER_VIDEO_BANNER_SIZES: tuple[BannerSize, ...] = (
     BannerSize(
         slug="1920_1080_all",
@@ -74,14 +92,18 @@ MEDIASNIPER_VIDEO_BANNER_SIZES: tuple[BannerSize, ...] = (
         display_label="1920×1080",
         menu_label="1920_1080 наложить все элементы",
         mask_file_name="1920_1080_all.png",
+        mask_width=2941,
+        mask_height=1080,
     ),
     BannerSize(
         slug="1920_1080_br",
-        width=1920,
-        height=1091,
+        width=2941,
+        height=1080,
         display_label="1920×1080",
         menu_label="1920_1080 наложить только линию видеоплеера внизу",
         mask_file_name="1920_1080_br_only.png",
+        mask_width=1920,
+        mask_height=1091,
     ),
 )
 GETINTENT_VIDEO_BANNER_SIZES: tuple[BannerSize, ...] = (
