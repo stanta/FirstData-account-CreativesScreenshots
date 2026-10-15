@@ -18,6 +18,7 @@ from .mask_catalog import BannerSize, MaskAsset, resolve_mask_asset
 from .models import CreativeInfo
 from .proof import ScreenshotGenerationError
 from .validation import ValidationError, validate_minimum_age
+from .vk_card import VkCardContent, render_vk_card
 
 logger = logging.getLogger(__name__)
 OPAQUE_MASK_BACKGROUND_ALPHA = 80
@@ -89,6 +90,7 @@ class MaskedBannerRequest:
     target_site_display: str | None = None
     favicon_path: Path | None = None
     minimum_age: str | None = None
+    vk_card: VkCardContent | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,6 +124,31 @@ async def generate_masked_banner(request: MaskedBannerRequest) -> MaskedBannerRe
         request.creative.height,
         mask_asset.path.name,
     )
+
+    if request.network_slug == "vk":
+        if request.vk_card is None:
+            raise ValidationError("Для ВК заполните логотип, верхний и основной текст и кнопку.")
+        try:
+            vk_result = render_vk_card(
+                creative_path=request.creative.path,
+                content=request.vk_card,
+                minimum_age=request.minimum_age or "",
+                output_path=output_path,
+                mask_path=mask_asset.path,
+                size_slug=request.size_slug,
+            )
+        except ValidationError:
+            raise
+        except Exception as exc:
+            logger.exception("vk_card_render_failed request_id=%s", request.request_id)
+            raise ScreenshotGenerationError("Не удалось собрать карточку ВК.") from exc
+        return MaskedBannerResult(
+            output_path=vk_result.output_path,
+            width=vk_result.width,
+            height=vk_result.height,
+            request_id=request.request_id,
+            mask_asset=mask_asset,
+        )
 
     try:
         width, height = compose_masked_banner(

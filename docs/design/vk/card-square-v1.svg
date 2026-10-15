@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1331" viewBox="0 0 1080 1331">
+  <title>VK card v1 — square creative platform overlay (600×600 source)</title>
+  <desc>Editable reference: 600x600 image fits 1080x1080 square slot. Runtime reflows the shared card-v1.png overlay.</desc>
+  <rect x="0" y="0" width="1080" height="162" fill="#fff"/>
+  <circle cx="77" cy="80" r="42" fill="#fff" stroke="#e8e8eb" stroke-width="2"/>
+  <g fill="#a6a7aa">
+    <circle cx="1011" cy="78" r="4"/>
+    <circle cx="1027" cy="78" r="4"/>
+    <circle cx="1043" cy="78" r="4"/>
+  </g>
+  <rect x="0" y="161" width="1080" height="1" fill="#f2f2f2"/>
+  <!-- y=162..1241: fully transparent creative slot 1080x1080 -->
+  <!-- y=1242..1330: fully transparent CTA; dynamic color, label and arrow -->
+</svg>

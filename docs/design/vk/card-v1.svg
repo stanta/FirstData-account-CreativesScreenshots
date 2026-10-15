@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="858" viewBox="0 0 1080 858">
+  <title>VK card v1: platform-only transparent overlay</title>
+  <desc>Based on an uploaded 548x554 reference. User logo, texts, creative, age and CTA are rendered separately.</desc>
+  <rect x="0" y="0" width="1080" height="162" fill="#fff"/>
+  <circle cx="77" cy="80" r="42" fill="#fff" stroke="#e8e8eb" stroke-width="2"/>
+  <g fill="#a6a7aa">
+    <circle cx="1011" cy="78" r="4"/>
+    <circle cx="1027" cy="78" r="4"/>
+    <circle cx="1043" cy="78" r="4"/>
+  </g>
+  <rect x="0" y="161" width="1080" height="1" fill="#f2f2f2"/>
+  <!-- y=162..768: transparent creative slot 1080x607 -->
+  <!-- y=769..857: transparent dynamic CTA: color/label/arrow supplied by renderer -->
+</svg>

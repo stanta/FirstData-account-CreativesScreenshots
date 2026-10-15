@@ -932,7 +932,9 @@ async def test_getintent_video_invalid_age_stays_in_minimum_age_state(tmp_path: 
 
 
 @pytest.mark.asyncio
-async def test_yandex_video_target_site_starts_generation_and_passes_display(tmp_path: Path) -> None:
+async def test_yandex_video_target_site_starts_generation_and_passes_display(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    # The path used by the fake generator must not depend on live favicon HTTP fetches.
+    monkeypatch.setattr("reports_ad.bot._load_target_site_favicon", lambda _url: tmp_path / "favicon-placeholder.png")
     context = _FakeContext(BotConfig(telegram_token="test", temp_root=tmp_path))
     context.user_data.update(_selected_yandex_video_flow_data(tmp_path, with_creative=True))
     captured_requests = []
