@@ -23,10 +23,10 @@ VK_REFRESH = "Показать предпросмотр"
 VK_EXPIRY_SECONDS = 1800
 VK_EDIT_ACTIONS = {
     "Изменить креатив": ("creative", 2),
-    "Изменить логотип": ("logo", VK_LOGO),
-    "Изменить верхний текст": ("header_text", VK_HEADER),
-    "Изменить основной текст": ("body_text", VK_BODY),
-    "Изменить кнопку": ("cta_id", VK_CTA),
+    "Изменить логотип": ("vk_logo", VK_LOGO),
+    "Изменить верхний текст": ("vk_header_text", VK_HEADER),
+    "Изменить основной текст": ("vk_body_text", VK_BODY),
+    "Изменить кнопку": ("vk_cta_id", VK_CTA),
     "Изменить возраст": ("minimum_age", VK_AGE),
 }
 
