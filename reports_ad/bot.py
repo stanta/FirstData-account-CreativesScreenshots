@@ -604,8 +604,8 @@ def spec_menu_prompt(network_slug: str = "") -> str:
 def creative_upload_prompt(size: BannerSize, network_slug: str = "") -> str:
     if network_slug == "vk":
         return (
-            "Отправьте PNG/JPEG-креатив для карточки ВК. Рекомендуемый размер 1080×607; "
-            "другие пропорции будут вписаны без обрезания. После этого бот попросит логотип и тексты."
+            f"Отправьте PNG/JPEG-креатив для карточки ВК. Рекомендуемый размер {size.width}×{size.height}; "
+            "изображения других пропорций будут вписаны без обрезания. Затем бот попросит логотип и тексты."
         )
     if network_slug == "mediasniper_video":
         return (
