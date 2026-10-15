@@ -17,6 +17,7 @@ from telegram.ext import Application, ApplicationBuilder, CommandHandler, Contex
 from telegram_menu import BaseMessage
 
 from .config import BotConfig
+from . import vk_flow
 from .mask_catalog import (
     BannerSize,
     get_banner_size_for_network,
@@ -104,6 +105,7 @@ def build_application(
             TARGET_SITE: [_start_button_handler(), MessageHandler(filters.TEXT & ~filters.COMMAND, collect_target_site)],
             FAVICON: [_start_button_handler(), MessageHandler((filters.PHOTO | filters.Document.IMAGE | filters.TEXT) & ~filters.COMMAND, collect_favicon)],
             MINIMUM_AGE: [_start_button_handler(), MessageHandler(filters.TEXT & ~filters.COMMAND, collect_minimum_age)],
+            **vk_flow.states(),
         },
         fallbacks=[CommandHandler("cancel", cancel), CommandHandler("start", start), _start_button_handler()],
         allow_reentry=True,
@@ -214,13 +216,19 @@ async def collect_creative(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     if "banner_size" not in context.user_data:
         await _reply_text_with_retry(message, f"Сначала выберите размер баннера.\n{spec_menu_prompt(context.user_data.get('network_slug', ''))}", operation="collect_creative.missing_size.reply_text", reply_markup=spec_menu_keyboard(context.user_data.get("network_slug", "")))
         return BANNER_TYPE
+    if _selected_flow_kind(context.user_data) == "vk_card" and (message.text or "").strip() == vk_flow.VK_BACK:
+        return await vk_flow.back_from_creative(update, context)
+    if _selected_flow_kind(context.user_data) == "vk_card" and (message.text or "").strip() == vk_flow.VK_CANCEL:
+        return await cancel(update, context)
     try:
-        creative_info = await _save_and_validate_creative(message, context, config)
+        creative_info = await _save_and_validate_creative(message, context, config, unique=_selected_flow_kind(context.user_data) == "vk_card")
     except ValidationError as exc:
         await _reply_text_with_retry(message, f"Креатив не подходит: {exc.safe_message}\nОтправьте PNG/JPEG-креатив еще раз.", operation="collect_creative.invalid.reply_text")
         return CREATIVE
 
     context.user_data["creative"] = creative_info
+    if _selected_flow_kind(context.user_data) == "vk_card":
+        return await vk_flow.after_creative(update, context)
     if _requires_target_site(context.user_data):
         flow_kind = _selected_flow_kind(context.user_data)
         prompt = (
@@ -366,7 +374,7 @@ async def _generate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return ConversationHandler.END
 
 
-async def _save_and_validate_creative(message: Any, context: ContextTypes.DEFAULT_TYPE, config: BotConfig) -> CreativeInfo:
+async def _save_and_validate_creative(message: Any, context: ContextTypes.DEFAULT_TYPE, config: BotConfig, *, unique: bool = False) -> CreativeInfo:
     temp_dir = _ensure_temp_dir(context.user_data, config)
     max_bytes = config.max_creative_bytes
 
@@ -375,7 +383,7 @@ async def _save_and_validate_creative(message: Any, context: ContextTypes.DEFAUL
         if document.file_size and document.file_size > max_bytes:
             raise ValidationError("Файл креатива превышает допустимый размер.")
         suffix = Path(document.file_name or "creative.jpg").suffix.lower() or ".jpg"
-        destination = temp_dir / f"creative{suffix}"
+        destination = temp_dir / (f"creative-{uuid.uuid4().hex[:12]}{suffix}" if unique else f"creative{suffix}")
         tg_file = await document.get_file()
         await tg_file.download_to_drive(custom_path=destination)
         return validate_creative_file(destination, declared_mime_type=document.mime_type, max_bytes=max_bytes, max_pixels=config.max_creative_pixels)
@@ -384,7 +392,7 @@ async def _save_and_validate_creative(message: Any, context: ContextTypes.DEFAUL
         photo = message.photo[-1]
         if photo.file_size and photo.file_size > max_bytes:
             raise ValidationError("Файл креатива превышает допустимый размер.")
-        destination = temp_dir / "creative.jpg"
+        destination = temp_dir / (f"creative-{uuid.uuid4().hex[:12]}.jpg" if unique else "creative.jpg")
         tg_file = await photo.get_file()
         await tg_file.download_to_drive(custom_path=destination)
         return validate_creative_file(destination, declared_mime_type="image/jpeg", max_bytes=max_bytes, max_pixels=config.max_creative_pixels)
@@ -438,6 +446,7 @@ def _build_masked_banner_request(user_data: dict[str, Any], output_path: Path) -
         target_site_display=user_data.get("target_site_display"),
         favicon_path=user_data["favicon"].path if isinstance(user_data.get("favicon"), CreativeInfo) else None,
         minimum_age=user_data.get("minimum_age"),
+        vk_card=vk_flow.build_content(user_data) if user_data.get("network_slug") == "vk" else None,
     )
 
 
@@ -592,6 +601,11 @@ def spec_menu_prompt(network_slug: str = "") -> str:
 
 
 def creative_upload_prompt(size: BannerSize, network_slug: str = "") -> str:
+    if network_slug == "vk":
+        return (
+            "Отправьте PNG/JPEG-креатив для карточки ВК. Рекомендуемый размер 1080×607; "
+            "другие пропорции будут вписаны без обрезания. После этого бот попросит логотип и тексты."
+        )
     if network_slug == "mediasniper_video":
         return (
             "Отправьте PNG/JPEG-креатив как фото или документ. Креатив 1920×1080 размещается по центру "
@@ -724,6 +738,9 @@ def _requires_target_site(user_data: dict[str, Any]) -> bool:
 
 
 async def _cleanup_state(user_data: dict[str, Any]) -> None:
+    expiration = user_data.pop("vk_expiry_task", None)
+    if isinstance(expiration, asyncio.Task) and expiration is not asyncio.current_task() and not expiration.done():
+        expiration.cancel()
     temp_dir_obj = user_data.pop("temp_dir_obj", None)
     if temp_dir_obj is not None:
         temp_dir_obj.cleanup()
