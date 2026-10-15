@@ -1,0 +1,41 @@
+name: VK card verification
+on:
+  push:
+    branches:
+      - feat/vk-card-mask-bot-20261015
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  vk-card-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install test dependencies
+        run: python -m pip install -e ".[dev]"
+      - name: Compile package and test modules
+        run: python -m compileall -q reports_ad tests
+      - name: Check VK wizard and renderer
+        run: python -m pytest -q tests/test_vk_card_rendering.py tests/test_vk_bot_flow.py
+      - name: Check existing banner and validation regressions
+        run: python -m pytest -q tests/test_validation.py tests/test_composition.py
+      - name: Verify build includes masks and JSON
+        run: |
+          python -m pip wheel --no-deps -w /tmp/wheel-artifacts .
+          python - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile
+          archive = next(Path("/tmp/wheel-artifacts").glob("reports_ad*.whl"))
+          with ZipFile(archive) as wheel:
+              names = set(wheel.namelist())
+              for name in [
+                  "reports_ad/data/masks/VK/card-v1.png",
+                  "reports_ad/data/masks/VK/layout-v1.json",
+                  "reports_ad/data/masks/VK/cta-options-v1.json",
+              ]:
+                  assert name in names, f"Not packaged: {name}"
+          PY
