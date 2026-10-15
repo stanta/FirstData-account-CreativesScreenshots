@@ -41,6 +41,7 @@
 **Версионированные ресурсы:**
 
 - docs/design/vk/card-v1.svg — редактируемый исходник оформления;
+- docs/design/vk/card-square-v1.svg — редактируемый эскиз квадратной компоновки (использует общую PNG-маску);
 - reports_ad/data/masks/VK/card-v1.png — PNG-маска; область креатива и кнопки полностью прозрачные;
 - reports_ad/data/masks/VK/layout-v1.json — геометрия широкого креатива;
 - reports_ad/data/masks/VK/layout-square-v1.json — геометрия квадратного креатива;
