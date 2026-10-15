@@ -17,6 +17,7 @@ from telegram.ext import Application, ApplicationBuilder, CommandHandler, Contex
 from telegram_menu import BaseMessage
 
 from .config import BotConfig
+from .diagnostics import safe_host as _safe_host  # legacy diagnostic helper kept for compatibility
 from . import vk_flow
 from .mask_catalog import (
     BannerSize,
