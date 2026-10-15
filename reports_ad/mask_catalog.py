@@ -65,6 +65,7 @@ MASK_NETWORKS: tuple[MaskNetwork, ...] = (
     # no target-site prompt, no favicon, no extra text rendering.
     MaskNetwork(slug="mediasniper_video", display_name="Mediasniper Video", directory_name="MediasniperVideo", flow_kind="mediasniper_video"),
     MaskNetwork(slug="getintent_video", display_name="GetIntent Video", directory_name="GetIntentVideo", flow_kind="getintent_video"),
+    MaskNetwork(slug="vk", display_name="ВК — карточка по эскизу v1", directory_name="VK", flow_kind="vk_card"),
 )
 
 STANDARD_BANNER_SIZES: tuple[BannerSize, ...] = (
@@ -109,13 +110,22 @@ MEDIASNIPER_VIDEO_BANNER_SIZES: tuple[BannerSize, ...] = (
 GETINTENT_VIDEO_BANNER_SIZES: tuple[BannerSize, ...] = (
     BannerSize(slug="1920x1080", width=1920, height=1215, display_label="1920×1080"),
 )
-SUPPORTED_BANNER_SIZES: tuple[BannerSize, ...] = STANDARD_BANNER_SIZES + YANDEX_VIDEO_BANNER_SIZES + MEDIASNIPER_VIDEO_BANNER_SIZES + GETINTENT_VIDEO_BANNER_SIZES
+VK_CARD_BANNER_SIZES: tuple[BannerSize, ...] = (
+    BannerSize(
+        slug="1080x607", width=1080, height=607,
+        display_label="Карточка с кнопкой — креатив 1080×607",
+        menu_label="Карточка с кнопкой — 1080×607 [1080x607]",
+        mask_file_name="card-v1.png", mask_width=1080, mask_height=858,
+    ),
+)
+SUPPORTED_BANNER_SIZES: tuple[BannerSize, ...] = STANDARD_BANNER_SIZES + YANDEX_VIDEO_BANNER_SIZES + MEDIASNIPER_VIDEO_BANNER_SIZES + GETINTENT_VIDEO_BANNER_SIZES + VK_CARD_BANNER_SIZES
 NETWORK_BANNER_SIZES: dict[str, tuple[BannerSize, ...]] = {
     "mediasniper": STANDARD_BANNER_SIZES,
     "hybrid": STANDARD_BANNER_SIZES,
     "yandex_video": YANDEX_VIDEO_BANNER_SIZES,
     "mediasniper_video": MEDIASNIPER_VIDEO_BANNER_SIZES,
     "getintent_video": GETINTENT_VIDEO_BANNER_SIZES,
+    "vk": VK_CARD_BANNER_SIZES,
 }
 
 
@@ -172,6 +182,9 @@ def normalize_mask_network_slug(value: str | None) -> str:
         "медиаснайпер_видео": "mediasniper_video",
         "медиаснайпер-видео": "mediasniper_video",
         "медиаснайпер видео": "mediasniper_video",
+        "вк": "vk",
+        "vk": "vk",
+        "vk_card": "vk",
         "hybryd": "hybrid",
         "hybrid": "hybrid",
         "yandex_video": "yandex_video",
