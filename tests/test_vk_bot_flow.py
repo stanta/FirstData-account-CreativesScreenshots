@@ -174,3 +174,20 @@ async def test_vk_send_failure_keeps_preview_for_retry(harness, monkeypatch):
     assert ctx.user_data["vk_preview_path"].exists()
     assert await vk_flow.review(update(vk_flow.VK_APPROVE), ctx) == bot.ConversationHandler.END
     assert observed["documents"] == [approved_sha]
+
+
+@pytest.mark.asyncio
+async def test_vk_idle_expiration_applies_before_preview_and_rejects_stale_reply(harness, monkeypatch):
+    ctx, observed, _, _ = harness
+    monkeypatch.setattr(vk_flow, "VK_EXPIRY_SECONDS", 0.01)
+    temporary = bot._ensure_temp_dir(ctx.user_data, ctx.bot_data["config"])
+    marker = temporary / "pending-logo-upload.png"
+    marker.write_bytes(b"temporary")
+    assert await vk_flow.after_creative(update(), ctx) == vk_flow.VK_LOGO
+    assert "vk_expiry_task" in ctx.user_data
+    await asyncio.sleep(0.05)
+    assert not marker.exists()
+    assert not ctx.user_data
+    handler = vk_flow.states()[vk_flow.VK_LOGO][0].callback
+    assert await handler(update("obsolete answer"), ctx) == bot.ConversationHandler.END
+    assert observed["texts"][-1][1] == "vk.session.expired"
