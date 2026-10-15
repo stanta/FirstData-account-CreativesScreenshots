@@ -14,19 +14,31 @@ from .telegram_driver import TelegramUserDriver
 pytestmark = [pytest.mark.telegram_e2e, pytest.mark.network, pytest.mark.slow]
 
 
+@pytest.mark.parametrize(
+    ("format_slug", "creative_dimensions", "min_card_height"),
+    [
+        ("1080x607", (1080, 607), 1091),
+        ("600x600", (600, 600), 1564),
+    ],
+)
 @pytest.mark.asyncio
-async def test_vk_card_user_can_edit_and_approve(tmp_path: Path) -> None:
+async def test_vk_card_user_can_edit_and_approve(
+    tmp_path: Path,
+    format_slug: str,
+    creative_dimensions: tuple[int, int],
+    min_card_height: int,
+) -> None:
     config = require_live_e2e_config()
     creative = tmp_path / "vk-e2e-creative.png"
     logo = tmp_path / "vk-e2e-logo.png"
-    Image.new("RGB", (1080, 607), "#3219a4").save(creative)
+    Image.new("RGB", creative_dimensions, "#3219a4").save(creative)
     Image.new("RGB", (160, 160), "#42b2cc").save(logo)
     async with TelegramUserDriver(config) as driver:
         await driver.send_text("/start")
         await driver.wait_for_text_contains("Выберите рекламную сеть")
         await driver.send_text("vk")
         await driver.wait_for_text_contains("Сеть выбрана", "ВК")
-        await driver.send_text("1080x607")
+        await driver.send_text(format_slug)
         await driver.wait_for_text_contains("Отправьте PNG/JPEG-креатив")
         await driver.send_document(creative)
         await driver.wait_for_text_contains("Загрузите логотип")
@@ -46,8 +58,8 @@ async def test_vk_card_user_can_edit_and_approve(tmp_path: Path) -> None:
         await driver.wait_for_photo(caption_contains="Предпросмотр макета ВК")
         await driver.send_text("✅ Подтвердить и получить PNG")
         sent = await driver.wait_for_document(caption_contains="Утверждённый PNG-макет")
-        png = await driver.download_media(sent, config.artifact_dir, filename="vk-card-v1-e2e.png")
+        png = await driver.download_media(sent, config.artifact_dir, filename=f"vk-card-{format_slug}-e2e.png")
         assert_png_image(png)
         with Image.open(png) as check:
             assert check.width == 1080
-            assert check.height >= 1091
+            assert check.height >= min_card_height
