@@ -622,7 +622,7 @@ def test_stage2_compose_centers_proportionally_fitted_creative_in_banner_region(
     with Image.open(banner_path) as result:
         assert result.getpixel((110, 60)) == (20, 40, 220)
         assert result.getpixel((110, 104)) == (20, 40, 220)
-        assert result.getpixel((110, 44)) == (255, 255, 255)
+        assert result.getpixel((110, 32)) == (255, 255, 255)  # upper margin outside rendered "Реклама" mark
         assert result.getpixel((110, 105)) == (255, 255, 255)
         assert result.getpixel((79, 45)) == (255, 255, 255)
         assert result.getpixel((142, 75)) == (255, 255, 255)
