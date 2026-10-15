@@ -37,6 +37,7 @@ jobs:
               for name in [
                   "reports_ad/data/masks/VK/card-v1.png",
                   "reports_ad/data/masks/VK/layout-v1.json",
+                  "reports_ad/data/masks/VK/layout-square-v1.json",
                   "reports_ad/data/masks/VK/cta-options-v1.json",
               ]:
                   assert name in names, f"Not packaged: {name}"
