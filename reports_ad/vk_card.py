@@ -20,6 +20,12 @@ from .validation import ValidationError, validate_minimum_age
 
 _RESOURCE_DIR = "data/masks/VK"
 _FALLBACK_CTA_COLOR = (55, 18, 155)
+# Format describes the *uploaded creative*, not the final card width.
+# 600x600 is displayed square, fitted to a 1080x1080 slot in the 1080 px card.
+_VK_LAYOUT_FILES: dict[str, tuple[str, int]] = {
+    "1080x607": ("layout-v1.json", 607),
+    "600x600": ("layout-square-v1.json", 1080),
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,9 +81,48 @@ def _read_resource_json(file_name: str) -> dict[str, Any]:
     return json.loads(item.read_text(encoding="utf-8"))
 
 
-def load_vk_layout() -> VkCardLayout:
-    raw = _read_resource_json("layout-v1.json")
-    return VkCardLayout(**raw)
+def load_vk_layout(size_slug: str = "1080x607") -> VkCardLayout:
+    variant = _VK_LAYOUT_FILES.get(size_slug)
+    if variant is None:
+        raise ValidationError("Неизвестный размер карточки ВК.")
+    filename, creative_height = variant
+    raw = _read_resource_json(filename)
+    layout = VkCardLayout(**raw)
+    if layout.width != 1080 or layout.creative_height != creative_height:
+        raise ValidationError("Некорректная геометрия профиля карточки ВК.")
+    return layout
+
+
+def _mask_for_vk_layout(mask: Image.Image, profile: VkCardLayout) -> Image.Image:
+    """Move the identical platform header and CTA mask to a new creative height.
+
+    The versioned PNG is 1080x858 and has a transparent creative region.
+    Moving the lower overlay slice preserves both platform-only elements and
+    leaves the square creative untouched. No resampling of the mask or input.
+    """
+    original = load_vk_layout("1080x607")
+    if mask.size != (original.width, original.overlay_height):
+        raise ValidationError("Размер файла маски ВК не совпадает с профилем v1.")
+    if (
+        profile.width != original.width
+        or profile.header_height != original.header_height
+        or profile.cta_height != original.cta_height
+    ):
+        raise ValidationError("Некорректная геометрия маски ВК.")
+
+    if profile.creative_height == original.creative_height:
+        return mask
+
+    expanded = Image.new("RGBA", (profile.width, profile.overlay_height), (0, 0, 0, 0))
+    expanded.alpha_composite(
+        mask.crop((0, 0, original.width, original.header_height)),
+        dest=(0, 0),
+    )
+    expanded.alpha_composite(
+        mask.crop((0, original.cta_bbox.y, original.width, original.overlay_height)),
+        dest=(0, profile.cta_bbox.y),
+    )
+    return expanded
 
 
 def list_vk_ctas() -> dict[str, str]:
@@ -196,12 +241,16 @@ def render_vk_card(
     output_path: Path,
     layout: VkCardLayout | None = None,
     mask_path: Path | None = None,
+    size_slug: str = "1080x607",
 ) -> VkRenderResult:
     age = validate_vk_card_content(content, minimum_age)
     header = validate_vk_header(content.header_text)
     body = validate_vk_body(content.body_text)
-    profile = layout or load_vk_layout()
-    if profile.width != 1080 or profile.creative_height != 607:
+    variant = _VK_LAYOUT_FILES.get(size_slug)
+    if variant is None:
+        raise ValidationError("Неизвестный размер карточки ВК.")
+    profile = layout or load_vk_layout(size_slug)
+    if profile.width != 1080 or profile.creative_height != variant[1]:
         raise ValidationError("Некорректная геометрия профиля карточки ВК.")
     overlay_path = mask_path or Path(str(files("reports_ad").joinpath(_RESOURCE_DIR, "card-v1.png")))
     try:
@@ -211,8 +260,7 @@ def render_vk_card(
             mask = raw_mask.convert("RGBA")
     except (OSError, UnidentifiedImageError) as exc:
         raise ValidationError("Невозможно прочитать креатив, логотип или маску ВК.") from exc
-    if mask.size != (profile.width, profile.overlay_height):
-        raise ValidationError("Размер маски ВК не совпадает с профилем v1.")
+    mask = _mask_for_vk_layout(mask, profile)
     body_font = _font(profile.body_font_size)
     header_font = _font(profile.header_font_size, bold=True)
     subtitle_font = _font(22)
