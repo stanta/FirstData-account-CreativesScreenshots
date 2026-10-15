@@ -135,6 +135,7 @@ async def generate_masked_banner(request: MaskedBannerRequest) -> MaskedBannerRe
                 minimum_age=request.minimum_age or "",
                 output_path=output_path,
                 mask_path=mask_asset.path,
+                size_slug=request.size_slug,
             )
         except ValidationError:
             raise
