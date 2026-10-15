@@ -31,16 +31,36 @@ VK_EDIT_ACTIONS = {
 }
 
 
+async def _ensure_active_session(update: Update, context: ContextTypes.DEFAULT_TYPE, handler: Any) -> int:
+    """Do not try to resume a conversation after in-memory expiry."""
+    if context.user_data.get("network_slug") != "vk" or "banner_size" not in context.user_data:
+        from .bot import ConversationHandler, _reply_text_with_retry, start_menu_keyboard
+        await _reply_text_with_retry(
+            update.effective_message,
+            "Сеанс создания карточки ВК завершён. Нажмите «Старт» или /start, чтобы начать заново.",
+            operation="vk.session.expired",
+            reply_markup=start_menu_keyboard(),
+        )
+        return ConversationHandler.END
+    return await handler(update, context)
+
+
+def _guard(handler: Any) -> Any:
+    async def guarded(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        return await _ensure_active_session(update, context, handler)
+    return guarded
+
+
 def states() -> dict[int, list[MessageHandler]]:
     image_or_text = (filters.PHOTO | filters.Document.IMAGE | filters.TEXT) & ~filters.COMMAND
     text = filters.TEXT & ~filters.COMMAND
     return {
-        VK_LOGO: [MessageHandler(image_or_text, collect_logo)],
-        VK_HEADER: [MessageHandler(text, collect_header)],
-        VK_BODY: [MessageHandler(text, collect_body)],
-        VK_CTA: [MessageHandler(text, collect_cta)],
-        VK_AGE: [MessageHandler(text, collect_age)],
-        VK_REVIEW: [MessageHandler(text, review)],
+        VK_LOGO: [MessageHandler(image_or_text, _guard(collect_logo))],
+        VK_HEADER: [MessageHandler(text, _guard(collect_header))],
+        VK_BODY: [MessageHandler(text, _guard(collect_body))],
+        VK_CTA: [MessageHandler(text, _guard(collect_cta))],
+        VK_AGE: [MessageHandler(text, _guard(collect_age))],
+        VK_REVIEW: [MessageHandler(text, _guard(review))],
     }
 
 
@@ -70,7 +90,21 @@ def _cta_keyboard() -> ReplyKeyboardMarkup:
     return _keyboard(*list_vk_ctas().values(), VK_BACK, VK_CANCEL)
 
 
-async def _ask(update: Update, stage: int) -> int:
+def _arm_expiry(context: ContextTypes.DEFAULT_TYPE) -> None:
+    data = context.user_data
+    if not data.get("request_id"):
+        return
+    previous = data.pop("vk_expiry_task", None)
+    if isinstance(previous, asyncio.Task) and previous is not asyncio.current_task() and not previous.done():
+        previous.cancel()
+    token = uuid.uuid4().hex
+    data["vk_activity_token"] = token
+    data["vk_expiry_task"] = context.application.create_task(
+        _expire_if_idle(data, str(data["request_id"]), token)
+    )
+
+
+async def _ask(update: Update, stage: int, context: ContextTypes.DEFAULT_TYPE) -> int:
     from .bot import _reply_text_with_retry
 
     await _reply_text_with_retry(
@@ -78,6 +112,7 @@ async def _ask(update: Update, stage: int) -> int:
         operation=f"vk.prompt.{stage}",
         reply_markup=_cta_keyboard() if stage == VK_CTA else _navigation(),
     )
+    _arm_expiry(context)
     return stage
 
 
@@ -85,7 +120,7 @@ async def after_creative(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     _invalidate(context.user_data)
     if context.user_data.pop("vk_edit_field", None) == "creative":
         return await _preview(update, context)
-    return await _ask(update, VK_LOGO)
+    return await _ask(update, VK_LOGO, context)
 
 
 async def back_from_creative(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -112,6 +147,8 @@ def _invalidate(data: dict[str, Any]) -> None:
 
 async def _on_nav(update: Update, context: ContextTypes.DEFAULT_TYPE, stage: int) -> int | None:
     choice = (update.effective_message.text or "").strip()
+    if choice != VK_CANCEL:
+        _arm_expiry(context)
     if choice == VK_CANCEL:
         from .bot import cancel
         return await cancel(update, context)
@@ -125,7 +162,7 @@ async def _on_nav(update: Update, context: ContextTypes.DEFAULT_TYPE, stage: int
         size = context.user_data["banner_size"]
         await _reply_text_with_retry(update.effective_message, creative_upload_prompt(size, "vk"), operation="vk.back.creative", reply_markup=_navigation())
         return CREATIVE
-    return await _ask(update, previous)
+    return await _ask(update, previous, context)
 
 
 async def _image_to_file(message: Any, context: ContextTypes.DEFAULT_TYPE) -> CreativeInfo:
@@ -167,7 +204,7 @@ async def _accept(update: Update, context: ContextTypes.DEFAULT_TYPE, key: str, 
         return await _preview(update, context)
     if next_state == VK_REVIEW:
         return await _preview(update, context)
-    return await _ask(update, next_state)
+    return await _ask(update, next_state, context)
 
 
 async def collect_logo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -245,10 +282,10 @@ def build_content(data: dict[str, Any]) -> VkCardContent:
     )
 
 
-async def _expire_if_idle(data: dict[str, Any], request_id: str, expected_revision: int) -> None:
+async def _expire_if_idle(data: dict[str, Any], request_id: str, activity_token: str) -> None:
     try:
         await asyncio.sleep(VK_EXPIRY_SECONDS)
-        if data.get("request_id") == request_id and data.get("vk_preview_revision") == expected_revision:
+        if data.get("request_id") == request_id and data.get("vk_activity_token") == activity_token:
             from .bot import _cleanup_state
             await _cleanup_state(data)
             data.clear()
@@ -299,10 +336,7 @@ async def _preview(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         caption="Предпросмотр макета ВК. Измените поле или подтвердите PNG. Это не скриншот опубликованного объявления.",
         reply_markup=review_keyboard(),
     )
-    previous = data.pop("vk_expiry_task", None)
-    if isinstance(previous, asyncio.Task) and not previous.done():
-        previous.cancel()
-    data["vk_expiry_task"] = context.application.create_task(_expire_if_idle(data, str(data["request_id"]), revision))
+    _arm_expiry(context)
     return VK_REVIEW
 
 
@@ -310,6 +344,8 @@ async def review(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     from .bot import _reply_text_with_retry, _reply_document_file_with_retry, _cleanup_state, _user_lock
 
     label = (update.effective_message.text or "").strip()
+    if label != VK_CANCEL:
+        _arm_expiry(context)
     if label == VK_CANCEL:
         from .bot import cancel
         return await cancel(update, context)
@@ -320,7 +356,7 @@ async def review(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             from .bot import CREATIVE, creative_upload_prompt
             await _reply_text_with_retry(update.effective_message, creative_upload_prompt(context.user_data["banner_size"], "vk"), operation="vk.edit.creative", reply_markup=_navigation())
             return CREATIVE
-        return await _ask(update, target)
+        return await _ask(update, target, context)
     if label == VK_REFRESH:
         return await _preview(update, context)
     if label != VK_APPROVE:
