@@ -191,3 +191,55 @@ async def test_vk_idle_expiration_applies_before_preview_and_rejects_stale_reply
     handler = vk_flow.states()[vk_flow.VK_LOGO][0].callback
     assert await handler(update("obsolete answer"), ctx) == bot.ConversationHandler.END
     assert observed["texts"][-1][1] == "vk.session.expired"
+
+
+def test_vk_banner_size_menu_offers_both_creative_dimensions() -> None:
+    buttons = bot.spec_menu_keyboard("vk").keyboard
+    labels = [button.text for row in buttons for button in row]
+    assert len(labels) == 2
+    assert any("1080×607" in label for label in labels)
+    assert any("600×600" in label for label in labels)
+    assert bot._menu_value(next(label for label in labels if "600×600" in label)) == "600x600"
+
+
+@pytest.mark.asyncio
+async def test_vk_select_600x600_sets_square_upload_prompt(harness):
+    ctx, observed, _, _ = harness
+    label = next(
+        button.text
+        for row in bot.spec_menu_keyboard("vk").keyboard
+        for button in row
+        if "600×600" in button.text
+    )
+    assert await bot.collect_banner_type(update(label), ctx) == bot.CREATIVE
+    size = ctx.user_data["banner_size"]
+    assert size.slug == "600x600"
+    assert size.width == size.height == 600
+    assert "600×600" in observed["texts"][-1][0]
+    assert "логотип" in observed["texts"][-1][0]
+
+
+@pytest.mark.asyncio
+async def test_vk_600x600_wizard_preview_edit_and_approve_unchanged(harness, tmp_path):
+    ctx, observed, _, logo = harness
+    square = image_info(tmp_path, "square600.png", (600, 600), (21, 63, 174))
+    size = get_banner_size_for_network("vk", "600x600")
+    assert size is not None
+    ctx.user_data.update(
+        banner_size=size, banner_size_slug=size.slug, creative=square,
+    )
+    assert await vk_flow.after_creative(update(), ctx) == vk_flow.VK_LOGO
+    assert await vk_flow.collect_logo(update(document=FakeDocument(logo.path)), ctx) == vk_flow.VK_HEADER
+    assert await vk_flow.collect_header(update("Шапка для квадрата"), ctx) == vk_flow.VK_BODY
+    assert await vk_flow.collect_body(update("Текст объявления"), ctx) == vk_flow.VK_CTA
+    assert await vk_flow.collect_cta(update("Подробнее"), ctx) == vk_flow.VK_AGE
+    assert await vk_flow.collect_age(update("18"), ctx) == vk_flow.VK_REVIEW
+    path = ctx.user_data["vk_preview_path"]
+    with Image.open(path) as generated:
+        assert generated.size == (1080, 1564)
+    assert await vk_flow.review(update("Изменить основной текст"), ctx) == vk_flow.VK_BODY
+    assert await vk_flow.collect_body(update("Исправленный текст"), ctx) == vk_flow.VK_REVIEW
+    digest = ctx.user_data["vk_preview_sha256"]
+    assert await vk_flow.review(update(vk_flow.VK_APPROVE), ctx) == bot.ConversationHandler.END
+    assert observed["documents"] == [digest]
+    assert not ctx.user_data
