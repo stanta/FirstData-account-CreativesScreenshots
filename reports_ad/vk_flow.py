@@ -13,7 +13,7 @@ from telegram.ext import ContextTypes, MessageHandler, filters
 
 from .models import CreativeInfo
 from .validation import ValidationError, validate_creative_file, validate_minimum_age
-from .vk_card import VkCardContent, list_vk_ctas, validate_vk_body, validate_vk_header
+from .vk_card import VkCardContent, list_vk_ctas, load_vk_layout, validate_vk_body, validate_vk_header
 
 VK_LOGO, VK_HEADER, VK_BODY, VK_CTA, VK_AGE, VK_REVIEW = range(10, 16)
 VK_BACK = "◀ Назад"
@@ -140,6 +140,7 @@ def _invalidate(data: dict[str, Any]) -> None:
     old_preview = data.pop("vk_preview_path", None)
     data.pop("vk_preview_revision", None)
     data.pop("vk_preview_sha256", None)
+    data.pop("vk_preview_profile_version", None)
     data["vk_draft_revision"] = int(data.get("vk_draft_revision", 0)) + 1
     if isinstance(old_preview, Path):
         old_preview.unlink(missing_ok=True)
@@ -303,8 +304,11 @@ async def _preview(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
     data = context.user_data
     revision = int(data.get("vk_draft_revision", 0))
+    profile_version = load_vk_layout(str(data["banner_size_slug"])).version
     path = data.get("vk_preview_path")
-    if not (isinstance(path, Path) and path.is_file() and data.get("vk_preview_revision") == revision):
+    if not (isinstance(path, Path) and path.is_file()
+            and data.get("vk_preview_revision") == revision
+            and data.get("vk_preview_profile_version") == profile_version):
         user_id = update.effective_user.id if update.effective_user else 0
         lock = _user_lock(context, user_id)
         if lock.locked():
@@ -323,6 +327,7 @@ async def _preview(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 data["vk_preview_path"] = path
                 data["vk_preview_sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
                 data["vk_preview_revision"] = revision
+                data["vk_preview_profile_version"] = profile_version
             except (ValidationError, ScreenshotGenerationError, asyncio.TimeoutError, KeyError) as exc:
                 error = exc.safe_message if hasattr(exc, "safe_message") else "Не удалось подготовить предпросмотр. Измените данные или попробуйте ещё раз."
                 await _reply_text_with_retry(update.effective_message, error, operation="vk.preview.failed", reply_markup=review_keyboard())
@@ -365,7 +370,10 @@ async def review(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
     data = context.user_data
     path = data.get("vk_preview_path")
-    if not (isinstance(path, Path) and path.is_file() and data.get("vk_preview_revision") == data.get("vk_draft_revision")):
+    profile_version = load_vk_layout(str(data["banner_size_slug"])).version
+    if not (isinstance(path, Path) and path.is_file()
+            and data.get("vk_preview_revision") == data.get("vk_draft_revision")
+            and data.get("vk_preview_profile_version") == profile_version):
         await _reply_text_with_retry(update.effective_message, "Предпросмотр устарел. Сначала обновите его.", operation="vk.review.stale", reply_markup=review_keyboard())
         return VK_REVIEW
     if hashlib.sha256(path.read_bytes()).hexdigest() != data.get("vk_preview_sha256"):
@@ -381,7 +389,7 @@ async def review(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             await _reply_document_file_with_retry(
                 update.effective_message,
                 operation="vk.final.document", document_path=path,
-                filename="vk-card-v1-approved.png",
+                filename="vk-card-v2-approved.png",
                 caption="Утверждённый PNG-макет карточки ВК (не подтверждение публикации).",
                 reply_markup=ReplyKeyboardRemove(),
             )
