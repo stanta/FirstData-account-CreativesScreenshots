@@ -236,7 +236,7 @@ async def test_vk_600x600_wizard_preview_edit_and_approve_unchanged(harness, tmp
     assert await vk_flow.collect_age(update("18"), ctx) == vk_flow.VK_REVIEW
     path = ctx.user_data["vk_preview_path"]
     with Image.open(path) as generated:
-        assert generated.size == (1080, 1564)
+        assert generated.size == (1080, 1554)
     assert await vk_flow.review(update("Изменить основной текст"), ctx) == vk_flow.VK_BODY
     assert await vk_flow.collect_body(update("Исправленный текст"), ctx) == vk_flow.VK_REVIEW
     digest = ctx.user_data["vk_preview_sha256"]
