@@ -303,8 +303,17 @@ def render_vk_card(
     logo_fit.putalpha(combined_alpha)
     canvas.alpha_composite(logo_fit, dest=(lx + (diameter - logo_fit.width) // 2, ly + (diameter - logo_fit.height) // 2))
 
-    draw.text((lx + diameter + 24, 43), header, font=header_font, fill=(28, 28, 32))
-    draw.text((lx + diameter + 24, 94), f"Реклама · {age}+", font=subtitle_font, fill=(135, 135, 140))
+    header_x, header_y = lx + diameter + 24, 43
+    subtitle = f"Реклама · {age}+"
+    # Match the VK reference: the second line starts immediately after the
+    # visible title. A fixed baseline such as y=94 adds a large, variable gap.
+    title_bounds = draw.textbbox((header_x, header_y), header, font=header_font)
+    subtitle_local_bounds = draw.textbbox((0, 0), subtitle, font=subtitle_font)
+    subtitle_y = title_bounds[3] - subtitle_local_bounds[1]
+    if subtitle_y + subtitle_local_bounds[3] > profile.header_content_bottom:
+        raise ValidationError("Текст шапки ВК не помещается без пересечения с отступом.")
+    draw.text((header_x, header_y), header, font=header_font, fill=(28, 28, 32))
+    draw.text((header_x, subtitle_y), subtitle, font=subtitle_font, fill=(135, 135, 140))
 
     cta_box = profile.cta_bbox
     color = choose_vk_cta_color(creative)
