@@ -3,6 +3,7 @@ on:
   push:
     branches:
       - feat/vk-card-mask-bot-20261015
+      - "fix/vk-card-spacing-stretch-*"
   pull_request:
   workflow_dispatch:
 
@@ -20,7 +21,7 @@ jobs:
       - name: Compile package and test modules
         run: python -m compileall -q reports_ad tests
       - name: Check VK wizard and renderer
-        run: python -m pytest -q tests/test_vk_card_rendering.py tests/test_vk_bot_flow.py
+        run: python -m pytest -q tests/test_vk_card_rendering.py tests/test_vk_card_v2.py tests/test_vk_bot_flow.py
       - name: Check existing banner and validation regressions
         run: python -m pytest -q tests/test_validation.py tests/test_composition.py
       - name: Full offline pytest suite
@@ -35,9 +36,9 @@ jobs:
           with ZipFile(archive) as wheel:
               names = set(wheel.namelist())
               for name in [
-                  "reports_ad/data/masks/VK/card-v1.png",
-                  "reports_ad/data/masks/VK/layout-v1.json",
-                  "reports_ad/data/masks/VK/layout-square-v1.json",
+                  "reports_ad/data/masks/VK/card-v2.png",
+                  "reports_ad/data/masks/VK/layout-v2.json",
+                  "reports_ad/data/masks/VK/layout-square-v2.json",
                   "reports_ad/data/masks/VK/cta-options-v1.json",
               ]:
                   assert name in names, f"Not packaged: {name}"
