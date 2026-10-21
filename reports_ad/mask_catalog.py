@@ -115,16 +115,15 @@ VK_CARD_BANNER_SIZES: tuple[BannerSize, ...] = (
         slug="1080x607", width=1080, height=607,
         display_label="Карточка с кнопкой — креатив 1080×607",
         menu_label="Карточка с кнопкой — 1080×607 [1080x607]",
-        mask_file_name="card-v1.png", mask_width=1080, mask_height=858,
+        mask_file_name="card-v2.png", mask_width=1080, mask_height=848,
     ),
-    # The 600x600 uploaded creative fills a square 1080x1080 slot in the
-    # 1080 px-wide VK card. The platform overlay itself is shared: only its
-    # transparent central region needs to be extended by the renderer.
+    # A 600x600 source is stretched to a 1080x1080 square slot.
+    # The same v2 overlay is reflowed to accommodate the larger creative.
     BannerSize(
         slug="600x600", width=600, height=600,
         display_label="Карточка с кнопкой — креатив 600×600",
         menu_label="Карточка с кнопкой — 600×600 [600x600]",
-        mask_file_name="card-v1.png", mask_width=1080, mask_height=858,
+        mask_file_name="card-v2.png", mask_width=1080, mask_height=848,
     ),
 )
 SUPPORTED_BANNER_SIZES: tuple[BannerSize, ...] = STANDARD_BANNER_SIZES + YANDEX_VIDEO_BANNER_SIZES + MEDIASNIPER_VIDEO_BANNER_SIZES + GETINTENT_VIDEO_BANNER_SIZES + VK_CARD_BANNER_SIZES
