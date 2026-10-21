@@ -80,3 +80,41 @@ def test_v2_stretches_without_cropping_or_letterboxing(
         assert output.getpixel((3, 152 + slot_height - 3)) == (31, 189, 65)
         assert output.getpixel((1076, 152 + slot_height - 3)) == (211, 177, 28)
         assert output.getpixel((3, 152 + slot_height)) == result.cta_rgb
+
+
+@pytest.mark.parametrize("slug", ["1080x607", "600x600"])
+@pytest.mark.parametrize(
+    ("headline", "age"), [
+        ("Тест заголовка", "18"),
+        ("Больше продаж за те же деньги", "0"),
+        ("Новая шапка объявления", "99"),
+    ],
+)
+def test_vk_header_subtitle_touches_title_ink_without_margin(
+    tmp_path: Path, slug: str, headline: str, age: str,
+) -> None:
+    """The age line must start immediately after the title's visible bbox."""
+    from reports_ad.vk_card import _font
+
+    logo = _make_creative(tmp_path / "header-logo.png", (64, 64))
+    creative = _make_creative(tmp_path / "header-creative.png", (600, 600))
+    content = VkCardContent(logo, headline, "Основной текст", "learn_more")
+    out = render_vk_card(
+        creative_path=creative.path, content=content, minimum_age=age,
+        output_path=tmp_path / "header-join.png", size_slug=slug,
+    )
+    header_x = load_vk_layout(slug).logo_x + load_vk_layout(slug).logo_size + 24
+    title_font = _font(32, bold=True)
+    probe = ImageDraw.Draw(Image.new("RGB", (1, 1)))
+    title_bottom = probe.textbbox((header_x, 43), headline, font=title_font)[3]
+    assert title_bottom < load_vk_layout(slug).header_content_bottom
+    with Image.open(out.output_path) as image:
+        # After the title's bottom boundary the next printed pixels must be
+        # the muted age text, not a white band. Search first three rows.
+        age_pixels = [
+            image.getpixel((x, y))
+            for y in range(title_bottom, title_bottom + 3)
+            for x in range(header_x, header_x + 240)
+        ]
+    assert any(100 <= r <= 175 and 100 <= g <= 175 and 100 <= b <= 180
+               for r, g, b in age_pixels)
