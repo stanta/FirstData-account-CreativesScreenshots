@@ -23,8 +23,8 @@ _FALLBACK_CTA_COLOR = (55, 18, 155)
 # Format describes the *uploaded creative*, not the final card width.
 # 600x600 is displayed square, fitted to a 1080x1080 slot in the 1080 px card.
 _VK_LAYOUT_FILES: dict[str, tuple[str, int]] = {
-    "1080x607": ("layout-v1.json", 607),
-    "600x600": ("layout-square-v1.json", 1080),
+    "1080x607": ("layout-v2.json", 607),
+    "600x600": ("layout-square-v2.json", 1080),
 }
 
 
@@ -53,6 +53,9 @@ class VkCardLayout:
     logo_size: int
     logo_x: int
     logo_y: int
+    reference_width_px: float
+    header_gap_reference_px: int
+    header_content_bottom: int
 
     @property
     def creative_bbox(self) -> BoundingBox:
@@ -90,13 +93,19 @@ def load_vk_layout(size_slug: str = "1080x607") -> VkCardLayout:
     layout = VkCardLayout(**raw)
     if layout.width != 1080 or layout.creative_height != creative_height:
         raise ValidationError("Некорректная геометрия профиля карточки ВК.")
+    if layout.reference_width_px <= 0 or layout.header_gap_reference_px < 0:
+        raise ValidationError("Некорректный эталонный отступ карточки ВК.")
+    expected_gap = round(layout.header_gap_reference_px * layout.width / layout.reference_width_px)
+    if (layout.header_height != layout.header_content_bottom + expected_gap
+            or layout.logo_y + layout.logo_size > layout.header_content_bottom):
+        raise ValidationError("Некорректная высота шапки карточки ВК.")
     return layout
 
 
 def _mask_for_vk_layout(mask: Image.Image, profile: VkCardLayout) -> Image.Image:
     """Move the identical platform header and CTA mask to a new creative height.
 
-    The versioned PNG is 1080x858 and has a transparent creative region.
+    The versioned v2 PNG is 1080x848 and has a transparent creative region.
     Moving the lower overlay slice preserves both platform-only elements and
     leaves the square creative untouched. No resampling of the mask or input.
     """
@@ -252,7 +261,7 @@ def render_vk_card(
     profile = layout or load_vk_layout(size_slug)
     if profile.width != 1080 or profile.creative_height != variant[1]:
         raise ValidationError("Некорректная геометрия профиля карточки ВК.")
-    overlay_path = mask_path or Path(str(files("reports_ad").joinpath(_RESOURCE_DIR, "card-v1.png")))
+    overlay_path = mask_path or Path(str(files("reports_ad").joinpath(_RESOURCE_DIR, "card-v2.png")))
     try:
         with Image.open(creative_path) as source, Image.open(content.logo.path) as raw_logo, Image.open(overlay_path) as raw_mask:
             creative = source.convert("RGBA")
@@ -277,13 +286,11 @@ def render_vk_card(
 
     canvas = Image.new("RGBA", (profile.width, total_height), (255, 255, 255, 255))
     slot = profile.creative_bbox
-    # Contain, never stretch, crop or alter the user's source file.
-    ratio = min(slot.width / creative.width, slot.height / creative.height)
-    fitted_size = (max(1, round(creative.width * ratio)), max(1, round(creative.height * ratio)))
+    # Stretch to full VK slot. No cropping or renderer-created white margins.
+    # The user-uploaded source remains unchanged.
+    fitted_size = (slot.width, slot.height)
     fitted = creative.resize(fitted_size, Image.Resampling.LANCZOS)
-    left = slot.x + (slot.width - fitted.width) // 2
-    top = slot.y + (slot.height - fitted.height) // 2
-    canvas.alpha_composite(fitted, dest=(left, top))
+    canvas.alpha_composite(fitted, dest=(slot.x, slot.y))
     canvas.alpha_composite(mask, dest=(0, 0))
     draw = ImageDraw.Draw(canvas)
     lx, ly, diameter = profile.logo_x, profile.logo_y, profile.logo_size
@@ -318,7 +325,7 @@ def render_vk_card(
     boxes = {
         "header": BoundingBox(0, 0, profile.width, profile.header_height),
         "creative": slot,
-        "creative_fitted": BoundingBox(left, top, *fitted_size),
+        "creative_fitted": BoundingBox(slot.x, slot.y, *fitted_size),
         "cta": cta_box,
         "body": BoundingBox(0, profile.overlay_height, profile.width, footer_height),
         "logo": BoundingBox(lx, ly, diameter, diameter),
