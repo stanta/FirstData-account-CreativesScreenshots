@@ -1,0 +1,20 @@
+{
+  "version": "vk-card-square-v2",
+  "width": 1080,
+  "header_height": 152,
+  "creative_height": 1080,
+  "cta_height": 89,
+  "min_footer_height": 233,
+  "max_height": 4096,
+  "body_padding_x": 36,
+  "body_padding_y": 34,
+  "body_font_size": 26,
+  "body_line_gap": 13,
+  "header_font_size": 32,
+  "logo_size": 82,
+  "logo_x": 36,
+  "logo_y": 39,
+  "reference_width_px": 551.02,
+  "header_gap_reference_px": 16,
+  "header_content_bottom": 121
+}
