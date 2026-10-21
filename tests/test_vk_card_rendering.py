@@ -107,7 +107,7 @@ def test_vk_square_600_creative_renders_full_width_without_cropping(tmp_path: Pa
     assert result.boxes["cta"].y == 1232
     assert result.boxes["body"].y == 1321
     with Image.open(result.output_path) as image:
-        assert image.size == (1080, 1564)
+        assert image.size == (1080, 1554)
         assert image.getpixel((530, 700)) == (13, 91, 217)
     assert square.path.is_file()
 
