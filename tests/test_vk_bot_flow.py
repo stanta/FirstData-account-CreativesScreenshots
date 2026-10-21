@@ -243,3 +243,22 @@ async def test_vk_600x600_wizard_preview_edit_and_approve_unchanged(harness, tmp
     assert await vk_flow.review(update(vk_flow.VK_APPROVE), ctx) == bot.ConversationHandler.END
     assert observed["documents"] == [digest]
     assert not ctx.user_data
+
+@pytest.mark.asyncio
+async def test_vk_preview_profile_mismatch_requires_regeneration(harness):
+    ctx, observed, _, logo = harness
+    ctx.user_data.update(
+        vk_logo=logo, vk_header_text="Тест", vk_body_text="Основной текст",
+        vk_cta_id="learn_more", minimum_age="18", vk_draft_revision=1,
+    )
+    assert await vk_flow._preview(update(), ctx) == vk_flow.VK_REVIEW
+    original_digest = ctx.user_data["vk_preview_sha256"]
+    assert ctx.user_data["vk_preview_profile_version"] == "vk-card-v2"
+    ctx.user_data["vk_preview_profile_version"] = "vk-card-v1"
+    assert await vk_flow.review(update(vk_flow.VK_APPROVE), ctx) == vk_flow.VK_REVIEW
+    assert observed["documents"] == []
+    assert await vk_flow._preview(update(), ctx) == vk_flow.VK_REVIEW
+    assert ctx.user_data["vk_preview_profile_version"] == "vk-card-v2"
+    assert ctx.user_data["vk_preview_sha256"] == original_digest
+    await bot._cleanup_state(ctx.user_data)
+    ctx.user_data.clear()
