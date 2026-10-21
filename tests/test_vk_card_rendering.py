@@ -36,7 +36,7 @@ def test_vk_registered_in_catalog() -> None:
     size = get_banner_size_for_network("vk", "1080x607")
     assert size is not None and size.width == 1080 and size.height == 607
     asset = resolve_mask_asset("vk", "1080x607")
-    assert asset.size.expected_mask_size == (1080, 858)
+    assert asset.size.expected_mask_size == (1080, 848)
     assert asset.path.is_file()
 
 
@@ -49,15 +49,15 @@ def test_vk_square_format_registered_and_uses_shared_platform_mask() -> None:
     assert (square.width, square.height) == (600, 600)
     assert validate_banner_size_slug_for_network("600x600", "vk") == "600x600"
     asset = resolve_mask_asset("vk", "600x600")
-    assert asset.size.expected_mask_size == (1080, 858)
-    assert asset.path.name == "card-v1.png"
+    assert asset.size.expected_mask_size == (1080, 848)
+    assert asset.path.name == "card-v2.png"
 
 
 def test_vk_mask_transparency() -> None:
     asset = resolve_mask_asset("vk", "1080x607")
     with Image.open(asset.path) as raw:
         overlay = raw.convert("RGBA")
-        assert overlay.size == (1080, 858)
+        assert overlay.size == (1080, 848)
         assert overlay.getpixel((200, 40))[3] == 255
         assert overlay.getpixel((400, 400))[3] == 0
         assert overlay.getpixel((400, 800))[3] == 0
@@ -67,10 +67,12 @@ def test_vk_full_render_preserves_inputs_and_layout(tmp_path: Path) -> None:
     creative, item = content(tmp_path)
     hashes = {p: hashlib.sha256(p.read_bytes()).hexdigest() for p in [creative.path, item.logo.path]}
     result = render_vk_card(creative_path=creative.path, content=item, minimum_age="18", output_path=tmp_path / "out.png")
-    assert result.width == 1080 and result.height >= 1091
-    assert result.boxes["creative"].height == 607 and result.boxes["creative"].y == 162
+    assert result.width == 1080 and result.height >= 1081
+    assert result.boxes["creative"].height == 607 and result.boxes["creative"].y == 152
     assert result.boxes["creative_fitted"] == result.boxes["creative"]
-    assert result.boxes["cta"].y == 769 and result.boxes["body"].y == 858
+    assert result.boxes["creative"].y - (39 + 82) == 31
+    assert result.boxes["cta"].y == 759 and result.boxes["body"].y == 848
+    assert result.boxes["cta"].y == result.boxes["creative"].bottom
     assert {p: hashlib.sha256(p.read_bytes()).hexdigest() for p in hashes} == hashes
     with Image.open(result.output_path) as image:
         assert image.format == "PNG"
@@ -78,14 +80,15 @@ def test_vk_full_render_preserves_inputs_and_layout(tmp_path: Path) -> None:
         assert image.getpixel((100, 1060)) == (255, 255, 255)
 
 
-def test_vk_square_creative_contained_no_crop(tmp_path: Path) -> None:
+def test_vk_square_creative_stretched_without_letterboxing(tmp_path: Path) -> None:
     _, item = content(tmp_path)
     square = source(tmp_path, "square.png", (300, 300), (14, 88, 255))
     result = render_vk_card(creative_path=square.path, content=item, minimum_age="0", output_path=tmp_path / "out.png")
     box = result.boxes["creative_fitted"]
-    assert (box.width, box.height, box.x) == (607, 607, (1080 - 607) // 2)
+    assert box == result.boxes["creative"]
+    assert (box.width, box.height, box.x, box.y) == (1080, 607, 0, 152)
     with Image.open(result.output_path) as image:
-        assert image.getpixel((10, 400)) == (255, 255, 255)
+        assert image.getpixel((10, 400)) == (14, 88, 255)
 
 
 def test_vk_square_600_creative_renders_full_width_without_cropping(tmp_path: Path) -> None:
@@ -98,30 +101,30 @@ def test_vk_square_600_creative_renders_full_width_without_cropping(tmp_path: Pa
         creative_path=square.path, content=item, minimum_age="18",
         output_path=tmp_path / "square-out.png", size_slug="600x600",
     )
-    assert (result.width, result.height) == (1080, 1564)
+    assert (result.width, result.height) == (1080, 1554)
     assert result.boxes["creative"] == result.boxes["creative_fitted"]
-    assert result.boxes["creative"].y == 162
-    assert result.boxes["cta"].y == 1242
-    assert result.boxes["body"].y == 1331
+    assert result.boxes["creative"].y == 152
+    assert result.boxes["cta"].y == 1232
+    assert result.boxes["body"].y == 1321
     with Image.open(result.output_path) as image:
         assert image.size == (1080, 1564)
         assert image.getpixel((530, 700)) == (13, 91, 217)
     assert square.path.is_file()
 
 
-def test_vk_square_format_contain_still_preserves_landscape_input(tmp_path: Path) -> None:
+def test_vk_square_format_stretches_landscape_input(tmp_path: Path) -> None:
     creative, item = content(tmp_path)
     result = render_vk_card(
         creative_path=creative.path, content=item, minimum_age="18",
         output_path=tmp_path / "landscape-in-square.png", size_slug="600x600",
     )
     box = result.boxes["creative_fitted"]
-    assert (box.width, box.height) == (1080, 607)
+    assert (box.width, box.height) == (1080, 1080)
     assert box.x == 0
-    assert box.y == 162 + (1080 - 607) // 2
+    assert box.y == 152
     with Image.open(result.output_path) as image:
         assert image.getpixel((500, box.y + 50)) == (30, 21, 133)
-        assert image.getpixel((500, 175)) == (255, 255, 255)
+        assert image.getpixel((500, 175)) == (30, 21, 133)
 
 
 def test_vk_square_600_profile_rejects_unrecognized_format(tmp_path: Path) -> None:
@@ -136,7 +139,7 @@ def test_vk_square_600_profile_rejects_unrecognized_format(tmp_path: Path) -> No
 def test_vk_long_body_expands_bottom_not_mask(tmp_path: Path) -> None:
     creative, item = content(tmp_path, body="Строка с подробным описанием. " * 40)
     result = render_vk_card(creative_path=creative.path, content=item, minimum_age="18", output_path=tmp_path / "out.png")
-    assert 1091 < result.height <= 4096
+    assert 1081 < result.height <= 4096
 
 
 def test_vk_header_does_not_clip(tmp_path: Path) -> None:
@@ -174,7 +177,7 @@ async def test_vk_routes_through_existing_mask_generator(tmp_path: Path) -> None
         minimum_age="18", vk_card=item,
     )
     result = await generate_masked_banner(request)
-    assert result.width == 1080 and result.height >= 1091
+    assert result.width == 1080 and result.height >= 1081
     with Image.open(result.output_path) as image:
         assert image.format == "PNG"
 
@@ -192,7 +195,7 @@ async def test_vk_square_routes_through_existing_mask_generator(tmp_path: Path) 
         minimum_age="18", vk_card=item,
     )
     result = await generate_masked_banner(request)
-    assert result.width == 1080 and result.height == 1564
+    assert result.width == 1080 and result.height == 1554
     with Image.open(result.output_path) as image:
         assert image.getpixel((500, 700)) == (18, 55, 180)
 
