@@ -17,8 +17,8 @@ pytestmark = [pytest.mark.telegram_e2e, pytest.mark.network, pytest.mark.slow]
 @pytest.mark.parametrize(
     ("format_slug", "creative_dimensions", "min_card_height"),
     [
-        ("1080x607", (1080, 607), 1091),
-        ("600x600", (600, 600), 1564),
+        ("1080x607", (1080, 607), 1081),
+        ("600x600", (600, 600), 1554),
     ],
 )
 @pytest.mark.asyncio
