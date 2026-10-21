@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="848" viewBox="0 0 1080 848">
+  <title>VK card v2</title>
+  <desc>16 reference CSS px = 31px on a 1080px output; zero gap before CTA</desc>
+  <rect x="0" y="0" width="1080" height="152" fill="#fff"/>
+  <circle cx="77" cy="80" r="42" fill="#fff" stroke="#e8e8eb" stroke-width="2"/>
+  <g fill="#a6a7aa"><circle cx="1011" cy="78" r="4"/><circle cx="1027" cy="78" r="4"/><circle cx="1043" cy="78" r="4"/></g>
+  <rect x="0" y="151" width="1080" height="1" fill="#f2f2f2"/>
+  <!-- image y=152..758; CTA y=759..847 are transparent -->
+</svg>
